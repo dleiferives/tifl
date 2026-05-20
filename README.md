@@ -1,4 +1,4 @@
-# Greek L2 Story System
+# Thinking In Forign Languages
 
 Implements the architecture from the project spec: input/output cycle, implicit
 grammar acquisition, 95 % comprehension floor, gap-score-driven construction
