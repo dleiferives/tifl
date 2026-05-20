@@ -24,67 +24,85 @@ class Level:
 
 
 # ---- Absolute Beginner ----------------------------------------------------
-# Uses the user-supplied beginner-reader rules verbatim. Heavy repetition,
-# tiny vocab, full sentences only. No grammar metalanguage in output.
+# Grounded in comprehensible-input research (Krashen: input must be
+# comprehensible AND compelling) and TPRS "circling" (recycle target vocabulary
+# by carrying a small story forward, not by stacking flat descriptions). The
+# failure mode we design against is the degenerate "Noun είναι adjective." list,
+# which is comprehensible but not a story and not compelling.
 BEGINNER_RULES = """\
-You are writing a beginner Modern Greek reader. Write the story in Greek only.
+You are writing a beginner Modern Greek reader: a COMPLETE little story an
+absolute beginner can understand almost entirely from context. Greek only.
 
-Vocabulary rules:
-- Use only the most common, high-frequency Greek words possible.
-- Introduce as few new words as necessary — recycle and repeat constantly.
-- When you need to express something new, find a way to say it using words
-  already established in the story.
+WHAT MAKES A GOOD STORY (this matters most):
+- It is a STORY, not a description. A character (a person or an animal) WANTS
+  something or has a small PROBLEM. They try. Something happens. By the end the
+  problem is solved or changed, and the character FEELS something (χαρούμενος,
+  λυπημένος, κουρασμένος, έκπληκτος).
+- Keep it concrete and easy to picture: people, animals, objects, and simple
+  actions in one or two places.
+- Make it a little bit interesting or surprising — a tiny twist, a funny moment,
+  or a strong feeling. Compelling input keeps the reader reading.
 
-Repetition rules:
-- Repeat and restate constantly, building on each sentence. Example:
-  "Το δέντρο είναι μεγάλο. Το δέντρο είναι πολύ μεγάλο και πράσινο.
-   Μου αρέσει πολύ αυτό το δέντρο."
-- When a new noun appears, spend several sentences describing it using only
-  adjectives already in the story.
-- When the scene moves, re-establish the setting before anything happens.
+LENGTH — write a FULL reader, not a summary:
+- Aim for roughly 20-30 short sentences across 3-5 short paragraphs. A few short
+  sentences is too short; the learner needs lots of repeated exposure.
+- The length comes from CIRCLING, not from padding: spend several sentences on
+  each story beat — set it up, let the character act, ask a short question,
+  answer it, and let the character react — all reusing the same small word set.
+- Never cut the story down to its bare plot. Linger on each moment with the
+  words the learner already has.
 
-Sentence rules:
-- Every sentence must be complete and grammatically correct. No fragments,
-  no noun phrases standing alone.
+VOCABULARY (tiny, high-frequency set):
+- Use the most common Greek words. Lean on high-frequency verbs of wanting,
+  doing, and perceiving: θέλω, έχω, είμαι, πάω, βλέπω, ψάχνω, βρίσκω, παίρνω,
+  δίνω, τρώω, λέω, κάνω, ξέρω.
+- Introduce as few new words as possible and recycle them constantly.
+- To say something new, build it from words already in the story.
 
-Naturalness rules:
-- Natural, contemporary Modern Greek. Avoid stiff word-for-word translations
-  from English. Use natural Greek phrasing even if slightly more complex.
-Rules for vocabulary:
+REPETITION DONE RIGHT — "circling", not listing:
+- Recycle a key word by carrying it through the ACTION: the character wants it,
+  looks for it, finds it, uses it, reacts to it. The word repeats naturally
+  because the plot keeps touching it.
+  GOOD: "Η Άννα θέλει το μπλε χρώμα. Ψάχνει το μπλε χρώμα παντού. Πού είναι το
+         μπλε χρώμα; Α, να το! Η Άννα παίρνει το μπλε χρώμα και είναι χαρούμενη."
+- NEVER write long runs of "Noun + είναι + adjective." sentences. Do not write
+  more than two description sentences in a row before something happens.
+  BAD (forbidden): "Ο καμβάς είναι μεγάλος. Ο καμβάς είναι λευκός. Το πινέλο
+                    είναι μικρό. Το χρώμα είναι μπλε."
+- Reintroduce a noun through what the character DOES with it, not by listing
+  its properties.
 
-Use only the most common, high-frequency Greek words possible
-Introduce as few new words as necessary — the goal is to recycle and repeat the same small set of words constantly
-When you want to express something new, find a way to say it using words already established in the story
+SENTENCES:
+- Every sentence must be complete and grammatically correct. No fragments, no
+  noun phrases standing alone.
+  Bad: "Μεγάλα, πράσινα δέντρα." Good: "Τα δέντρα είναι μεγάλα και πράσινα."
+- Vary the subject and the verb. Not every sentence should start the same way
+  or use είναι. Mix actions, wants, and the occasional short question.
 
-Rules for repetition:
+NATURALNESS:
+- Natural, contemporary Modern Greek — what a native speaker would actually say.
+- Avoid stiff word-for-word translations from English: "πάω σπίτι" not
+  "πηγαίνω στο σπίτι μου"; "κάνει ζέστη" not "είμαι ζεστά".
 
-Repeat and restate constantly, building on each sentence. "Το δέντρο είναι μεγάλο. Το δέντρο είναι πολύ μεγάλο και πράσινο. Μου αρέσει πολύ αυτό το δέντρο." This is intentional and good.
-When a new noun appears, spend several sentences describing it using only adjectives already introduced in the story
-When the character moves to a new place, re-establish the setting with several descriptive sentences before anything happens there
-
-Rules for sentences:
-
-Every single sentence must be complete and grammatically correct — no fragments, no partial sentences, no noun phrases standing alone
-Bad: "Μεγάλα, πράσινα δέντρα." Good: "Τα δέντρα είναι μεγάλα και πράσινα."
-Bad: "Καλός φίλος." Good: "Ο Τομ είναι πολύ καλός φίλος μου."
-
-Rules for naturalness:
-
-Write in natural, contemporary Modern Greek — the kind a native speaker would actually say or write
-Avoid constructions that are technically correct but sound like word-for-word translations from English — if it sounds stiff or foreign, rewrite it
-Use natural Greek expressions: "πάω σπίτι" not "πηγαίνω στο σπίτι μου", "κάνει ζέστη" not "είμαι ζεστά", "βραδιάζει" not "ο ήλιος πηγαίνει κάτω"
-Prefer the natural Greek phrasing even if it is slightly more complex than a direct translation
-
-Format rules:
-- Greek only. No English anywhere, not even in a title.
-- Write numbers as full Greek words.
-- One continuous piece with a short Greek title.
-- No translation, no glossary, no explanations.
+FORMAT:
+- Greek only. No English anywhere, not even in the title.
+- Numbers as full Greek words.
+- One continuous story with a short Greek title on the first line.
+- No glossary, no explanations, no word lists.
 """
 
 # ---- Intermediate ---------------------------------------------------------
 INTERMEDIATE_RULES = """\
-You are writing a short Modern Greek text for an intermediate learner. Greek only.
+You are writing a short Modern Greek text for an intermediate learner: a small
+but COMPLETE story with a clear shape. Greek only.
+
+STORY SHAPE:
+- A character with a goal or problem, a complication, and a resolution. Give it
+  a little tension or surprise so it is worth reading.
+- Coherent paragraphs that each move the story forward; no static description
+  dumps.
+- Length: a real short story, roughly 4-6 paragraphs (about 15-25 sentences).
+  Develop each beat; do not compress the plot into a few lines.
 
 Vocabulary:
 - Recycle high-frequency words but introduce 2-4 new chunks where natural.
@@ -93,9 +111,10 @@ Vocabulary:
 
 Sentence and discourse:
 - Vary sentence length and structure. Mix simple and compound sentences.
-- Use connectives (γιατί, όμως, ενώ, αν και) where they aid comprehension.
-- Include at least one instance of the target grammatical construction so a
-  learner can notice it in context.
+- Use connectives (γιατί, όμως, ενώ, αν και, έτσι) where they aid comprehension
+  and carry the narrative.
+- Weave the target grammatical construction in naturally, in more than one
+  place, so the learner meets it several times in meaningful context.
 
 Naturalness:
 - Natural, contemporary Modern Greek. Avoid translationese.
@@ -106,7 +125,15 @@ Format:
 
 # ---- Advanced -------------------------------------------------------------
 ADVANCED_RULES = """\
-You are writing a short Modern Greek text for an advanced learner. Greek only.
+You are writing a short Modern Greek text for an advanced learner: a complete,
+engaging piece with real narrative or rhetorical shape. Greek only.
+
+Shape and content:
+- A genuine arc: a situation that develops and resolves, or an idea explored and
+  landed. Give it a point, a mood, or a perspective worth the reader's attention.
+- Coherent prose with natural transitions and paragraphing.
+- Length: a developed piece of several paragraphs (roughly 20-35 sentences), not
+  a sketch. Give scenes and ideas room to breathe.
 
 Vocabulary and register:
 - Use a varied, natural Modern Greek lexicon. Idiomatic expressions are fine.
@@ -114,8 +141,7 @@ Vocabulary and register:
   context and a glossary to fall back on.
 
 Discourse:
-- Coherent prose with natural transitions. Engage the target construction in
-  more than one position and form.
+- Engage the target construction in more than one position and form.
 - Subordination, varied tenses, and stylistic variation are encouraged.
 
 Naturalness:

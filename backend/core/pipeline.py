@@ -12,10 +12,13 @@ from typing import Any
 from backend.core.coverage import coverage, tokenize
 from backend.core.levels import DEFAULT_LEVEL, Level, TaskType, get_level, get_task_type
 from backend.core.prompts import (
+    REVISION_LENSES,
     glossary_generator_prompt,
+    narrative_outline_prompt,
     output_evaluator_prompt,
     session_planner_prompt,
     story_generator_prompt,
+    story_reviser_prompt,
     task_generator_prompt,
 )
 from backend.db.repository import Repository
@@ -30,11 +33,13 @@ def generate_session(
     user_guidance: dict[str, Any] | None = None,
     level_id: str | None = None,
     task_type_ids: list[str] | None = None,
+    refine_iterations: int = 0,
 ) -> str:
     """Run the full generation pipeline. Returns the new session_id.
 
     `level_id` selects a level from levels.py. `task_type_ids` is a list of
-    task ids to generate. Both fall back to level defaults.
+    task ids to generate. Both fall back to level defaults. `refine_iterations`
+    is how many alternating-lens improvement passes to run over the story draft.
     """
     level = get_level(level_id)
     session_id = repo.create_session(_merge_guidance(user_guidance, level))
@@ -49,12 +54,25 @@ def generate_session(
     repo.record_llm_call(plan_result.call_id, "session_plan", plan_result.log_file, session_id)
     plan = plan_result.parsed_json or {}
     targets = [t for t in plan.get("target_constructions", []) if isinstance(t, str)]
+
+    # 1b. Narrative outline — design the plot before any prose is written.
+    outline = _generate_outline(repo, llm, session_id, plan, recent_topics, level)
+    if outline:
+        plan["narrative_outline"] = outline
+
     repo.attach_session_plan(session_id, plan, targets)
     for cid in targets:
         repo.mark_construction_targeted(cid)
 
-    # 2. Story (with coverage retry).
-    story = _generate_story_with_coverage(repo, llm, session_id, plan, available, level)
+    # 2. Story (writer renders the outline; coverage retry on top).
+    story = _generate_story_with_coverage(repo, llm, session_id, plan, available, level, outline)
+
+    # 2b. Optional alternating-lens improvement passes over the draft.
+    if refine_iterations > 0:
+        story = _refine_story(
+            repo, llm, session_id, plan, available, level, story, outline, refine_iterations
+        )
+
     story.setdefault("topic", plan.get("topic"))
 
     repo.save_story(session_id, story, story.get("estimated_coverage_actual", 0.0))
@@ -135,6 +153,27 @@ def _merge_guidance(guidance: dict[str, Any] | None, level: Level) -> dict[str, 
     return out
 
 
+def _generate_outline(
+    repo: Repository,
+    llm: LLMClient,
+    session_id: str,
+    plan: dict[str, Any],
+    recent_topics: list[str],
+    level: Level,
+) -> dict[str, Any]:
+    """Design the story's plot (beats) before writing. Non-fatal on failure."""
+    try:
+        result = llm.call(
+            narrative_outline_prompt(plan, level, recent_topics),
+            kind="narrative_outline",
+        )
+    except LLMError:
+        return {}
+    repo.record_llm_call(result.call_id, "narrative_outline", result.log_file, session_id)
+    outline = result.parsed_json or {}
+    return outline if isinstance(outline, dict) else {}
+
+
 def _generate_story_with_coverage(
     repo: Repository,
     llm: LLMClient,
@@ -142,6 +181,7 @@ def _generate_story_with_coverage(
     plan: dict[str, Any],
     available: list[dict[str, Any]],
     level: Level,
+    outline: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Generate a story and retry up to N times if below coverage target."""
     constraint: str | None = None
@@ -149,7 +189,9 @@ def _generate_story_with_coverage(
     last_coverage = 0.0
 
     for attempt in range(COVERAGE_MAX_RETRIES + 1):
-        prompt = story_generator_prompt(plan, available, level, extra_constraint=constraint)
+        prompt = story_generator_prompt(
+            plan, available, level, outline=outline, extra_constraint=constraint
+        )
         result = llm.call(prompt, kind=f"story_attempt_{attempt}")
         repo.record_llm_call(result.call_id, f"story_attempt_{attempt}", result.log_file, session_id)
         story = result.parsed_json or {}
@@ -173,6 +215,62 @@ def _generate_story_with_coverage(
         f"(actual={last_coverage:.2%})"
     )
     return last_story
+
+
+def _refine_story(
+    repo: Repository,
+    llm: LLMClient,
+    session_id: str,
+    plan: dict[str, Any],
+    available: list[dict[str, Any]],
+    level: Level,
+    story: dict[str, Any],
+    outline: dict[str, Any] | None,
+    iterations: int,
+) -> dict[str, Any]:
+    """Improve the draft over N passes, cycling REVISION_LENSES one axis per pass.
+
+    A revision is rejected only if it drops below the coverage target AND is
+    worse than the current draft — so refinement keeps the story constrained
+    while letting quality improve.
+    """
+    known = [c.get("greek_text") for c in available]
+    known.extend([n.get("greek_text") for n in plan.get("new_chunks") or []])
+    known = [k for k in known if k]
+
+    current = story
+    current_cov = story.get("estimated_coverage_actual", coverage(story.get("text", ""), known))
+
+    for i in range(iterations):
+        lens_id, lens_focus = REVISION_LENSES[i % len(REVISION_LENSES)]
+        cov_note = ""
+        if current_cov < level.coverage_target:
+            cov_note = (
+                f"NOTE: keep coverage at or above {level.coverage_target:.0%} using "
+                f"available_chunks (current is {current_cov:.0%}).\n\n"
+            )
+        kind = f"story_refine_{i}_{lens_id}"
+        prompt = story_reviser_prompt(
+            plan, available, level, current.get("text", ""), lens_focus,
+            outline=outline, coverage_note=cov_note,
+        )
+        try:
+            result = llm.call(prompt, kind=kind)
+        except LLMError:
+            break
+        repo.record_llm_call(result.call_id, kind, result.log_file, session_id)
+        revised = result.parsed_json or {}
+        text = revised.get("text", "")
+        if not text:
+            continue
+        rev_cov = coverage(text, known)
+        # Reject a revision that both fails the target and worsens coverage.
+        if rev_cov < level.coverage_target and rev_cov < current_cov:
+            continue
+        revised["estimated_coverage_actual"] = rev_cov
+        current, current_cov = revised, rev_cov
+
+    return current
 
 
 def evaluate_task(

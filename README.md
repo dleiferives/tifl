@@ -8,6 +8,23 @@ LLM calls shell out to the `opencode` CLI (`opencode run --format json -m
 <provider/model>`). No API keys required as long as `opencode` is on the PATH
 and configured with a provider.
 
+## Generation pipeline
+
+Each session is built in stages (all persisted, inspectable in `ai_logs/` and
+under "AI calls for this session"):
+
+1. **Session plan** — picks a topic, a gap-driven target construction, and new
+   vocabulary chunks.
+2. **Narrative outline** — designs the *plot* before any prose exists: a
+   character with a want/problem, a complication, and a resolution, as 4-6
+   ordered Greek beats. Separating plot design from writing is what yields an
+   actual story instead of a list of facts about the topic (comprehensible +
+   compelling input; TPRS-style "circling" recycles vocabulary by carrying it
+   through the plot rather than stacking `Noun είναι adjective` sentences).
+3. **Story** — the writer renders the outline into at-level Greek (rules in
+   `core/levels.py`), with a coverage-driven retry on top.
+4. **Tasks + glossary** — generated in parallel from the finished story.
+
 ## Layout
 
 ```

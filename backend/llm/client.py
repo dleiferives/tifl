@@ -54,9 +54,15 @@ def _emit(event: dict) -> None:
 class OpenCodeCLIClient:
     """Production client: invokes the `opencode` CLI via subprocess."""
 
-    def __init__(self, model: str | None = None, opencode_bin: str | None = None) -> None:
+    def __init__(
+        self,
+        model: str | None = None,
+        opencode_bin: str | None = None,
+        agent: str | None = None,
+    ) -> None:
         self.model = model or config.model
         self.bin = opencode_bin or config.opencode_bin
+        self.agent = agent if agent is not None else config.opencode_agent
 
     def call(self, prompt: str, *, kind: str, expect_json: bool = True) -> LLMResult:
         call_id = uuid.uuid4().hex[:12]
@@ -64,11 +70,15 @@ class OpenCodeCLIClient:
         started = time.time()
         # `opencode run` starts a fresh session per invocation (no --continue),
         # so each call is independent. --format json emits a JSONL event stream.
+        # --agent selects the no-tools `writer` agent so the model returns its
+        # answer inline instead of reaching for file/bash tools.
         cmd = [
             self.bin, "run",
             "--format", "json",
             "-m", self.model,
         ]
+        if self.agent:
+            cmd += ["--agent", self.agent]
 
         _emit({
             "event": "call_started", "call_id": call_id, "kind": kind,
@@ -78,7 +88,7 @@ class OpenCodeCLIClient:
         try:
             proc = subprocess.run(
                 cmd, input=prompt, capture_output=True, text=True,
-                timeout=config.llm_timeout_s,
+                timeout=config.llm_timeout_s, cwd=str(config.root),
             )
         except subprocess.TimeoutExpired as e:
             record = self._record(ts, kind, call_id, prompt, duration=time.time() - started,

@@ -23,6 +23,7 @@ export async function render(root) {
         topic: prefs.topic || '',
         focus: prefs.focus || '',
         difficulty: prefs.difficulty || '',
+        refine: prefs.refine ?? 1,
     };
 
     const view = h('div', {});
@@ -161,6 +162,27 @@ function buildForm(state, levels, taskTypes, rerender) {
         ),
     ));
 
+    // ---- Improvement passes ----
+    form.append(h('h3', {}, 'Improvement passes'));
+    const refineLabels = ['off', '1 pass', '2 passes', '3 passes', '4 passes'];
+    const refineValue = h('span', { class: 'tag accent' }, refineLabels[state.refine]);
+    form.append(h('div', { class: 'row' },
+        h('div', { class: 'col' },
+            h('input', {
+                type: 'range', id: 'refine', min: '0', max: '4', step: '1',
+                value: String(state.refine),
+                oninput: (e) => {
+                    state.refine = Number(e.target.value);
+                    refineValue.textContent = refineLabels[state.refine];
+                },
+            }),
+        ),
+        h('div', { class: 'col' }, refineValue),
+    ));
+    form.append(h('p', { class: 'muted' },
+        'Extra LLM passes that refine the story, each focusing on a different axis '
+        + '(narrative → language → naturalness …). More passes = better quality but slower.'));
+
     // ---- Submit ----
     const btn = h('button', { type: 'submit' }, 'Generate session');
     form.append(h('div', { style: { marginTop: '1rem' } }, btn));
@@ -182,11 +204,13 @@ async function onSubmit(ev, state) {
         guidance,
         level: state.level,
         task_types: Array.from(state.taskTypes),
+        refine_iterations: state.refine,
     };
     savePrefs({
         level: state.level,
         taskTypes: Array.from(state.taskTypes),
         topic: state.topic, focus: state.focus, difficulty: state.difficulty,
+        refine: state.refine,
     });
 
     const btn = ev.target.querySelector('button[type=submit]');

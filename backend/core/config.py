@@ -19,6 +19,9 @@ class Config:
 
     model: str = os.environ.get("LEARN_GREEK_MODEL", "opencode/qwen3.6-plus-free")
     opencode_bin: str = os.environ.get("LEARN_GREEK_OPENCODE_BIN", "opencode")
+    # No-tools agent defined in .opencode/agent/. Keeps opencode in pure
+    # text-generation mode so it returns JSON inline instead of writing files.
+    opencode_agent: str = os.environ.get("LEARN_GREEK_OPENCODE_AGENT", "writer")
     coverage_target: float = 0.95
     coverage_max_retries: int = 2
     llm_timeout_s: int = 300

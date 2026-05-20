@@ -118,7 +118,25 @@ def test_02_session_planner(client):
 
 
 # ============================================================
-# 3. story generator prompt
+# 2b. narrative outline prompt
+# ============================================================
+
+def test_02b_narrative_outline(client):
+    plan = {
+        "topic": "ένα ζώο",
+        "target_constructions": ["genitive"],
+        "new_chunks": [{"greek_text": "κήπος", "context_greek": "εξωτερικός χώρος"}],
+    }
+    p = prompts.narrative_outline_prompt(plan, get_level("absolute_beginner"), recent_topics=[])
+    result = client.call(p, kind="narrative_outline")
+    _show(result)
+    pj = result.parsed_json
+    assert isinstance(pj, dict)
+    assert isinstance(pj.get("beats_greek"), list) and pj["beats_greek"]
+
+
+# ============================================================
+# 3. story generator prompt (writer renders an outline)
 # ============================================================
 
 def test_03_story_generator(client):
@@ -127,11 +145,21 @@ def test_03_story_generator(client):
         "target_constructions": ["genitive"],
         "new_chunks": [{"greek_text": "κήπος", "context_greek": "εξωτερικός χώρος"}],
     }
+    outline = {
+        "title_greek": "Ο σκύλος και το νερό",
+        "beats_greek": [
+            "Ο σκύλος διψάει.",
+            "Ο σκύλος ψάχνει νερό στον κήπο.",
+            "Ο σκύλος βρίσκει νερό και πίνει.",
+            "Ο σκύλος είναι χαρούμενος.",
+        ],
+    }
     p = prompts.story_generator_prompt(
         plan=plan,
         available_chunks=[{"greek_text": w} for w in
                           ["ο", "η", "σκύλος", "γάτα", "τρώει", "πίνει", "νερό", "φαγητό", "και"]],
         level=get_level("absolute_beginner"),
+        outline=outline,
     )
     result = client.call(p, kind="story")
     _show(result)

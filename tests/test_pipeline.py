@@ -19,6 +19,14 @@ def _full_session_responses() -> dict:
             "target_constructions": ["genitive"],
             "new_chunks": [{"greek_text": "κήπος", "context_greek": "εξωτερικός χώρος"}],
         }],
+        "narrative_outline": [{
+            "title_greek": "Ο σκύλος και το φαγητό",
+            "logline_greek": "Ένας σκύλος θέλει το φαγητό του.",
+            "character_greek": "ένας σκύλος",
+            "setting_greek": "ο κήπος",
+            "beats_greek": ["Ο σκύλος πεινάει.", "Ψάχνει το φαγητό.", "Βρίσκει το φαγητό.", "Ο σκύλος τρώει και είναι χαρούμενος."],
+            "ending_feeling_greek": "χαρούμενος",
+        }],
         "story_attempt_*": [{
             "text": "ο σκύλος τρώει το φαγητό",
         }],
@@ -48,6 +56,26 @@ def test_generate_session_happy_path(repo: Repository):
     constructions = {c["construction_id"]: c for c in repo.get_constructions()}
     assert constructions["genitive"]["exposure_count"] >= 1
     assert constructions["genitive"]["last_targeted"] is not None
+
+
+def test_refine_iterations_run_alternating_lenses(repo: Repository):
+    _seed_known_chunks(repo, ["ο", "σκύλος", "τρώει", "το", "φαγητό"])
+    responses = _full_session_responses()
+    # Two refinement passes should consume two scripted revisions in order.
+    responses["story_refine_*"] = [
+        {"text": "ο σκύλος τρώει το φαγητό και πίνει το νερό"},
+        {"text": "ο σκύλος τρώει το φαγητό. ο σκύλος πίνει το νερό."},
+    ]
+    llm = FakeLLMClient(by_kind=responses)
+
+    sid = generate_session(repo, llm, refine_iterations=2)
+
+    kinds = [c["kind"] for c in repo.llm_calls_for_session(sid)]
+    assert "story_refine_0_narrative" in kinds
+    assert "story_refine_1_language" in kinds
+
+    story = repo.get_story(repo.get_session(sid)["story_id"])
+    assert "πίνει" in story["text"]  # the final refined draft was saved
 
 
 def test_evaluate_task_updates_construction_counts(repo: Repository):

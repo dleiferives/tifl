@@ -16,6 +16,7 @@ class GenerateSessionRequest(BaseModel):
     guidance: UserGuidance = Field(default_factory=UserGuidance)
     level: str | None = None
     task_types: list[str] | None = None
+    refine_iterations: int = Field(default=1, ge=0, le=4)
 
 
 class GenerateSessionResponse(BaseModel):

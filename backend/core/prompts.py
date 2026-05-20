@@ -1,4 +1,9 @@
-"""Five slim prompt templates.
+"""Slim prompt templates for the generation pipeline.
+
+Story generation is split across two stages — a narrative architect that designs
+the plot (character, want, complication, resolution) and a writer that renders
+those beats into at-level Greek prose. Keeping plot design separate is what
+produces an actual story instead of a list of facts about the topic.
 
 Design goals:
 - Tiny outputs. The model is asked for only what it uniquely knows; coverage,
@@ -53,11 +58,55 @@ def session_planner_prompt(
     )
 
 
-# ---- 2. Story generator ---------------------------------------------------
+# ---- 2. Narrative architect -----------------------------------------------
+def narrative_outline_prompt(
+    plan: dict[str, Any],
+    level: Level,
+    recent_topics: list[str],
+) -> str:
+    """Design the PLOT before any prose exists.
+
+    Splitting plot design from prose writing is what gives the reader an actual
+    story (character + want + complication + resolution) instead of a list of
+    facts about the topic. The writer downstream renders these beats at-level.
+    """
+    payload = {
+        "level": level.id,
+        "level_note": level.description,
+        "topic": plan.get("topic", ""),
+        "target_constructions": plan.get("target_constructions", []),
+        "new_chunks": plan.get("new_chunks", []),
+        "recent_topics": recent_topics,
+    }
+    return (
+        "You are the narrative designer for a Greek L2 reader. Design the PLOT of a "
+        "short story; a separate writer will turn your outline into Greek prose at "
+        "the right level.\n\n"
+        "Design a tiny but COMPLETE story with a clear arc: a character who WANTS "
+        "something or has a PROBLEM, a complication or attempt, and a resolution "
+        "where the character ends up feeling something. Keep it concrete and easy to "
+        "picture (people, animals, objects, simple actions). Make it a little "
+        "interesting or surprising — never a flat list of facts. Avoid the topics in "
+        "recent_topics so sessions stay fresh.\n\n"
+        "Write 6-9 short ordered beats. Each beat is ONE thing that happens, in plot "
+        "order — the writer will expand each beat into several sentences, so give "
+        "enough beats to support a full reader. All text fields must be in SIMPLE "
+        "GREEK (no English).\n\n"
+        f"INPUT:\n{json.dumps(payload, ensure_ascii=False)}\n\n"
+        f"{_JSON_RULES}\n\n"
+        "Schema:\n"
+        '{"title_greek":"...","logline_greek":"...","character_greek":"...",'
+        '"setting_greek":"...","beats_greek":["...","...","...","..."],'
+        '"ending_feeling_greek":"..."}'
+    )
+
+
+# ---- 3. Story generator ---------------------------------------------------
 def story_generator_prompt(
     plan: dict[str, Any],
     available_chunks: list[dict[str, Any]],
     level: Level,
+    outline: dict[str, Any] | None = None,
     extra_constraint: str | None = None,
 ) -> str:
     payload = {
@@ -67,17 +116,94 @@ def story_generator_prompt(
         "available_chunks": [c.get("greek_text") for c in available_chunks],
         "max_new_chunks": level.max_new_chunks,
     }
+    backbone = ""
+    if outline:
+        payload["outline"] = {
+            k: outline.get(k)
+            for k in (
+                "title_greek", "logline_greek", "character_greek",
+                "setting_greek", "beats_greek", "ending_feeling_greek",
+            )
+            if outline.get(k)
+        }
+        backbone = (
+            "Follow `outline` as the plot backbone: tell the story beat by beat, in "
+            "order, expanding EACH beat into several sentences (set it up, act, "
+            "react) so the reader reaches the length the rules ask for. Use the "
+            "outline's title. Render it at this level using the rules above.\n\n"
+        )
     extra = f"\n\nADDITIONAL CONSTRAINT: {extra_constraint}" if extra_constraint else ""
     return (
         f"{level.story_rules.strip()}\n\n"
+        f"{backbone}"
+        "Build the story almost entirely from available_chunks, adding at most the "
+        "listed new_chunks. Feature the target constructions naturally.\n\n"
         f"INPUT:\n{json.dumps(payload, ensure_ascii=False)}{extra}\n\n"
         f"{_JSON_RULES}\n\n"
         'Schema: {"text":"..."}  '
-        "(Only the story text. Do not output word lists, tags, or counts.)"
+        "(Only the story text, including its short Greek title. Do not output word "
+        "lists, tags, or counts.)"
     )
 
 
-# ---- 3. Task generator ----------------------------------------------------
+# ---- 3b. Story reviser (alternating-lens refinement) ----------------------
+# Each refinement pass improves ONE axis. Cycling lenses (rather than re-running
+# one "make it better" prompt) keeps each pass targeted and stops the model from
+# spinning on the same change. The pipeline cycles through these in order.
+REVISION_LENSES: tuple[tuple[str, str], ...] = (
+    ("narrative",
+     "Strengthen the STORY. Make the character's want or problem and the "
+     "resolution clearer, add a little tension or surprise, and recycle key words "
+     "by carrying them through the action (circling) instead of listing facts."),
+    ("language",
+     "Keep the language AT-LEVEL. Reduce the number of distinct words, reuse the "
+     "words already in the story more, and simplify grammar to match the level "
+     "rules. Do NOT introduce harder or lower-frequency vocabulary."),
+    ("naturalness",
+     "Improve NATURALNESS. Make every sentence sound like fluent, contemporary "
+     "Greek a native would actually say; fix translationese and stiff phrasing; "
+     "ensure every sentence is complete and grammatically correct."),
+)
+
+
+def story_reviser_prompt(
+    plan: dict[str, Any],
+    available_chunks: list[dict[str, Any]],
+    level: Level,
+    current_text: str,
+    lens_focus: str,
+    outline: dict[str, Any] | None = None,
+    coverage_note: str = "",
+) -> str:
+    payload = {
+        "topic": plan.get("topic", ""),
+        "target_constructions": plan.get("target_constructions", []),
+        "new_chunks": plan.get("new_chunks", []),
+        "available_chunks": [c.get("greek_text") for c in available_chunks],
+        "max_new_chunks": level.max_new_chunks,
+    }
+    if outline:
+        payload["outline"] = {
+            k: outline.get(k)
+            for k in ("title_greek", "beats_greek", "ending_feeling_greek")
+            if outline.get(k)
+        }
+    return (
+        f"{level.story_rules.strip()}\n\n"
+        "You are revising an existing Greek story to IMPROVE it on ONE axis this "
+        f"pass.\nFOCUS THIS PASS: {lens_focus}\n\n"
+        "Improve the focus axis WITHOUT regressing on the level rules above, the "
+        "vocabulary constraints, or the plot. Keep it Greek-only. Return the FULL "
+        "improved story, not a diff and not commentary.\n\n"
+        f"CURRENT STORY:\n{current_text}\n\n"
+        f"{coverage_note}"
+        f"INPUT:\n{json.dumps(payload, ensure_ascii=False)}\n\n"
+        f"{_JSON_RULES}\n\n"
+        'Schema: {"text":"..."}'
+    )
+
+
+# ---- 4. Task generator ----------------------------------------------------
 def task_generator_prompt(
     story_text: str,
     target_constructions: list[str],
@@ -94,7 +220,7 @@ def task_generator_prompt(
     )
 
 
-# ---- 4. Output evaluator --------------------------------------------------
+# ---- 5. Output evaluator --------------------------------------------------
 def output_evaluator_prompt(
     task: dict[str, Any],
     story_text: str,
@@ -118,7 +244,7 @@ def output_evaluator_prompt(
     )
 
 
-# ---- 5. Glossary generator ------------------------------------------------
+# ---- 6. Glossary generator ------------------------------------------------
 def glossary_generator_prompt(
     new_chunks: list[dict[str, Any]],
     story_text: str,

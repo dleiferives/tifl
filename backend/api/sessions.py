@@ -32,6 +32,7 @@ def create_session(
             user_guidance=body.guidance.model_dump(exclude_none=True),
             level_id=body.level,
             task_type_ids=body.task_types,
+            refine_iterations=body.refine_iterations,
         )
     except LLMError as e:
         raise HTTPException(status_code=502, detail=f"LLM failure: {e}") from e

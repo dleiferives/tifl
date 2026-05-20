@@ -1,9 +1,12 @@
 from backend.core.levels import LEVELS, TASK_TYPES, get_level, get_task_type
 from backend.core.prompts import (
+    REVISION_LENSES,
     glossary_generator_prompt,
+    narrative_outline_prompt,
     output_evaluator_prompt,
     session_planner_prompt,
     story_generator_prompt,
+    story_reviser_prompt,
     task_generator_prompt,
 )
 
@@ -19,6 +22,44 @@ def test_session_planner_includes_candidates_and_guidance():
     assert "genitive" in p
     assert "garden" in p
     assert "JSON" in p
+
+
+def test_narrative_outline_prompt_asks_for_arc_and_avoids_repeats():
+    p = narrative_outline_prompt(
+        plan={"topic": "garden", "target_constructions": ["genitive"], "new_chunks": []},
+        level=get_level("absolute_beginner"),
+        recent_topics=["painting"],
+    )
+    assert "beats" in p.lower()
+    assert "painting" in p  # recent_topics fed in so the designer avoids them
+    assert "JSON" in p
+
+
+def test_story_generator_threads_outline_beats():
+    outline = {"title_greek": "Ο κήπος", "beats_greek": ["Η Άννα πάει στον κήπο."]}
+    p = story_generator_prompt(
+        plan={"topic": "x", "target_constructions": [], "new_chunks": []},
+        available_chunks=[{"greek_text": "ο"}],
+        level=get_level("absolute_beginner"),
+        outline=outline,
+    )
+    assert "Η Άννα πάει στον κήπο." in p
+    assert "backbone" in p.lower()
+
+
+def test_story_reviser_includes_current_text_and_lens():
+    _, focus = REVISION_LENSES[0]
+    p = story_reviser_prompt(
+        plan={"topic": "x", "target_constructions": [], "new_chunks": []},
+        available_chunks=[{"greek_text": "ο"}],
+        level=get_level("absolute_beginner"),
+        current_text="ο σκύλος τρώει",
+        lens_focus=focus,
+        coverage_note="NOTE: keep coverage high.\n\n",
+    )
+    assert "ο σκύλος τρώει" in p
+    assert focus in p
+    assert "keep coverage high" in p
 
 
 def test_story_generator_inlines_level_rules():
