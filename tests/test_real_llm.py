@@ -1,4 +1,4 @@
-"""Per-prompt integration tests that hit the real `claude` CLI.
+"""Per-prompt integration tests that hit the real `opencode` CLI.
 
 Skipped unless LEARN_GREEK_REAL_LLM=1 in the environment.
 
@@ -23,15 +23,15 @@ import pytest
 
 from backend.core import prompts
 from backend.core.levels import get_level, get_task_type
-from backend.llm.client import ClaudeCLIClient, subscribe
+from backend.llm.client import OpenCodeCLIClient, subscribe
 
 pytestmark = pytest.mark.real_llm
 
 if os.environ.get("LEARN_GREEK_REAL_LLM") != "1":
     pytest.skip("set LEARN_GREEK_REAL_LLM=1 to run real-LLM tests", allow_module_level=True)
 
-if shutil.which("claude") is None:
-    pytest.skip("`claude` CLI not on PATH", allow_module_level=True)
+if shutil.which("opencode") is None:
+    pytest.skip("`opencode` CLI not on PATH", allow_module_level=True)
 
 
 # ---------- live event streaming ----------
@@ -61,16 +61,15 @@ def live_stream():
 
 
 @pytest.fixture(scope="module")
-def client() -> ClaudeCLIClient:
-    return ClaudeCLIClient()
+def client() -> OpenCodeCLIClient:
+    return OpenCodeCLIClient()
 
 
 # Small helper so each test prints the full CLI response neatly when it's done.
 def _show(result, capsys=None) -> None:
-    """Pretty-print the CLI wrapper + parsed JSON to stderr (always visible with -s)."""
-    print("\n--- CLI wrapper ---", file=sys.stderr, flush=True)
-    print(json.dumps(result.raw_record.get("wrapper"), ensure_ascii=False, indent=2),
-          file=sys.stderr, flush=True)
+    """Pretty-print the result text + parsed JSON to stderr (always visible with -s)."""
+    print("\n--- result_text ---", file=sys.stderr, flush=True)
+    print(result.result_text, file=sys.stderr, flush=True)
     print("\n--- parsed_json ---", file=sys.stderr, flush=True)
     print(json.dumps(result.parsed_json, ensure_ascii=False, indent=2),
           file=sys.stderr, flush=True)

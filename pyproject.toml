@@ -21,7 +21,7 @@ testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-q"
 markers = [
-    "real_llm: hits the real `claude` CLI. Set LEARN_GREEK_REAL_LLM=1 to enable.",
+    "real_llm: hits the real `opencode` CLI. Set LEARN_GREEK_REAL_LLM=1 to enable.",
 ]
 
 [tool.setuptools.packages.find]

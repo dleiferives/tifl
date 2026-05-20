@@ -1,4 +1,4 @@
-"""Shell-based Claude client. Calls `claude -p --model <m> --output-format json`."""
+"""Shell-based opencode client. Calls `opencode run --format json -m <provider/model>`."""
 from __future__ import annotations
 
 import json
@@ -51,23 +51,23 @@ def _emit(event: dict) -> None:
             pass
 
 
-class ClaudeCLIClient:
-    """Production client: invokes the `claude` CLI via subprocess."""
+class OpenCodeCLIClient:
+    """Production client: invokes the `opencode` CLI via subprocess."""
 
-    def __init__(self, model: str | None = None, claude_bin: str | None = None) -> None:
+    def __init__(self, model: str | None = None, opencode_bin: str | None = None) -> None:
         self.model = model or config.model
-        self.bin = claude_bin or config.claude_bin
+        self.bin = opencode_bin or config.opencode_bin
 
     def call(self, prompt: str, *, kind: str, expect_json: bool = True) -> LLMResult:
         call_id = uuid.uuid4().hex[:12]
         ts = time.strftime("%Y%m%dT%H%M%S")
         started = time.time()
+        # `opencode run` starts a fresh session per invocation (no --continue),
+        # so each call is independent. --format json emits a JSONL event stream.
         cmd = [
-            self.bin, "-p",
-            "--model", self.model,
-            "--output-format", "json",
-            "--no-session-persistence",
-            "--tools", "",
+            self.bin, "run",
+            "--format", "json",
+            "-m", self.model,
         ]
 
         _emit({
@@ -86,25 +86,19 @@ class ClaudeCLIClient:
             log_file = write_log(record)
             _emit({"event": "call_failed", "call_id": call_id, "kind": kind,
                    "error": "timeout", "duration_s": round(time.time() - started, 2)})
-            raise LLMError("claude CLI timed out") from e
+            raise LLMError("opencode CLI timed out") from e
 
         duration = time.time() - started
         stdout = proc.stdout or ""
-        wrapper: dict[str, Any] | None = None
-        result_text = stdout
-        try:
-            wrapper = json.loads(stdout)
-            if isinstance(wrapper, dict) and "result" in wrapper:
-                result_text = wrapper["result"]
-        except json.JSONDecodeError:
-            wrapper = None
+        events = parse_event_stream(stdout)
+        result_text = collect_text(events)
 
         record = self._record(
             ts, kind, call_id, prompt,
             duration=duration,
             raw_stdout=stdout,
             raw_stderr=proc.stderr or "",
-            wrapper=wrapper,
+            events=events,
             result_text=result_text,
             returncode=proc.returncode,
         )
@@ -116,10 +110,17 @@ class ClaudeCLIClient:
                    "rc": proc.returncode, "duration_s": round(duration, 2),
                    "stderr": (proc.stderr or "")[:500], "stdout": stdout[:500]})
             raise LLMError(
-                f"claude CLI failed (rc={proc.returncode})\n"
+                f"opencode CLI failed (rc={proc.returncode})\n"
                 f"--- stderr ---\n{(proc.stderr or '').strip()[:2000]}\n"
                 f"--- stdout ---\n{stdout.strip()[:2000]}"
             )
+
+        if not result_text:
+            record["error"] = "no text in opencode event stream"
+            log_file = write_log(record)
+            _emit({"event": "call_failed", "call_id": call_id, "kind": kind,
+                   "error": "empty_result", "stdout": stdout[:500]})
+            raise LLMError(f"opencode produced no text output: {stdout[:500]}")
 
         parsed: Any | None = None
         if expect_json:
@@ -152,6 +153,43 @@ class ClaudeCLIClient:
         }
         rec.update(extra)
         return rec
+
+
+def parse_event_stream(stdout: str) -> list[dict[str, Any]]:
+    """Parse opencode's `--format json` output: one JSON event per line (JSONL)."""
+    events: list[dict[str, Any]] = []
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(ev, dict):
+            events.append(ev)
+    return events
+
+
+def collect_text(events: list[dict[str, Any]]) -> str:
+    """Reassemble assistant text from `type:"text"` events.
+
+    opencode may emit the same text part multiple times as it streams; we keep
+    the latest value per part id and concatenate distinct parts in order.
+    """
+    latest: dict[str, str] = {}
+    order: list[str] = []
+    for ev in events:
+        if ev.get("type") != "text":
+            continue
+        part = ev.get("part") or {}
+        pid = part.get("id")
+        if pid is None:
+            continue
+        if pid not in latest:
+            order.append(pid)
+        latest[pid] = part.get("text", "")
+    return "".join(latest[pid] for pid in order)
 
 
 def extract_json(text: str) -> Any | None:

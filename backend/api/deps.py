@@ -4,7 +4,7 @@ from __future__ import annotations
 from functools import lru_cache
 
 from backend.db.repository import Repository, default_repository
-from backend.llm.client import ClaudeCLIClient, LLMClient
+from backend.llm.client import LLMClient, OpenCodeCLIClient
 
 
 @lru_cache(maxsize=1)
@@ -14,4 +14,4 @@ def get_repository() -> Repository:
 
 @lru_cache(maxsize=1)
 def get_llm() -> LLMClient:
-    return ClaudeCLIClient()
+    return OpenCodeCLIClient()

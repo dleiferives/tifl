@@ -4,8 +4,9 @@ Implements the architecture from the project spec: input/output cycle, implicit
 grammar acquisition, 95 % comprehension floor, gap-score-driven construction
 targeting, with every LLM call persisted and inspectable.
 
-LLM calls shell out to the `claude` CLI with `--model haiku`. No API keys
-required as long as `claude` is on the PATH.
+LLM calls shell out to the `opencode` CLI (`opencode run --format json -m
+<provider/model>`). No API keys required as long as `opencode` is on the PATH
+and configured with a provider.
 
 ## Layout
 
@@ -13,7 +14,7 @@ required as long as `claude` is on the PATH.
 backend/
     core/         business logic — config, prompts, coverage, pipeline
     db/           SQLite schema + repository
-    llm/          `claude` CLI adapter and call logging
+    llm/          `opencode` CLI adapter and call logging
     api/          FastAPI route modules
     models/       pydantic DTOs (shared with frontend over JSON)
     main.py       app factory + entrypoint
@@ -54,5 +55,6 @@ The router supports plain strings and regex patterns with named groups.
 
 Env vars (all optional):
 
-- `LEARN_GREEK_MODEL` — model passed to `claude --model`. Default: `haiku`.
-- `LEARN_GREEK_CLAUDE_BIN` — path to the CLI. Default: `claude`.
+- `LEARN_GREEK_MODEL` — model passed to `opencode run -m`, in `provider/model`
+  format. Default: `opencode/qwen3.6-plus-free`.
+- `LEARN_GREEK_OPENCODE_BIN` — path to the CLI. Default: `opencode`.

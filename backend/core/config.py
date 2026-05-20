@@ -17,8 +17,8 @@ class Config:
     frontend_dir: Path = ROOT / "frontend"
     db_path: Path = ROOT / "data" / "greek.db"
 
-    model: str = os.environ.get("LEARN_GREEK_MODEL", "haiku")
-    claude_bin: str = os.environ.get("LEARN_GREEK_CLAUDE_BIN", "claude")
+    model: str = os.environ.get("LEARN_GREEK_MODEL", "opencode/qwen3.6-plus-free")
+    opencode_bin: str = os.environ.get("LEARN_GREEK_OPENCODE_BIN", "opencode")
     coverage_target: float = 0.95
     coverage_max_retries: int = 2
     llm_timeout_s: int = 300
