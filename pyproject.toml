@@ -1,0 +1,28 @@
+[project]
+name = "story-llm"
+version = "0.1.0"
+description = "Greek L2 acquisition system — input-output cycle with implicit grammar acquisition"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "pydantic>=2.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.27",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+markers = [
+    "real_llm: hits the real `claude` CLI. Set LEARN_GREEK_REAL_LLM=1 to enable.",
+]
+
+[tool.setuptools.packages.find]
+include = ["backend*"]
