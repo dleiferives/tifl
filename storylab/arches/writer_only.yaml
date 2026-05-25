@@ -1,0 +1,9 @@
+id: writer_only
+description: A single writer call using the full level rules. No plan, outline, or retry.
+result: draft
+result_extract: null
+
+nodes:
+  - id: draft
+    prompt: writer
+    extract: text

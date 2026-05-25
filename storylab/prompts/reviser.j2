@@ -1,0 +1,17 @@
+{{ level.story_rules }}
+
+You are revising an existing Greek story to improve it on ONE axis this pass.
+FOCUS THIS PASS: {{ lens }}
+
+Improve the focus axis WITHOUT regressing on the level rules above, the
+vocabulary constraints, or the plot. Keep it Greek-only. Return the FULL
+improved story, not a diff and not commentary.
+{% if available_chunks and coverage(current) < target %}
+Keep vocabulary coverage at or above {{ '%.0f'|format(target * 100) }}% using the known words: {{ available_chunks | json }}.
+{% endif %}
+
+CURRENT STORY:
+{{ current }}
+
+{{ json_rules }}
+Schema: {"text":"..."}

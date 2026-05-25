@@ -1,0 +1,18 @@
+# Named revision lenses for `loop: {cycle: [...]}` refine nodes.
+# Each pass improves ONE axis; cycling keeps passes targeted instead of spinning
+# on a vague "make it better". Referenced by name from an arch's loop.cycle list.
+
+narrative: >
+  Strengthen the STORY. Make the character's want or problem and the resolution
+  clearer, add a little tension or surprise, and recycle key words by carrying
+  them through the action (circling) instead of listing facts.
+
+language: >
+  Keep the language AT-LEVEL. Reduce the number of distinct words, reuse the
+  words already in the story more, and simplify grammar to match the level
+  rules. Do NOT introduce harder or lower-frequency vocabulary.
+
+naturalness: >
+  Improve NATURALNESS. Make every sentence sound like fluent, contemporary Greek
+  a native would actually say; fix translationese and stiff phrasing; ensure
+  every sentence is complete and grammatically correct.

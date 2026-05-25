@@ -1,0 +1,12 @@
+{{ level.story_rules }}
+
+The story below leans on words outside the known set. Rewrite it to use ONLY
+these known words (introduce nothing new), preserving the plot and the feelings.
+Greek only. Return the FULL story.
+known words: {{ available_chunks | json }}
+
+STORY:
+{{ input }}
+
+{{ json_rules }}
+Schema: {"text":"..."}

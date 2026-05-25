@@ -20,7 +20,6 @@ from typing import Any
 from backend.core.levels import get_level
 from backend.llm.client import LLMError
 
-from storylab.run import load_run
 from storylab.spec import StorySpec
 
 JUDGE_DIR = Path(__file__).resolve().parent / "judgments"
@@ -85,6 +84,20 @@ def judge_pair(
     }
 
 
+def pick_best_by_judge(llm, spec: StorySpec, texts: list[str]) -> int:
+    """King-of-the-hill: the current best is challenged by each next candidate.
+
+    Used by `select` nodes with `by: judge`. N-1 pairwise duels (each judged in
+    both orders inside judge_pair). A tie leaves the incumbent in place.
+    """
+    best = 0
+    for i in range(1, len(texts)):
+        verdict = judge_pair(llm, spec, str(best), texts[best], str(i), texts[i])
+        if verdict["winner"] == str(i):
+            best = i
+    return best
+
+
 def _pairs(variant_ids: list[str], baseline: str | None, round_robin: bool):
     if round_robin or baseline is None:
         return list(itertools.combinations(variant_ids, 2))
@@ -98,6 +111,8 @@ def judge_matrix(
     baseline: str | None = "baseline",
     round_robin: bool = False,
 ) -> list[dict[str, Any]]:
+    from storylab.run import load_run  # lazy: avoids a compose->judge->run import cycle
+
     JUDGE_DIR.mkdir(parents=True, exist_ok=True)
     judgments: list[dict[str, Any]] = []
     for spec in specs:

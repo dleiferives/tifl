@@ -17,37 +17,37 @@ from backend.llm.client import OpenCodeCLIClient
 from storylab import judge as judge_mod
 from storylab import human as human_mod
 from storylab import report as report_mod
+from storylab.arch import load_arches
 from storylab.run import load_run, run_matrix
-from storylab.spec import load_specs, load_variants
+from storylab.spec import load_specs
 
 HERE = Path(__file__).resolve().parent
 
 
-def _filter(items, ids, attr="id"):
+def _filter(items, ids):
     if not ids:
         return items
     wanted = {s.strip() for s in ids.split(",") if s.strip()}
-    return [it for it in items if getattr(it, attr) in wanted]
+    return [it for it in items if it.id in wanted]
 
 
 def _load(args):
     specs = _filter(load_specs(HERE / "seeds.json"), getattr(args, "specs", None))
-    variants = _filter(load_variants(HERE / "variants.json"), getattr(args, "variants", None))
-    return specs, variants
+    arches = _filter(load_arches(), getattr(args, "variants", None))
+    return specs, arches
 
 
 def cmd_run(args):
-    specs, variants = _load(args)
+    specs, arches = _load(args)
     llm = OpenCodeCLIClient(model=args.model)
-    run_matrix(llm, specs, variants, model=args.model, force=args.force)
+    run_matrix(llm, specs, arches, model=args.model, force=args.force)
 
 
 def cmd_judge(args):
-    specs, variants = _load(args)
+    specs, arches = _load(args)
     llm = OpenCodeCLIClient(model=args.model)
-    variant_ids = [v.id for v in variants]
     judgments = judge_mod.judge_matrix(
-        llm, specs, variant_ids,
+        llm, specs, [a.id for a in arches],
         baseline=None if args.round_robin else args.baseline,
         round_robin=args.round_robin,
     )
@@ -55,9 +55,9 @@ def cmd_judge(args):
 
 
 def cmd_human(args):
-    specs, variants = _load(args)
+    specs, arches = _load(args)
     human_mod.label_session(
-        specs, [v.id for v in variants],
+        specs, [a.id for a in arches],
         baseline=None if args.round_robin else args.baseline,
         round_robin=args.round_robin,
     )
@@ -78,13 +78,14 @@ def cmd_show(args):
     if not rec:
         print(f"no run for {args.spec_id} / {args.variant_id}")
         return
-    print(f"# {args.spec_id} / {args.variant_id}   cov={rec['coverage']:.0%}\n")
+    print(f"# {args.spec_id} / {args.variant_id}   cov={rec['coverage']:.0%}"
+          f"   calls={rec.get('n_llm_calls', '?')}\n")
     print(rec["text"])
-    print("\n--- trace ---")
+    print("\n--- trace (node / kind / prompt / time) ---")
     for step in rec.get("trace", []):
         cov = f" cov={step['coverage']:.0%}" if step.get("coverage") is not None else ""
         note = f"  [{step['note']}]" if step.get("note") else ""
-        print(f"  {step['stage']:<8} {step['kind']:<22} {step['variant']:<8}"
+        print(f"  {step['stage']:<12} {step['kind']:<24} {step['variant']:<18}"
               f" {step['duration_s']:>5.1f}s{cov}{note}")
 
 

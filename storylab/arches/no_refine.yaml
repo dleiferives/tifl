@@ -1,0 +1,20 @@
+id: no_refine
+description: Plan + outline + writer with coverage retry, but no refine passes.
+result: draft
+result_extract: null
+
+nodes:
+  - id: plan
+    prompt: planner
+    merge: [new_chunks, target_constructions]
+
+  - id: outline
+    prompt: outline
+    needs: [plan]
+    optional: true
+
+  - id: draft
+    prompt: writer
+    needs: [outline]
+    extract: text
+    loop: { until: "coverage(draft) >= target", max: 3 }

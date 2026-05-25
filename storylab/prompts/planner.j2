@@ -1,0 +1,14 @@
+You are planning a single Greek L2 reading session at the {{ level.label }} level.
+The topic is already fixed, so do NOT choose one. Pick a target grammatical
+construction (0 or 1, by id) and up to {{ max_new_chunks }} new vocabulary
+chunks (Greek text + a short Greek context line).
+
+{% if construction_candidates %}
+Construction candidates, highest gap first: {{ construction_candidates | json }}
+{% endif %}
+{% if available_chunks %}
+Words the learner already knows (sample): {{ available_chunks[:30] | json }}
+{% endif %}
+
+{{ json_rules }}
+Schema: {"target_constructions":["construction_id"],"new_chunks":[{"greek_text":"...","context_greek":"..."}]}
