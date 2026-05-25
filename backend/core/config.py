@@ -17,7 +17,7 @@ class Config:
     frontend_dir: Path = ROOT / "frontend"
     db_path: Path = ROOT / "data" / "greek.db"
 
-    model: str = os.environ.get("LEARN_GREEK_MODEL", "opencode/qwen3.6-plus-free")
+    model: str = os.environ.get("LEARN_GREEK_MODEL", "opencode/deepseek-v4-flash-free")
     opencode_bin: str = os.environ.get("LEARN_GREEK_OPENCODE_BIN", "opencode")
     # No-tools agent defined in .opencode/agent/. Keeps opencode in pure
     # text-generation mode so it returns JSON inline instead of writing files.

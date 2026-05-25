@@ -6,3 +6,5 @@ __pycache__/
 ai_logs/*.json
 data/*.db
 .DS_Store
+storylab/runs/
+storylab/judgments/
