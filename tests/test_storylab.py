@@ -17,6 +17,19 @@ STORY = {"text": "Η γάτα. Η γάτα τρώει ψάρι. Η γάτα εί
 KNOWN = ["η", "γάτα", "τρώει", "ψάρι", "είναι", "χαρούμενη"]
 
 
+@pytest.fixture(autouse=True)
+def _surface_vocab(monkeypatch):
+    """Force surface-token mode (no spaCy) so coverage is deterministic and the
+    suite stays fast/offline. One test opts back into real lemmatization."""
+    import storylab.vocab as v
+    monkeypatch.setattr(v, "_nlp", None)
+    monkeypatch.setattr(v, "_nlp_tried", True)
+    monkeypatch.setattr(v, "_ranks", None)
+    v.lemmatize.cache_clear()
+    yield
+    v.lemmatize.cache_clear()
+
+
 def _spec(level="absolute_beginner"):
     return StorySpec(id="t", level_id=level, topic="a cat", available_chunks=list(KNOWN))
 
@@ -95,17 +108,28 @@ def test_fanout_and_select_by_metric():
     assert any(s.stage == "best" and "select" in s.kind for s in res.trace)
 
 
-def test_select_by_judge():
+def test_select_by_judge_runs_end_to_end():
+    # foreach runs in parallel, so which draft lands at which index is not fixed;
+    # assert the judge-select path runs and returns one of the candidates.
     arch = _arch({"id": "j", "result": "best", "nodes": [
         {"id": "drafts", "prompt": "writer", "foreach": "range(2)", "extract": "text"},
         {"id": "best", "type": "select", "from": "drafts", "by": "judge"},
     ]})
     llm = FakeLLMClient(by_kind={
         "drafts*": [{"text": "alpha"}, {"text": "beta"}],
-        "judge": [{"winner": "A"}, {"winner": "A"}],   # both orders favour A -> tie -> keep incumbent
+        "judge": [{"winner": "A"}] * 4,
     })
     res = compose_story(llm, _spec(), arch)
-    assert res.text == "alpha"
+    assert res.text in ("alpha", "beta")
+    assert any(s.stage == "best" and "judge" in s.kind for s in res.trace)
+
+
+def test_pick_best_by_judge_is_decisive():
+    # each duel: challenger decisively beats the incumbent in BOTH orders,
+    # so the last candidate wins regardless of starting position.
+    llm = FakeLLMClient(by_kind={"judge": [{"winner": "B"}, {"winner": "A"}] * 5})
+    idx = judge_mod.pick_best_by_judge(llm, _spec(), ["a", "b", "c"])
+    assert idx == 2
 
 
 def test_conditional_skip_passes_input_through():
@@ -151,3 +175,23 @@ def test_judge_pair_cancels_position_bias():
     llm = FakeLLMClient(by_kind={"judge": [{"winner": "A"}, {"winner": "A"}]})
     j = judge_mod.judge_pair(llm, spec, "L", "left", "R", "right")
     assert j["winner"] == "tie"
+
+
+def test_frequency_profile_discriminates():
+    from backend.core.levels import get_level
+    from storylab.vocab import build_profile
+    spec = StorySpec(id="t", level_id="intermediate", topic="x",
+                     vocab={"kind": "frequency", "top_n": 3000})
+    prof = build_profile(spec, get_level("intermediate"))
+    assert prof.coverage("να το δεν είναι θα") > 0.9   # very high-frequency words: in band
+    assert prof.coverage("ζζζ ξξξ qqq ωωω") < 0.5      # gibberish: out of band
+    assert prof.oov_rate("ζζζ ξξξ qqq ωωω") > 0.5
+
+
+def test_lemmatizer_merges_inflections_if_available():
+    import storylab.vocab as v
+    v._nlp, v._nlp_tried = None, False   # opt back into real spaCy
+    v.lemmatize.cache_clear()
+    if not v.lemmas_available():
+        pytest.skip("spaCy Greek model not installed")
+    assert v.lemmatize("γάτας")[0] == v.lemmatize("γάτα")[0]   # one lemma for inflections
