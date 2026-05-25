@@ -23,6 +23,11 @@ class StorySpec:
     target_constructions: list[str] = field(default_factory=list)
     new_chunks: list[dict[str, Any]] = field(default_factory=list)
     user_guidance: dict[str, Any] | None = None
+    # how "known vocabulary" is defined for at-level metrics. See vocab.build_profile.
+    #   {"kind": "explicit"}                      -> available_chunks are the known set
+    #   {"kind": "frequency", "top_n": 3000}      -> top-N frequency band is known
+    # omit to default: explicit if available_chunks is set, else a level-sized band.
+    vocab: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -37,6 +42,7 @@ class StorySpec:
             target_constructions=list(d.get("target_constructions") or []),
             new_chunks=list(d.get("new_chunks") or []),
             user_guidance=d.get("user_guidance"),
+            vocab=d.get("vocab"),
         )
 
 

@@ -8,4 +8,6 @@ data/*.db
 .DS_Store
 storylab/runs/
 storylab/judgments/
+storylab/vocab/el_50k.txt
+storylab/vocab/el_lemma_rank.json
 /storylab/.variants.json.swp

@@ -31,14 +31,14 @@ def print_metrics() -> None:
     if not rows:
         print("no runs yet — run `python -m storylab run` first.")
         return
-    print(f"\n{'spec':<28}{'arch':<20}{'cov':>6}{'calls':>6}{'types':>7}{'sents':>7}{'ttr':>6}{'frag':>6}")
-    print("-" * 86)
+    print(f"\n{'spec':<28}{'arch':<20}{'cov':>6}{'oov':>6}{'rarity':>7}{'calls':>6}{'types':>7}{'sents':>7}")
+    print("-" * 88)
     for spec_id, arch_id, calls, m in rows:
         print(
             f"{spec_id:<28}{arch_id:<20}"
-            f"{m.get('coverage', 0):>6.0%}{calls:>6}{m.get('n_types', 0):>7}"
-            f"{m.get('n_sentences', 0):>7}{m.get('type_token_ratio', 0):>6.2f}"
-            f"{m.get('frag_share', 0):>6.2f}"
+            f"{m.get('coverage', 0):>6.0%}{m.get('oov_rate', 0):>6.0%}"
+            f"{m.get('mean_rarity', 0):>7.2f}{calls:>6}{m.get('n_types', 0):>7}"
+            f"{m.get('n_sentences', 0):>7}"
         )
 
 

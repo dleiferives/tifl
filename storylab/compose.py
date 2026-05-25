@@ -22,15 +22,14 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
-from backend.core.coverage import coverage as _coverage
 from backend.core.levels import get_level
 from backend.llm.client import LLMError
 
 from storylab.arch import Arch, Node, load_lenses
 from storylab.judge import pick_best_by_judge
-from storylab.metrics import story_metrics
-from storylab.render import eval_expr, render_prompt
+from storylab.render import eval_expr, helpers_for, render_prompt
 from storylab.spec import StorySpec
+from storylab.vocab import build_profile
 
 
 # ---- result + trace --------------------------------------------------------
@@ -94,10 +93,10 @@ def _base_blackboard(spec: StorySpec, level) -> dict[str, Any]:
     }
 
 
-def known_words(bb: dict[str, Any]) -> list[str]:
-    known = list(bb.get("available_chunks") or [])
-    known += [n.get("greek_text") for n in (bb.get("new_chunks") or []) if isinstance(n, dict)]
-    return [k for k in known if k]
+def _new_chunk_words(bb: dict[str, Any]) -> list[str]:
+    """Greek text of planner-introduced chunks — these count as known vocab."""
+    return [n.get("greek_text") for n in (bb.get("new_chunks") or [])
+            if isinstance(n, dict) and n.get("greek_text")]
 
 
 def _as_text(v: Any) -> str:
@@ -121,12 +120,6 @@ def _node_ctx(bb: dict[str, Any], deps: set[str], extra: dict[str, Any]) -> dict
     return ctx
 
 
-def _score(by: str, text: str, known: list[str]) -> float:
-    if by == "coverage":
-        return _coverage(text, known)
-    return float(story_metrics(text, known).get(by, 0.0))
-
-
 # ---- the interpreter -------------------------------------------------------
 def compose_story(llm, spec: StorySpec, arch: Arch, lenses: dict[str, str] | None = None) -> StoryResult:
     lenses = lenses if lenses is not None else load_lenses()
@@ -134,6 +127,22 @@ def compose_story(llm, spec: StorySpec, arch: Arch, lenses: dict[str, str] | Non
     bb = _base_blackboard(spec, level)
     ids = {n.id for n in arch.nodes}
     steps_by_node: dict[str, list[TraceStep]] = {}
+
+    def profile_for(bb: dict[str, Any]):
+        # rebuilt per call so planner-introduced new_chunks count as known
+        return build_profile(spec, level, _new_chunk_words(bb))
+
+    def hlp(bb: dict[str, Any]) -> dict[str, Any]:
+        return helpers_for(profile_for(bb), level.coverage_target)
+
+    def score(by: str, text: str, prof) -> float:
+        if by == "coverage":
+            return prof.coverage(text)
+        if by == "oov_rate":
+            return -prof.oov_rate(text)        # lower OOV is better
+        if by == "mean_rarity":
+            return -prof.mean_rarity(text)      # lower rarity is better
+        return prof.coverage(text)
 
     def call(node_id: str, variant: str, kind: str, prompt: str) -> tuple[Any, Any, TraceStep]:
         started = time.time()
@@ -154,10 +163,8 @@ def compose_story(llm, spec: StorySpec, arch: Arch, lenses: dict[str, str] | Non
 
     def run_generate(node: Node) -> tuple[Any, Any, list[TraceStep]]:
         deps = node.dependencies(ids)
-        helpers_known = known_words(bb)
-        target = level.coverage_target
 
-        if node.when is not None and not eval_expr(node.when, _node_ctx(bb, deps, {}), _h(helpers_known, target)):
+        if node.when is not None and not eval_expr(node.when, _node_ctx(bb, deps, {}), hlp(bb)):
             # A conditional transform that doesn't fire passes its input through,
             # so a skipped terminal node still yields the upstream story.
             passthrough = bb.get(next(iter(deps))) if len(deps) == 1 else None
@@ -165,14 +172,14 @@ def compose_story(llm, spec: StorySpec, arch: Arch, lenses: dict[str, str] | Non
                                                  note=f"when false ({node.when}); passed input through")]
 
         if node.foreach:
-            items = eval_expr(node.foreach, _node_ctx(bb, deps, {}), _h(helpers_known, target)) or []
+            items = eval_expr(node.foreach, _node_ctx(bb, deps, {}), hlp(bb)) or []
             items = list(items)
             out: list[Any] = [None] * len(items)
             steps: list[TraceStep] = [None] * len(items)  # type: ignore
 
             def one(idx: int) -> None:
                 ctx = _node_ctx(bb, deps, {"item": items[idx], "index": idx})
-                prompt = render_prompt(node.prompt, ctx, _h(known_words(bb), target))
+                prompt = render_prompt(node.prompt, ctx, hlp(bb))
                 res, _, step = call(node.id, node.prompt, f"{node.id}_{idx}", prompt)
                 out[idx] = value_of(node, res)
                 steps[idx] = step
@@ -186,7 +193,7 @@ def compose_story(llm, spec: StorySpec, arch: Arch, lenses: dict[str, str] | Non
             return run_loop(node, deps)
 
         ctx = _node_ctx(bb, deps, {})
-        prompt = render_prompt(node.prompt, ctx, _h(helpers_known, target))
+        prompt = render_prompt(node.prompt, ctx, hlp(bb))
         try:
             res, parsed, step = call(node.id, node.prompt, node.id, prompt)
         except LLMError as e:
@@ -199,26 +206,26 @@ def compose_story(llm, spec: StorySpec, arch: Arch, lenses: dict[str, str] | Non
     def run_loop(node: Node, deps: set[str]) -> tuple[Any, Any, list[TraceStep]]:
         loop = node.loop or {}
         target = level.coverage_target
+        prof = profile_for(bb)
         steps: list[TraceStep] = []
 
         if "cycle" in loop:  # refine: one axis per pass
             names = loop["cycle"]
             passes = int(loop.get("passes", len(names)))
             input_key = loop.get("input") or (next(iter(deps)) if len(deps) == 1 else None)
-            known = known_words(bb)
             current = _as_text(bb.get(input_key)) if input_key else ""
-            cur_cov = _coverage(current, known)
+            cur_cov = prof.coverage(current)
             for i in range(passes):
                 lname = names[i % len(names)]
                 focus = lenses.get(lname, lname)
                 ctx = _node_ctx(bb, deps, {"current": current, "lens": focus})
-                prompt = render_prompt(node.prompt, ctx, _h(known, target))
+                prompt = render_prompt(node.prompt, ctx, hlp(bb))
                 try:
                     res, _, step = call(node.id, node.prompt, f"{node.id}_{i}_{lname}", prompt)
                 except LLMError:
                     break
                 rtext = _as_text(value_of(node, res))
-                rcov = _coverage(rtext, known)
+                rcov = prof.coverage(rtext)
                 step.coverage = rcov
                 steps.append(step)
                 if not rtext:
@@ -235,19 +242,18 @@ def compose_story(llm, spec: StorySpec, arch: Arch, lenses: dict[str, str] | Non
         previous = None
         out: Any = ""
         for i in range(max_n):
-            known = known_words(bb)
             ctx = _node_ctx(bb, deps, {"previous": previous})
-            prompt = render_prompt(node.prompt, ctx, _h(known, target))
+            prompt = render_prompt(node.prompt, ctx, hlp(bb))
             res, _, step = call(node.id, node.prompt, f"{node.id}_{i}", prompt)
             out = value_of(node, res)
             text = _as_text(out)
-            step.coverage = _coverage(text, known)
+            step.coverage = prof.coverage(text)
             steps.append(step)
             previous = text
             if not until:
                 break
             stop_ctx = {**bb, node.id: out, "previous": text}
-            if eval_expr(until, stop_ctx, _h(known, target)):
+            if eval_expr(until, stop_ctx, hlp(bb)):
                 break
         return out, None, steps
 
@@ -259,8 +265,8 @@ def compose_story(llm, spec: StorySpec, arch: Arch, lenses: dict[str, str] | Non
             idx = pick_best_by_judge(llm, spec, items)
             note = f"judge picked #{idx} of {len(items)}"
         else:
-            known = known_words(bb)
-            scores = [_score(node.by, t, known) for t in items]
+            prof = profile_for(bb)
+            scores = [score(node.by, t, prof) for t in items]
             idx = max(range(len(items)), key=lambda i: scores[i])
             note = f"by {node.by}: scores={[round(s, 3) for s in scores]} -> #{idx}"
         return items[idx], None, [TraceStep(node.id, f"select_{node.by}", node.by, "", note, None, 0.0, note=note)]
@@ -296,13 +302,8 @@ def compose_story(llm, spec: StorySpec, arch: Arch, lenses: dict[str, str] | Non
         spec_id=spec.id, variant_id=arch.id, text=text,
         plan=bb.get("plan") if isinstance(bb.get("plan"), dict) else {},
         outline=bb.get("outline") if isinstance(bb.get("outline"), dict) else {},
-        coverage=_coverage(text, known_words(bb)), trace=trace,
+        coverage=profile_for(bb).coverage(text), trace=trace,
     )
-
-
-def _h(known: list[str], target: float) -> dict[str, Any]:
-    from storylab.render import _helpers
-    return _helpers(known, target)
 
 
 def _apply_merge(node: Node, parsed: Any, bb: dict[str, Any]) -> None:

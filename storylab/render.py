@@ -20,10 +20,7 @@ from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, meta
 
-from backend.core.coverage import coverage as _coverage
 from backend.core.prompts import _JSON_RULES
-
-from storylab.metrics import story_metrics
 
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 
@@ -42,10 +39,13 @@ def _is_file_ref(prompt: str) -> bool:
     return bool(re.fullmatch(r"[\w./-]+", prompt.strip())) and (PROMPTS_DIR / f"{prompt.strip()}.j2").exists()
 
 
-def _helpers(known_chunks: list[str], target: float) -> dict[str, Any]:
+def helpers_for(profile, target: float) -> dict[str, Any]:
+    """Functions a prompt/condition can call. Bound to the run's vocab profile,
+    so `coverage`/`oov_rate`/`mean_rarity` mean the right thing per level."""
     return {
-        "coverage": lambda text: _coverage(text or "", known_chunks),
-        "metrics": lambda text: story_metrics(text or "", known_chunks),
+        "coverage": lambda text: profile.coverage(text or ""),
+        "oov_rate": lambda text: profile.oov_rate(text or ""),
+        "mean_rarity": lambda text: profile.mean_rarity(text or ""),
         "target": target,
         "len": len,
         "min": min,

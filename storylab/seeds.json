@@ -5,7 +5,8 @@
     "topic": "Painting / ζωγραφική",
     "available_chunks": [],
     "target_constructions": [],
-    "new_chunks": []
+    "new_chunks": [],
+    "vocab": {"kind": "frequency", "top_n": 800}
   },
   {
     "id": "beg_hungry_cat_coldstart",
@@ -13,7 +14,8 @@
     "topic": "A hungry cat looking for food",
     "available_chunks": [],
     "target_constructions": [],
-    "new_chunks": []
+    "new_chunks": [],
+    "vocab": {"kind": "frequency", "top_n": 800}
   },
   {
     "id": "beg_market_withvocab",
@@ -41,7 +43,8 @@
       "ξαφνικά", "τέλος", "χαρούμενος", "νευρικός", "κουρασμένος"
     ],
     "target_constructions": ["tense_aorist"],
-    "new_chunks": []
+    "new_chunks": [],
+    "vocab": {"kind": "frequency", "top_n": 3000}
   },
   {
     "id": "adv_value_of_silence",
@@ -49,6 +52,7 @@
     "topic": "The value of silence in a noisy city",
     "available_chunks": [],
     "target_constructions": ["mood_subjunctive"],
-    "new_chunks": []
+    "new_chunks": [],
+    "vocab": {"kind": "frequency", "top_n": 8000}
   }
 ]

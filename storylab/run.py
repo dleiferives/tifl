@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from backend.core.levels import get_level
 from backend.llm.client import LLMError
 
 from storylab.arch import Arch, LENSES_PATH
@@ -21,6 +22,7 @@ from storylab.compose import StoryResult, compose_story
 from storylab.metrics import story_metrics
 from storylab.render import PROMPTS_DIR
 from storylab.spec import StorySpec
+from storylab.vocab import build_profile
 
 RUNS_DIR = Path(__file__).resolve().parent / "runs"
 
@@ -71,14 +73,18 @@ def run_one(llm, spec: StorySpec, arch: Arch, model: str, force: bool = False) -
         result = StoryResult(spec_id=spec.id, variant_id=arch.id, text="",
                              plan={}, outline={}, coverage=0.0, error=str(e))
 
-    known = list(spec.available_chunks) + [
-        n.get("greek_text") for n in (result.plan.get("new_chunks") or []) if isinstance(n, dict)
-    ]
+    new_chunks = [n.get("greek_text") for n in (result.plan.get("new_chunks") or []) if isinstance(n, dict)]
+    profile = build_profile(spec, get_level(spec.level_id), [c for c in new_chunks if c])
+    metrics = story_metrics(result.text, [])      # structural metrics
+    metrics["coverage"] = profile.coverage(result.text)
+    metrics["oov_rate"] = profile.oov_rate(result.text)
+    metrics["mean_rarity"] = profile.mean_rarity(result.text)
+
     record = result.to_dict()
     record["_key"] = key
     record["model"] = model
     record["n_llm_calls"] = sum(1 for s in result.trace if s.kind not in ("(skipped)", "(empty select)"))
-    record["metrics"] = story_metrics(result.text, [k for k in known if k])
+    record["metrics"] = metrics
     record["_cached"] = False
 
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
