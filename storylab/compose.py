@@ -1,116 +1,36 @@
-"""compose_story — the generation graph as one pure, configurable function.
+"""compose_story — interpret an Arch (a DAG of LLM nodes) into a story.
 
-This is the heart of the harness. It reproduces the backend pipeline's story
-stages (plan -> outline -> writer + coverage retry -> refine) but:
+Execution is level-by-level over a topological sort; nodes in the same level
+(and the branches of a `foreach` fan-out) run in parallel, since each opencode
+call is slow. A node reads the shared blackboard, produces a value, and that
+value is committed under the node id *after* the level completes — so nodes in a
+level never race on each other's writes. The trace is reassembled in
+declaration order afterwards, so it stays readable despite the parallelism.
 
-  * takes its inputs from a frozen StorySpec instead of the DB,
-  * runs only the stages a StageConfig enables,
-  * resolves each stage's prompt through a variant registry so wording can be
-    swapped without touching orchestration,
-  * records a full per-stage trace (prompt + output + coverage) so you can see
-    exactly what each "level" contributed,
-  * persists nothing.
-
-Topic is always pinned to the spec so every variant tells a story about the
-same thing — otherwise the planner could pick a different topic and the
-comparison would be meaningless. The planner still gets to choose target
-constructions / new chunks when those are not pinned by the spec, which is what
-the `plan` ablation actually measures.
+Conventions a template/arch can rely on:
+  * topic is always `spec.topic` (never a planner's choice) — every arch tells a
+    story about the same thing, which is what makes the comparison fair.
+  * a single-dependency node also sees its upstream output as `input`; all
+    dependencies are in `inputs` (a dict) and under their own node ids.
+  * loop nodes expose `previous` (the node's own prior attempt, for retry) or
+    `current` + `lens` (the text being revised, for a refine cycle).
 """
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
-from backend.core.coverage import coverage
+from backend.core.coverage import coverage as _coverage
 from backend.core.levels import get_level
-from backend.core.prompts import (
-    REVISION_LENSES,
-    _JSON_RULES,
-    narrative_outline_prompt,
-    session_planner_prompt,
-    story_generator_prompt,
-    story_reviser_prompt,
-)
-from backend.llm.client import LLMClient, LLMError
+from backend.llm.client import LLMError
 
-from storylab.spec import StageConfig, StorySpec
-
-COVERAGE_MAX_RETRIES = 2
-
-
-# ---- prompt variant registry ---------------------------------------------
-# Maps (stage, variant) -> a builder. Each builder takes a context dict and
-# returns a prompt string. "v1" wraps the backend's current prompts verbatim,
-# so the harness reproduces today's pipeline exactly. Wording experiments add
-# new variant names here (e.g. "writer": {"v2": _writer_v2}) without changing
-# any orchestration in compose_story.
-
-def _chunks_as_dicts(spec: StorySpec) -> list[dict[str, Any]]:
-    return [{"greek_text": c} for c in spec.available_chunks]
-
-
-def _planner_v1(ctx: dict[str, Any]) -> str:
-    spec: StorySpec = ctx["spec"]
-    candidates = [{"construction_id": c, "gap_score": 1.0} for c in spec.target_constructions]
-    return session_planner_prompt(
-        candidates, _chunks_as_dicts(spec), [], spec.user_guidance, ctx["level"]
-    )
-
-
-def _outline_v1(ctx: dict[str, Any]) -> str:
-    return narrative_outline_prompt(ctx["plan"], ctx["level"], [])
-
-
-def _writer_v1(ctx: dict[str, Any]) -> str:
-    return story_generator_prompt(
-        ctx["plan"], _chunks_as_dicts(ctx["spec"]), ctx["level"],
-        outline=ctx.get("outline"), extra_constraint=ctx.get("extra_constraint"),
-    )
-
-
-def _writer_monolith(ctx: dict[str, Any]) -> str:
-    """One self-contained call: level rules + topic, no planner/outline/retry.
-
-    This is the bottom rung of the reduction ladder — the simplest thing that
-    could possibly produce a story. If it is competitive, most of the pipeline
-    is bloat.
-    """
-    level = ctx["level"]
-    spec: StorySpec = ctx["spec"]
-    extra = f"\n\nADDITIONAL CONSTRAINT: {ctx['extra_constraint']}" if ctx.get("extra_constraint") else ""
-    return (
-        f"{level.story_rules.strip()}\n\n"
-        f"Write the story about this topic: {spec.topic}. Build it from the most "
-        "common, high-frequency Greek words and recycle them.\n\n"
-        f"{_JSON_RULES}{extra}\n\n"
-        'Schema: {"text":"..."}  (Only the story text, including a short Greek title.)'
-    )
-
-
-def _reviser_v1(ctx: dict[str, Any]) -> str:
-    return story_reviser_prompt(
-        ctx["plan"], _chunks_as_dicts(ctx["spec"]), ctx["level"],
-        ctx["current_text"], ctx["lens_focus"],
-        outline=ctx.get("outline"), coverage_note=ctx.get("coverage_note", ""),
-    )
-
-
-PROMPT_VARIANTS: dict[str, dict[str, Callable[[dict[str, Any]], str]]] = {
-    "planner": {"v1": _planner_v1},
-    "outline": {"v1": _outline_v1},
-    "writer": {"v1": _writer_v1, "monolith": _writer_monolith},
-    "reviser": {"v1": _reviser_v1},
-}
-
-
-def _build_prompt(stage: str, variant: str, ctx: dict[str, Any]) -> str:
-    try:
-        builder = PROMPT_VARIANTS[stage][variant]
-    except KeyError as e:
-        raise ValueError(f"no prompt variant {stage!r}/{variant!r}") from e
-    return builder(ctx)
+from storylab.arch import Arch, Node, load_lenses
+from storylab.judge import pick_best_by_judge
+from storylab.metrics import story_metrics
+from storylab.render import eval_expr, render_prompt
+from storylab.spec import StorySpec
 
 
 # ---- result + trace --------------------------------------------------------
@@ -155,110 +75,245 @@ class StoryResult:
         }
 
 
-def _known_words(spec: StorySpec, plan: dict[str, Any]) -> list[str]:
-    known = list(spec.available_chunks)
-    known += [n.get("greek_text") for n in (plan.get("new_chunks") or [])]
+# ---- blackboard helpers ----------------------------------------------------
+def _base_blackboard(spec: StorySpec, level) -> dict[str, Any]:
+    return {
+        "spec": spec.to_dict(),
+        "level": {
+            "id": level.id, "label": level.label, "description": level.description,
+            "story_rules": level.story_rules, "coverage_target": level.coverage_target,
+            "max_new_chunks": level.max_new_chunks,
+        },
+        "available_chunks": list(spec.available_chunks),
+        "new_chunks": list(spec.new_chunks),
+        "target_constructions": list(spec.target_constructions),
+        "construction_candidates": [
+            {"construction_id": c, "gap_score": 1.0} for c in spec.target_constructions
+        ],
+        "max_new_chunks": level.max_new_chunks,
+    }
+
+
+def known_words(bb: dict[str, Any]) -> list[str]:
+    known = list(bb.get("available_chunks") or [])
+    known += [n.get("greek_text") for n in (bb.get("new_chunks") or []) if isinstance(n, dict)]
     return [k for k in known if k]
 
 
-def compose_story(llm: LLMClient, spec: StorySpec, config: StageConfig) -> StoryResult:
-    """Run the enabled stages against a frozen spec. Persists nothing."""
-    level = get_level(spec.level_id)
-    trace: list[TraceStep] = []
+def _as_text(v: Any) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, str):
+        return v
+    if isinstance(v, dict):
+        return v.get("text", "") or ""
+    if isinstance(v, list):
+        return "\n\n".join(_as_text(x) for x in v)
+    return str(v)
 
-    def call(stage: str, kind: str, prompt: str) -> tuple[Any, str]:
+
+def _node_ctx(bb: dict[str, Any], deps: set[str], extra: dict[str, Any]) -> dict[str, Any]:
+    ctx = dict(bb)
+    ctx["inputs"] = {d: bb.get(d) for d in deps}
+    if len(deps) == 1:
+        ctx["input"] = bb.get(next(iter(deps)))
+    ctx.update(extra)
+    return ctx
+
+
+def _score(by: str, text: str, known: list[str]) -> float:
+    if by == "coverage":
+        return _coverage(text, known)
+    return float(story_metrics(text, known).get(by, 0.0))
+
+
+# ---- the interpreter -------------------------------------------------------
+def compose_story(llm, spec: StorySpec, arch: Arch, lenses: dict[str, str] | None = None) -> StoryResult:
+    lenses = lenses if lenses is not None else load_lenses()
+    level = get_level(spec.level_id)
+    bb = _base_blackboard(spec, level)
+    ids = {n.id for n in arch.nodes}
+    steps_by_node: dict[str, list[TraceStep]] = {}
+
+    def call(node_id: str, variant: str, kind: str, prompt: str) -> tuple[Any, Any, TraceStep]:
         started = time.time()
         res = llm.call(prompt, kind=kind)
-        step = TraceStep(
-            stage=stage, kind=kind, variant=config.variant(stage), prompt=prompt,
-            output_text=res.result_text, parsed=res.parsed_json,
-            duration_s=time.time() - started,
-        )
-        trace.append(step)
-        return res.parsed_json, step  # step returned so caller can annotate coverage
+        step = TraceStep(stage=node_id, kind=kind, variant=variant, prompt=prompt,
+                         output_text=res.result_text, parsed=res.parsed_json,
+                         duration_s=time.time() - started)
+        parsed = res.parsed_json if isinstance(res.parsed_json, dict) else None
+        return res, parsed, step
 
-    # ---- 1. plan -----------------------------------------------------------
-    plan: dict[str, Any]
-    if config.plan:
-        parsed, _ = call("planner", "session_plan",
-                         _build_prompt("planner", config.variant("planner"),
-                                       {"spec": spec, "level": level}))
-        plan = parsed if isinstance(parsed, dict) else {}
-    else:
-        plan = {}
-    # Pin topic always; pin targets if the spec fixes them.
-    plan["topic"] = spec.topic
-    if spec.target_constructions:
-        plan["target_constructions"] = list(spec.target_constructions)
-    plan.setdefault("target_constructions", [])
-    if spec.new_chunks and not plan.get("new_chunks"):
-        plan["new_chunks"] = list(spec.new_chunks)
-    plan.setdefault("new_chunks", [])
+    def value_of(node: Node, res) -> Any:
+        if node.parse == "text":
+            return res.result_text
+        parsed = res.parsed_json
+        if node.extract and isinstance(parsed, dict):
+            return parsed.get(node.extract, "")
+        return parsed if parsed is not None else res.result_text
 
-    # ---- 2. outline --------------------------------------------------------
-    outline: dict[str, Any] = {}
-    if config.outline:
+    def run_generate(node: Node) -> tuple[Any, Any, list[TraceStep]]:
+        deps = node.dependencies(ids)
+        helpers_known = known_words(bb)
+        target = level.coverage_target
+
+        if node.when is not None and not eval_expr(node.when, _node_ctx(bb, deps, {}), _h(helpers_known, target)):
+            # A conditional transform that doesn't fire passes its input through,
+            # so a skipped terminal node still yields the upstream story.
+            passthrough = bb.get(next(iter(deps))) if len(deps) == 1 else None
+            return passthrough, None, [TraceStep(node.id, "(skipped)", node.prompt, "", "", None, 0.0,
+                                                 note=f"when false ({node.when}); passed input through")]
+
+        if node.foreach:
+            items = eval_expr(node.foreach, _node_ctx(bb, deps, {}), _h(helpers_known, target)) or []
+            items = list(items)
+            out: list[Any] = [None] * len(items)
+            steps: list[TraceStep] = [None] * len(items)  # type: ignore
+
+            def one(idx: int) -> None:
+                ctx = _node_ctx(bb, deps, {"item": items[idx], "index": idx})
+                prompt = render_prompt(node.prompt, ctx, _h(known_words(bb), target))
+                res, _, step = call(node.id, node.prompt, f"{node.id}_{idx}", prompt)
+                out[idx] = value_of(node, res)
+                steps[idx] = step
+
+            if items:
+                with ThreadPoolExecutor(max_workers=min(len(items), 6)) as pool:
+                    list(pool.map(one, range(len(items))))
+            return out, None, [s for s in steps if s]
+
+        if node.loop:
+            return run_loop(node, deps)
+
+        ctx = _node_ctx(bb, deps, {})
+        prompt = render_prompt(node.prompt, ctx, _h(helpers_known, target))
         try:
-            parsed, _ = call("outline", "narrative_outline",
-                             _build_prompt("outline", config.variant("outline"),
-                                           {"plan": plan, "level": level}))
-            outline = parsed if isinstance(parsed, dict) else {}
-        except LLMError:
-            outline = {}  # outline is non-fatal, mirroring the backend
+            res, parsed, step = call(node.id, node.prompt, node.id, prompt)
+        except LLMError as e:
+            if node.optional:
+                return None, None, [TraceStep(node.id, "(failed,optional)", node.prompt, prompt, "", None, 0.0,
+                                              note=str(e)[:200])]
+            raise
+        return value_of(node, res), parsed, [step]
 
-    # ---- 3. writer (+ coverage retry) -------------------------------------
-    known = _known_words(spec, plan)
-    writer_variant = config.variant("writer")
-    attempts = (COVERAGE_MAX_RETRIES + 1) if config.coverage_retry else 1
-    constraint: str | None = None
-    text = ""
-    cov = 0.0
-    for attempt in range(attempts):
-        ctx = {"spec": spec, "level": level, "plan": plan, "outline": outline or None,
-               "extra_constraint": constraint}
-        parsed, step = call("writer", f"story_attempt_{attempt}",
-                            _build_prompt("writer", writer_variant, ctx))
-        story = parsed if isinstance(parsed, dict) else {}
-        text = story.get("text", "") or ""
-        cov = coverage(text, known)
-        step.coverage = cov
-        if not config.coverage_retry or cov >= level.coverage_target:
-            break
-        constraint = (
-            f"Previous attempt only achieved coverage={cov:.2%}, below target "
-            f"{level.coverage_target:.0%}. Use ONLY words from available_chunks plus "
-            f"at most the listed new chunks."
-        )
+    def run_loop(node: Node, deps: set[str]) -> tuple[Any, Any, list[TraceStep]]:
+        loop = node.loop or {}
+        target = level.coverage_target
+        steps: list[TraceStep] = []
 
-    # ---- 4. refine (alternating lenses) -----------------------------------
-    for i in range(config.refine_iterations):
-        lens_id, lens_focus = REVISION_LENSES[i % len(REVISION_LENSES)]
-        cov_note = ""
-        if cov < level.coverage_target:
-            cov_note = (
-                f"NOTE: keep coverage at or above {level.coverage_target:.0%} using "
-                f"available_chunks (current is {cov:.0%}).\n\n"
-            )
-        ctx = {"spec": spec, "level": level, "plan": plan, "outline": outline or None,
-               "current_text": text, "lens_focus": lens_focus, "coverage_note": cov_note}
-        try:
-            parsed, step = call("reviser", f"story_refine_{i}_{lens_id}",
-                                _build_prompt("reviser", config.variant("reviser"), ctx))
-        except LLMError:
-            break
-        revised = parsed if isinstance(parsed, dict) else {}
-        rtext = revised.get("text", "") or ""
-        if not rtext:
-            continue
-        rcov = coverage(rtext, known)
-        step.coverage = rcov
-        # Reject a revision that both fails the target and worsens coverage.
-        if rcov < level.coverage_target and rcov < cov:
-            step.note = "rejected (coverage regressed below target)"
-            continue
-        text, cov = rtext, rcov
+        if "cycle" in loop:  # refine: one axis per pass
+            names = loop["cycle"]
+            passes = int(loop.get("passes", len(names)))
+            input_key = loop.get("input") or (next(iter(deps)) if len(deps) == 1 else None)
+            known = known_words(bb)
+            current = _as_text(bb.get(input_key)) if input_key else ""
+            cur_cov = _coverage(current, known)
+            for i in range(passes):
+                lname = names[i % len(names)]
+                focus = lenses.get(lname, lname)
+                ctx = _node_ctx(bb, deps, {"current": current, "lens": focus})
+                prompt = render_prompt(node.prompt, ctx, _h(known, target))
+                try:
+                    res, _, step = call(node.id, node.prompt, f"{node.id}_{i}_{lname}", prompt)
+                except LLMError:
+                    break
+                rtext = _as_text(value_of(node, res))
+                rcov = _coverage(rtext, known)
+                step.coverage = rcov
+                steps.append(step)
+                if not rtext:
+                    continue
+                if rcov < target and rcov < cur_cov:
+                    step.note = "rejected (coverage regressed below target)"
+                    continue
+                current, cur_cov = rtext, rcov
+            return current, None, steps
 
+        # repeat-until: re-run the same node, exposing its own prior attempt
+        until = loop.get("until")
+        max_n = int(loop.get("max", 3))
+        previous = None
+        out: Any = ""
+        for i in range(max_n):
+            known = known_words(bb)
+            ctx = _node_ctx(bb, deps, {"previous": previous})
+            prompt = render_prompt(node.prompt, ctx, _h(known, target))
+            res, _, step = call(node.id, node.prompt, f"{node.id}_{i}", prompt)
+            out = value_of(node, res)
+            text = _as_text(out)
+            step.coverage = _coverage(text, known)
+            steps.append(step)
+            previous = text
+            if not until:
+                break
+            stop_ctx = {**bb, node.id: out, "previous": text}
+            if eval_expr(until, stop_ctx, _h(known, target)):
+                break
+        return out, None, steps
+
+    def run_select(node: Node) -> tuple[Any, Any, list[TraceStep]]:
+        items = [_as_text(x) for x in (bb.get(node.src) or [])]
+        if not items:
+            return None, None, [TraceStep(node.id, "(empty select)", node.by, "", "", None, 0.0)]
+        if node.by == "judge":
+            idx = pick_best_by_judge(llm, spec, items)
+            note = f"judge picked #{idx} of {len(items)}"
+        else:
+            known = known_words(bb)
+            scores = [_score(node.by, t, known) for t in items]
+            idx = max(range(len(items)), key=lambda i: scores[i])
+            note = f"by {node.by}: scores={[round(s, 3) for s in scores]} -> #{idx}"
+        return items[idx], None, [TraceStep(node.id, f"select_{node.by}", node.by, "", note, None, 0.0, note=note)]
+
+    # ---- execute the DAG level by level ----------------------------------
+    for level_nodes in arch.topo_order():
+        def run_one_node(node: Node):
+            if node.type == "select":
+                return node.id, run_select(node)
+            return node.id, run_generate(node)
+
+        if len(level_nodes) == 1:
+            results = [run_one_node(level_nodes[0])]
+        else:
+            with ThreadPoolExecutor(max_workers=min(len(level_nodes), 6)) as pool:
+                results = list(pool.map(run_one_node, level_nodes))
+
+        by_id = {n.id: n for n in level_nodes}
+        for nid, (val, parsed, steps) in results:
+            bb[nid] = val
+            steps_by_node[nid] = steps
+            _apply_merge(by_id[nid], parsed, bb)
+
+    trace: list[TraceStep] = []
+    for n in arch.nodes:
+        trace.extend(steps_by_node.get(n.id, []))
+
+    final = bb.get(arch.result)
+    if arch.result_extract and isinstance(final, dict):
+        final = final.get(arch.result_extract, "")
+    text = _as_text(final)
     return StoryResult(
-        spec_id=spec.id, variant_id=config.id, text=text,
-        plan=plan, outline=outline, coverage=cov, trace=trace,
+        spec_id=spec.id, variant_id=arch.id, text=text,
+        plan=bb.get("plan") if isinstance(bb.get("plan"), dict) else {},
+        outline=bb.get("outline") if isinstance(bb.get("outline"), dict) else {},
+        coverage=_coverage(text, known_words(bb)), trace=trace,
     )
+
+
+def _h(known: list[str], target: float) -> dict[str, Any]:
+    from storylab.render import _helpers
+    return _helpers(known, target)
+
+
+def _apply_merge(node: Node, parsed: Any, bb: dict[str, Any]) -> None:
+    """Promote selected fields of a node's JSON output into the shared context.
+
+    Fill-if-empty: a value the spec already pinned (e.g. target_constructions)
+    wins over the planner's choice; an empty one gets filled by the planner.
+    """
+    if not node.merge or not isinstance(parsed, dict):
+        return
+    for key in node.merge:
+        val = parsed.get(key)
+        if val and not bb.get(key):
+            bb[key] = val

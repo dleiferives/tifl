@@ -8,3 +8,4 @@ data/*.db
 .DS_Store
 storylab/runs/
 storylab/judgments/
+/storylab/.variants.json.swp

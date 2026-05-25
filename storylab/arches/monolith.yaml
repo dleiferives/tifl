@@ -1,0 +1,9 @@
+id: monolith
+description: The simplest thing that could work — one self-contained prompt, one call.
+result: draft
+result_extract: null
+
+nodes:
+  - id: draft
+    prompt: writer_plain
+    extract: text

@@ -1,0 +1,26 @@
+{{ level.story_rules }}
+
+{% if outline %}
+Follow this outline as the plot backbone — tell it beat by beat, in order,
+expanding EACH beat into several sentences (set it up, act, react) so the story
+reaches the length the rules ask for. Use the outline's title.
+OUTLINE: {{ outline | json }}
+{% endif %}
+Write the story about: {{ spec.topic }}.
+{% if available_chunks %}
+Build it almost entirely from these known words, adding at most {{ max_new_chunks }} of the new chunks:
+known words: {{ available_chunks | json }}
+{% if new_chunks %}new chunks: {{ new_chunks | json }}{% endif %}
+{% else %}
+Use the most common, high-frequency Greek words and recycle them constantly.
+{% endif %}
+{% if target_constructions %}
+Feature these grammar targets naturally, in more than one place: {{ target_constructions | json }}.
+{% endif %}
+{% if previous and coverage(previous) < target %}
+
+ADDITIONAL CONSTRAINT: your previous attempt scored only {{ '%.0f'|format(coverage(previous) * 100) }}% vocabulary coverage, below the {{ '%.0f'|format(target * 100) }}% target. Use ONLY the known words plus the listed new chunks; avoid any other vocabulary.
+{% endif %}
+
+{{ json_rules }}
+Schema: {"text":"..."}  (only the story text, including a short Greek title)

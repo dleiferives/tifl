@@ -1,0 +1,29 @@
+id: draft_critique_revise
+description: >
+  Write a draft, have an editor name the single biggest weakness, then revise to
+  fix exactly that. A conditional coverage fixup runs only if the revision drifts
+  off the known vocabulary. Demonstrates fan-in (revise reads draft + critique)
+  and a `when:` guard.
+result: final
+result_extract: null
+
+nodes:
+  - id: draft
+    prompt: writer
+    extract: text
+
+  - id: critique
+    prompt: critic
+    needs: [draft]
+    # parsed JSON kept whole (no extract) so revise can read critique.fix_instruction
+
+  - id: revised
+    prompt: revise_with_critique
+    needs: [draft, critique]
+    extract: text
+
+  - id: final
+    prompt: coverage_fixer
+    needs: [revised]
+    extract: text
+    when: "available_chunks and coverage(revised) < target"

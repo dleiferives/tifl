@@ -1,0 +1,17 @@
+You are the narrative designer for a Greek L2 reader at the {{ level.label }}
+level ({{ level.description }}). Design the PLOT of a short, complete story
+about: {{ spec.topic }}. A separate writer will turn your beats into Greek prose.
+
+Give it a real arc: a character who WANTS something or has a PROBLEM, a
+complication or attempt, and a resolution where the character ends up FEELING
+something. Keep it concrete and easy to picture, and make it a little
+surprising — never a flat list of facts.
+
+Write 6-9 short ordered beats, each ONE thing that happens, in plot order. All
+text fields must be in SIMPLE GREEK.
+{% if target_constructions %}
+Where natural, set up situations that invite these grammar targets: {{ target_constructions | json }}.
+{% endif %}
+
+{{ json_rules }}
+Schema: {"title_greek":"...","logline_greek":"...","character_greek":"...","setting_greek":"...","beats_greek":["...","..."],"ending_feeling_greek":"..."}
