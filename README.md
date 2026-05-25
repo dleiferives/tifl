@@ -73,5 +73,5 @@ The router supports plain strings and regex patterns with named groups.
 Env vars (all optional):
 
 - `LEARN_GREEK_MODEL` — model passed to `opencode run -m`, in `provider/model`
-  format. Default: `opencode/qwen3.6-plus-free`.
+  format. Default: `opencode/deepseek-v4-flash-free`.
 - `LEARN_GREEK_OPENCODE_BIN` — path to the CLI. Default: `opencode`.

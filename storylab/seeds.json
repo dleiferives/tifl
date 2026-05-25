@@ -1,0 +1,54 @@
+[
+  {
+    "id": "beg_painting_coldstart",
+    "level_id": "absolute_beginner",
+    "topic": "Painting / ζωγραφική",
+    "available_chunks": [],
+    "target_constructions": [],
+    "new_chunks": []
+  },
+  {
+    "id": "beg_hungry_cat_coldstart",
+    "level_id": "absolute_beginner",
+    "topic": "A hungry cat looking for food",
+    "available_chunks": [],
+    "target_constructions": [],
+    "new_chunks": []
+  },
+  {
+    "id": "beg_market_withvocab",
+    "level_id": "absolute_beginner",
+    "topic": "Going to the market to buy bread",
+    "available_chunks": [
+      "ο", "η", "το", "και", "είναι", "ένα", "μια", "πολύ", "θέλω", "έχω",
+      "πάω", "βλέπω", "ψάχνω", "βρίσκω", "παίρνω", "δίνω", "τρώω", "λέω",
+      "κάνω", "ξέρω", "εδώ", "εκεί", "πού", "ναι", "όχι", "καλός", "μεγάλος",
+      "μικρός", "χαρούμενος", "ο άντρας", "η γυναίκα", "το παιδί", "το σπίτι",
+      "το ψωμί", "η αγορά", "το νερό", "τα λεφτά"
+    ],
+    "target_constructions": [],
+    "new_chunks": []
+  },
+  {
+    "id": "int_lost_key",
+    "level_id": "intermediate",
+    "topic": "Someone loses their key and the day unravels",
+    "available_chunks": [
+      "ο", "η", "το", "και", "αλλά", "γιατί", "όμως", "ενώ", "είναι", "έχω",
+      "θέλω", "πάω", "βλέπω", "ψάχνω", "βρίσκω", "παίρνω", "ανοίγω", "κλείνω",
+      "περιμένω", "φεύγω", "γυρίζω", "το κλειδί", "η πόρτα", "το σπίτι",
+      "η δουλειά", "ο φίλος", "το τηλέφωνο", "ο δρόμος", "αργά", "νωρίς",
+      "ξαφνικά", "τέλος", "χαρούμενος", "νευρικός", "κουρασμένος"
+    ],
+    "target_constructions": ["tense_aorist"],
+    "new_chunks": []
+  },
+  {
+    "id": "adv_value_of_silence",
+    "level_id": "advanced",
+    "topic": "The value of silence in a noisy city",
+    "available_chunks": [],
+    "target_constructions": ["mood_subjunctive"],
+    "new_chunks": []
+  }
+]

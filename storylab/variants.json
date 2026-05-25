@@ -1,0 +1,42 @@
+[
+  {
+    "id": "baseline",
+    "plan": true,
+    "outline": true,
+    "coverage_retry": true,
+    "refine_iterations": 3,
+    "prompt_variants": {}
+  },
+  {
+    "id": "no_refine",
+    "plan": true,
+    "outline": true,
+    "coverage_retry": true,
+    "refine_iterations": 0,
+    "prompt_variants": {}
+  },
+  {
+    "id": "no_outline",
+    "plan": true,
+    "outline": false,
+    "coverage_retry": true,
+    "refine_iterations": 0,
+    "prompt_variants": {}
+  },
+  {
+    "id": "writer_only",
+    "plan": false,
+    "outline": false,
+    "coverage_retry": false,
+    "refine_iterations": 0,
+    "prompt_variants": {}
+  },
+  {
+    "id": "monolith",
+    "plan": false,
+    "outline": false,
+    "coverage_retry": false,
+    "refine_iterations": 0,
+    "prompt_variants": {"writer": "monolith"}
+  }
+]
