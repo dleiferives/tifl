@@ -188,6 +188,54 @@ def test_frequency_profile_discriminates():
     assert prof.oov_rate("ζζζ ξξξ qqq ωωω") > 0.5
 
 
+def test_export_dossier_includes_state():
+    from storylab import optimize as opt
+    doc = opt.build_dossier(max_stories_per_spec=1)
+    assert "# CURRENT STATE" in doc
+    assert "=== FILE:" in doc            # the output contract is taught to Claude
+    assert "arches/baseline.yaml" in doc  # current arches are embedded
+    assert "prompts/writer.j2" in doc     # current prompts are embedded
+
+
+def test_apply_validates_and_writes(tmp_path, monkeypatch):
+    from storylab import optimize as opt
+    monkeypatch.setattr(opt, "HERE", tmp_path)
+    monkeypatch.setattr(opt, "JOURNAL_PATH", tmp_path / "journal.md")
+    (tmp_path / "arches").mkdir()
+    (tmp_path / "prompts").mkdir()
+    reply = (
+        "ANALYSIS: try a leaner writer.\n"
+        "=== FILE: arches/lean.yaml ===\n"
+        "id: lean\ndescription: one call\nresult: draft\nresult_extract: null\n"
+        "nodes:\n  - id: draft\n    prompt: writer_plain\n    extract: text\n"
+        "=== FILE: prompts/tiny.j2 ===\n"
+        "{{ level.story_rules }}\nWrite about {{ spec.topic }}.\n{{ json_rules }}\n"
+        "=== JOURNAL ===\n- added lean: fewer calls -> expect similar win-rate, lower calls\n"
+    )
+    res = opt.apply_proposal(reply)
+    assert res["ok"] and sorted(res["written"]) == ["arches/lean.yaml", "prompts/tiny.j2"]
+    assert (tmp_path / "arches/lean.yaml").exists()
+    assert "added lean" in (tmp_path / "journal.md").read_text(encoding="utf-8")
+
+
+def test_apply_rejects_bad_arch_and_bad_paths(tmp_path, monkeypatch):
+    from storylab import optimize as opt
+    monkeypatch.setattr(opt, "HERE", tmp_path)
+    (tmp_path / "arches").mkdir()
+    # a cyclic / unresolvable arch must be rejected, and nothing written
+    bad = (
+        "=== FILE: arches/cycle.yaml ===\n"
+        "id: cycle\nresult: a\nresult_extract: null\n"
+        "nodes:\n  - id: a\n    prompt: 'see {{ b }}'\n  - id: b\n    prompt: 'see {{ a }}'\n"
+    )
+    assert opt.apply_proposal(bad)["ok"] is False
+    assert not list((tmp_path / "arches").glob("*.yaml"))
+    # writing outside the allowed dirs is refused
+    assert opt.apply_proposal("=== FILE: ../evil.py ===\nprint(1)\n")["ok"] is False
+    # overwriting the control is refused
+    assert opt.apply_proposal("=== FILE: arches/baseline.yaml ===\nid: baseline\n")["ok"] is False
+
+
 def test_lemmatizer_merges_inflections_if_available():
     import storylab.vocab as v
     v._nlp, v._nlp_tried = None, False   # opt back into real spaCy
