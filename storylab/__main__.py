@@ -1,10 +1,13 @@
 """storylab CLI.  python -m storylab <command>
 
-  run       generate the seed x variant matrix (cached)
+  run       generate the seed x arch matrix (cached)
   judge     pairwise LLM judge over the generated stories
   human     interactive golden labelling (you pick + say why)
   report    leaderboard | metrics | agreement | all
-  show      print one story + its per-stage trace
+  show      print one story + its per-node trace
+  export    write the optimizer briefing to paste into a strong Claude
+  apply     apply a Claude reply (=== FILE === blocks) back into arches/ & prompts/
+  journal   show or append to the iteration journal
 """
 from __future__ import annotations
 
@@ -16,6 +19,7 @@ from backend.llm.client import OpenCodeCLIClient
 
 from storylab import judge as judge_mod
 from storylab import human as human_mod
+from storylab import optimize as opt_mod
 from storylab import report as report_mod
 from storylab.arch import load_arches
 from storylab.run import load_run, run_matrix
@@ -52,6 +56,7 @@ def cmd_judge(args):
         round_robin=args.round_robin,
     )
     report_mod.print_leaderboard(judgments)
+    opt_mod.snapshot_leaderboard_to_journal()
 
 
 def cmd_human(args):
@@ -71,6 +76,39 @@ def cmd_report(args):
         report_mod.print_leaderboard()
     if what in ("agreement", "all"):
         report_mod.agreement_report()
+
+
+def cmd_export(args):
+    text = opt_mod.build_dossier(max_stories_per_spec=args.max_stories)
+    out = Path(args.out) if args.out else opt_mod.BRIEF_PATH
+    out.write_text(text, encoding="utf-8")
+    print(f"wrote briefing to {out}  ({len(text):,} chars)")
+    print("paste its contents into a strong Claude; save the reply and run "
+          "`python -m storylab apply <reply-file>`.")
+
+
+def cmd_apply(args):
+    text = Path(args.file).read_text(encoding="utf-8") if args.file != "-" else __import__("sys").stdin.read()
+    result = opt_mod.apply_proposal(text, dry_run=args.dry_run)
+    if not result["ok"]:
+        print(f"REJECTED: {result['error']}")
+        for e in result.get("errors", []):
+            print(f"  - {e}")
+        raise SystemExit(1)
+    verb = "would write" if args.dry_run else "wrote"
+    print(f"{verb} {len(result['written'])} file(s):")
+    for w in result["written"]:
+        print(f"  {w}")
+    if not args.dry_run:
+        print("next: python -m storylab run && python -m storylab judge && python -m storylab report")
+
+
+def cmd_journal(args):
+    if args.entry:
+        opt_mod.append_journal(args.entry)
+        print("appended to journal.")
+    else:
+        print(opt_mod._read(opt_mod.JOURNAL_PATH) or "(journal is empty)")
 
 
 def cmd_show(args):
@@ -122,6 +160,21 @@ def main(argv=None):
     ps.add_argument("spec_id")
     ps.add_argument("variant_id")
     ps.set_defaults(func=cmd_show)
+
+    pe = sub.add_parser("export", help="write the optimizer briefing (brief.md) to paste into a strong Claude")
+    pe.add_argument("--out", help="output path (default: storylab/brief.md)")
+    pe.add_argument("--max-stories", type=int, default=3,
+                    help="sample stories per seed in the brief (0 = all)")
+    pe.set_defaults(func=cmd_export)
+
+    pa = sub.add_parser("apply", help="apply a Claude reply (=== FILE === blocks); '-' reads stdin")
+    pa.add_argument("file", help="path to the saved Claude reply, or '-' for stdin")
+    pa.add_argument("--dry-run", action="store_true", help="validate without writing")
+    pa.set_defaults(func=cmd_apply)
+
+    pjr = sub.add_parser("journal", help="show the journal, or append an entry")
+    pjr.add_argument("entry", nargs="?", help="text to append (omit to print the journal)")
+    pjr.set_defaults(func=cmd_journal)
 
     args = p.parse_args(argv)
     args.func(args)

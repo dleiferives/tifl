@@ -123,6 +123,35 @@ nodes:
 - **Arches** (`arches/`): a reduction ladder — `baseline` → `no_refine` → `no_outline` → `writer_only` → `monolith` — plus two DAG examples, `fanout_pick_polish` and `draft_critique_revise`.
 - **Lenses** (`lenses.yaml`): `narrative`, `language`, `naturalness`.
 
+## The improvement loop (brief a strong Claude)
+
+storylab can't improve itself, but it can hand a frontier model everything it
+needs to. The loop is human-carried:
+
+```bash
+python -m storylab export             # writes brief.md
+# paste brief.md into a strong (expensive) Claude; save its reply to reply.txt
+python -m storylab apply reply.txt    # validates + writes the proposed files
+python -m storylab run && python -m storylab judge && python -m storylab report
+python -m storylab export             # next round — the journal carries memory forward
+```
+
+- **`export`** assembles `brief.md`: a meta-prompt (the goal + the full DSL spec
+  so the model can author valid YAML/Jinja + the output contract), the seeds,
+  every arch and prompt verbatim, the leaderboard, per-run metrics, the **judge
+  rationales** and your **human golden-label (dis)agreements** (the "why"), a few
+  sample stories per seed, and the journal. `--max-stories N` caps samples.
+- The model must reply with `=== FILE: arches/x.yaml ===` / `=== FILE: prompts/y.j2 ===`
+  blocks and a `=== JOURNAL ===` block.
+- **`apply`** parses those blocks, **validates** (YAML loads, arch topo-sorts
+  acyclically, Jinja compiles), and writes only into `arches/`, `prompts/`, or
+  `lenses.yaml`. It refuses path traversal and won't overwrite the `baseline`
+  arch (the control). `--dry-run` validates without writing; `apply -` reads stdin.
+- **`journal`** shows or appends the iteration log (`journal.md`); `judge`
+  auto-snapshots win-rates there so trends are visible across rounds.
+
+Seeds are never changed by this loop, so leaderboards stay comparable.
+
 ## At-level / vocabulary metrics
 
 Coverage-against-an-explicit-list only works when the known vocab is tiny. At
@@ -163,8 +192,10 @@ target set, or band) is just a different profile on the seed.
 | `judge.py` | pairwise judge (both orders) + win-rate leaderboard + `pick_best_by_judge` |
 | `human.py` | interactive golden labelling — pick + reason |
 | `report.py` | leaderboard, metrics table, human-vs-judge agreement |
+| `optimize.py` | the improvement loop: `export` briefing, `apply` a Claude reply, journal |
 | `lenses.yaml` | named revision lenses for `loop: {cycle: [...]}` |
 | `seeds.json` | the frozen inputs every arch runs against |
+| `journal.md` | iteration memory (hypotheses + leaderboard snapshots) |
 | `justfile` | one-time setup (spaCy model, frequency list, lemma cache) |
 
 Generated stories (`runs/`), judgments (`judgments/`) and downloaded vocab data
