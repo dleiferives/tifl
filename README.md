@@ -1,4 +1,4 @@
-# Thinking In Forign Languages
+# Thinking In Foreign Languages
 
 Implements the architecture from the project spec: input/output cycle, implicit
 grammar acquisition, 95 % comprehension floor, gap-score-driven construction
