@@ -37,9 +37,13 @@ backend/
     main.py       app factory + entrypoint
 frontend/        static SPA — index.html, style.css, src/* ES modules
 tests/           pytest suite (uses FakeLLMClient — no network needed)
+context/         working notes & plans for programmers/agents (may be stale)
+docs/            golden-state docs — authoritative, becomes the published docs
 ai_logs/         per-call JSON dumps (gitignored)
 data/            SQLite database (gitignored)
 ```
+
+Contributing & test layers: [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Run
 
@@ -54,7 +58,8 @@ Visit `http://127.0.0.1:8000/` for the SPA, `/docs` for the OpenAPI UI,
 ## Test
 
 ```bash
-pytest -q
+make test                # unit — fake LLM, no credentials
+make test-integration    # real `opencode` CLI (LEARN_GREEK_REAL_LLM=1)
 ```
 
 ## Extending the frontend
