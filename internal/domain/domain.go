@@ -25,11 +25,12 @@ const (
 // granularity (word, phrase, construction, root, idiom...). Every language plugin
 // stores its type-specific data in Metadata; core never inspects it.
 type KnowledgeItem struct {
-	ItemID   string
-	Language string
-	ItemType string         // "word" | "phrase" | "construction" | "root" | ...
-	Key      string         // canonical key per the language's key strategy
-	Metadata map[string]any // language-plugin-defined; passed through to prompts
+	ItemID    string
+	Language  string
+	ItemType  string         // "word" | "phrase" | "construction" | "root" | ...
+	Key       string         // canonical key per the language's key strategy
+	Frequency int            // rank in the language frequency list; 0 = unranked
+	Metadata  map[string]any // language-plugin-defined; passed through to prompts
 }
 
 // SelectedItems is the output of the selection layer and the shared input to
