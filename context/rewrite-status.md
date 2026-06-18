@@ -79,3 +79,33 @@ we want to revive or port it.)
 - SQLite driver: `modernc.org/sqlite` (pure Go, cross-compiles cleanly for the
   Tauri sidecar) vs `mattn/go-sqlite3` (cgo). Pure-Go is the likely pick.
 - Plus the per-doc "Open Questions" sections in `context/`.
+
+## Work breakdown → GitHub issues
+
+The remaining work is tracked as ~2-day issues on GitHub
+(`dleiferives/tifl`). Each links back to the relevant `context/` sections.
+
+**Core loop — backend (`phase:core-loop`):**
+- #3 LLM gateway + `internal/llm` client (provider routing, retry, `llm_calls`)
+- #4 Prompt builders + LearnerCtx (story / task / grader / assessor)
+- #5 Greek language plugin (`internal/lang/grc`) — reference implementation
+- #6 Selection layer + repo-backed predictor adapter + predictions cache
+- #7 Story pipeline (staged, checkpointed, SSE progress)
+- #8 Task system (`comprehension_mc`, `fill_blank`, grading, `task_targets`)
+- #9 Acquisition engine (stage transitions, signal aggregation, invalidation)
+- #10 Reader backend (`story_tokens`, `reader_events`, glossary, breakdowns)
+- #11 Skill system (XP, tiers, AI verification, level promotion, skill-tree API)
+- #12 Auth & users (JWT + refresh, argon2id, middleware, local user)
+- #13 Session types (system / topic-guided / expression-guided)
+- #14 Postgres repository + in-memory fake repo
+
+**Clients (`phase:clients`):**
+- #15 Web foundation (api client, router, store, theming, build)
+- #16 Reader UI · #17 Tasks UI · #18 Session start + generation UX
+- #19 Skill tree UI · #20 Tauri desktop shell · #21 Capacitor mobile shell
+
+**Post-MVP (`phase:future`):**
+- #22 Input modalities (speech / scan / print) · #23 ML predictor + training ·
+  #24 Observability & admin
+
+Rough critical path: #3 → #4 → (#5, #6) → #7 → #8 → (#9, #10, #11) → clients.
