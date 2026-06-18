@@ -62,7 +62,9 @@ we want to revive or port it.)
    Implementation").
 3. **LLM gateway** — real OpenAI-compatible `/v1/chat/completions` with provider
    routing + retry + `llm_calls` logging; `internal/llm` gateway client.
-4. **Selection layer** + **algorithmic predictor** — the hard system.
+4. **Selection layer** — the hard system. (Algorithmic predictor ✅ done:
+   `internal/predictor`, pure deterministic formula + tests; the selector and a
+   repo-backed `KnowledgePredictor` adapter remain.)
 5. **Story pipeline** (`internal/story`) — staged, checkpointed generation with
    SSE progress (token-rate ticker); session types.
 6. **Task system** — first task types (comprehension MC, fill-blank) + grading.
