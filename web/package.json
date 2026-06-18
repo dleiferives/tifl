@@ -1,0 +1,18 @@
+{
+  "name": "tifl-web",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "tifl SolidJS client — compiled by esbuild, served by the Go server.",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "node build.mjs --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "esbuild-plugin-solid": "^0.6.0",
+    "solid-js": "^1.9.3",
+    "typescript": "^5.7.2"
+  }
+}

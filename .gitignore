@@ -1,14 +1,18 @@
-__pycache__/
-*.pyc
-.venv/
-.pytest_cache/
-*.egg-info/
-ai_logs/*.json
-data/*.db
+# Go build output
+/bin/
+*.test
+*.out
+coverage.txt
+
+# Web (see web/.gitignore too)
+/web/node_modules/
+/web/dist/
+
+# Local data & logs — never committed
+/data/
+/ai_logs/
+*.db
+
+# Editors / OS
 .DS_Store
-storylab/runs/
-storylab/judgments/
-storylab/vocab/el_50k.txt
-storylab/vocab/el_lemma_rank.json
-storylab/brief.md
-/storylab/.variants.json.swp
+*.swp
