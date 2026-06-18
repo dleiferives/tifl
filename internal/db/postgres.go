@@ -385,6 +385,26 @@ func (r *PostgresRepository) UserKnowledge(ctx context.Context, userID, language
 	return out, rows.Err()
 }
 
+// --- llm calls -------------------------------------------------------------
+
+func (r *PostgresRepository) InsertLLMCall(ctx context.Context, c domain.LLMCall) error {
+	if c.CallID == "" {
+		c.CallID = id.New()
+	}
+	if c.CalledAt == 0 {
+		c.CalledAt = float64(time.Now().Unix())
+	}
+	// pgx maps nil pointers to SQL NULL, so the nullable columns need no wrapping.
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO llm_calls(
+		   call_id, session_id, user_id, kind, prompt_version, model,
+		   input_tokens, output_tokens, latency_ms, status, error_detail, called_at)
+		 VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		c.CallID, c.SessionID, c.UserID, c.Kind, c.PromptVersion, c.Model,
+		c.InputTokens, c.OutputTokens, c.LatencyMs, c.Status, c.ErrorDetail, c.CalledAt)
+	return err
+}
+
 // --- helpers ---------------------------------------------------------------
 
 // marshalJSONB encodes a metadata map for a JSONB column; nil maps become a SQL

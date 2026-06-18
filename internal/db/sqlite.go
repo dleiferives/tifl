@@ -334,6 +334,26 @@ func (r *SQLiteRepository) UserKnowledge(ctx context.Context, userID, language s
 	return out, rows.Err()
 }
 
+// --- llm calls -------------------------------------------------------------
+
+func (r *SQLiteRepository) InsertLLMCall(ctx context.Context, c domain.LLMCall) error {
+	if c.CallID == "" {
+		c.CallID = id.New()
+	}
+	if c.CalledAt == 0 {
+		c.CalledAt = float64(time.Now().Unix())
+	}
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO llm_calls(
+		   call_id, session_id, user_id, kind, prompt_version, model,
+		   input_tokens, output_tokens, latency_ms, status, error_detail, called_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.CallID, nullString(c.SessionID), nullString(c.UserID), c.Kind, c.PromptVersion, c.Model,
+		nullInt(c.InputTokens), nullInt(c.OutputTokens), nullInt(c.LatencyMs),
+		c.Status, nullString(c.ErrorDetail), c.CalledAt)
+	return err
+}
+
 // --- helpers ---------------------------------------------------------------
 
 func marshalJSON(v map[string]any) (any, error) {
@@ -359,6 +379,20 @@ func unmarshalJSON(ns sql.NullString) (map[string]any, error) {
 }
 
 func nullFloat(p *float64) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+func nullInt(p *int) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+func nullString(p *string) any {
 	if p == nil {
 		return nil
 	}

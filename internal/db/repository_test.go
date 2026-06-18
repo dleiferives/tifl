@@ -28,6 +28,30 @@ func testRepository(t *testing.T, newRepo repoFactory) {
 	t.Run("KnowledgeItems", func(t *testing.T) { testKnowledgeItems(t, newRepo(t)) })
 	t.Run("UserKnowledge", func(t *testing.T) { testUserKnowledge(t, newRepo(t)) })
 	t.Run("TenantIsolation", func(t *testing.T) { testTenantIsolation(t, newRepo(t)) })
+	t.Run("LLMCalls", func(t *testing.T) { testLLMCalls(t, newRepo(t)) })
+}
+
+// testLLMCalls exercises the append-only audit log shared by every backend: a
+// fully-populated row round-trips and a sparse row (all nullable columns unset)
+// inserts without error — the case the gateway client hits when a provider omits
+// usage or a call has no session.
+func testLLMCalls(t *testing.T, repo db.Repository) {
+	ctx := context.Background()
+
+	sess, uid := "sess-1", "user-1"
+	in, out, lat := 120, 64, 875
+	detail := "upstream 429"
+	must(t, repo.InsertLLMCall(ctx, domain.LLMCall{
+		CallID: "call-1", SessionID: &sess, UserID: &uid, Kind: "story_generator",
+		PromptVersion: "v1", Model: "test-model", InputTokens: &in, OutputTokens: &out,
+		LatencyMs: &lat, Status: "success", CalledAt: 1700.0,
+	}))
+
+	// Sparse row: no session/user/usage, an error detail, and a defaulted call_id.
+	must(t, repo.InsertLLMCall(ctx, domain.LLMCall{
+		Kind: "scope_check", PromptVersion: "v1", Model: "test-model",
+		Status: "error", ErrorDetail: &detail,
+	}))
 }
 
 func testUsers(t *testing.T, repo db.Repository) {

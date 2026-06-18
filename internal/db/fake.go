@@ -25,6 +25,7 @@ type FakeRepository struct {
 	items      map[string]domain.KnowledgeItem // item_id -> item
 	itemKeys   map[string]string               // language\x00type\x00key -> item_id
 	knowledge  map[string]domain.UserKnowledge // user_id\x00item_id -> state
+	llmCalls   []domain.LLMCall                // append-only audit log
 }
 
 // compile-time assertion that we satisfy the interface.
@@ -232,6 +233,33 @@ func (r *FakeRepository) UserKnowledge(_ context.Context, userID, language strin
 	return out, nil
 }
 
+// --- llm calls -------------------------------------------------------------
+
+func (r *FakeRepository) InsertLLMCall(_ context.Context, c domain.LLMCall) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if c.CallID == "" {
+		c.CallID = id.New()
+	}
+	if c.CalledAt == 0 {
+		c.CalledAt = float64(time.Now().Unix())
+	}
+	r.llmCalls = append(r.llmCalls, cloneLLMCall(c))
+	return nil
+}
+
+// LLMCalls returns a copy of the recorded calls, for test inspection. It is not
+// part of the Repository interface — only the in-memory backend exposes it.
+func (r *FakeRepository) LLMCalls() []domain.LLMCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]domain.LLMCall, len(r.llmCalls))
+	for i, c := range r.llmCalls {
+		out[i] = cloneLLMCall(c)
+	}
+	return out
+}
+
 // --- clone / error helpers -------------------------------------------------
 
 func cloneMeta(m map[string]any) map[string]any {
@@ -262,6 +290,32 @@ func cloneUser(u domain.User) domain.User {
 func cloneItem(it domain.KnowledgeItem) domain.KnowledgeItem {
 	it.Metadata = cloneMeta(it.Metadata)
 	return it
+}
+
+func cloneInt(p *int) *int {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
+func cloneStr(p *string) *string {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
+func cloneLLMCall(c domain.LLMCall) domain.LLMCall {
+	c.SessionID = cloneStr(c.SessionID)
+	c.UserID = cloneStr(c.UserID)
+	c.InputTokens = cloneInt(c.InputTokens)
+	c.OutputTokens = cloneInt(c.OutputTokens)
+	c.LatencyMs = cloneInt(c.LatencyMs)
+	c.ErrorDetail = cloneStr(c.ErrorDetail)
+	return c
 }
 
 func cloneUK(uk domain.UserKnowledge) domain.UserKnowledge {

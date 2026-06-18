@@ -25,6 +25,27 @@ type Language struct {
 	Enabled     bool   // false = registered but not exposed to users
 }
 
+// LLMCall is one record of an outbound model call, written by the gateway client
+// (internal/llm) after every call — the client, not the gateway, has the
+// session/user context. It backs cost tracking and the AI logs the UI inspects.
+// Nullable columns are pointers so "not applicable" is distinct from zero. See
+// context/prompting-system.md ("The Outbound Channel") and
+// context/database-schema.md ("llm_calls").
+type LLMCall struct {
+	CallID        string
+	SessionID     *string // nil for non-session calls (e.g. scope check)
+	UserID        *string // nil when the call has no user (system tasks)
+	Kind          string  // story_generator | task_* | grader | assessor | scope_check
+	PromptVersion string  // the builder's Version(), for regression correlation
+	Model         string  // model actually used (from the gateway response)
+	InputTokens   *int    // prompt tokens; nil if the provider omitted usage
+	OutputTokens  *int    // completion tokens; nil if omitted
+	LatencyMs     *int    // round-trip latency including retries; nil if unmeasured
+	Status        string  // success | error | timeout
+	ErrorDetail   *string // populated when Status != success
+	CalledAt      float64 // Unix seconds
+}
+
 // UserKnowledge is a user's acquisition state for one knowledge item — the
 // central table the selection layer reads on every generation request. The
 // nullable fields are pointers so "never set" is distinct from zero. See
