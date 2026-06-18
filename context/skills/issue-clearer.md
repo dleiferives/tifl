@@ -239,3 +239,7 @@ Report concisely:
 - Any skipped issues and concrete blockers.
 - Confirmation that issues are left to close through PR merge flow.
 - Whether the parent PR still has open follow-up issues and should remain open
+
+---
+
+Remember to commit regularly!

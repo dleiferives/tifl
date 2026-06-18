@@ -55,7 +55,7 @@ func OpenSQLite(path string) (*SQLiteRepository, error) {
 func (r *SQLiteRepository) Close() error { return r.db.Close() }
 
 func (r *SQLiteRepository) Migrate(ctx context.Context) error {
-	return runMigrations(ctx, r.db)
+	return runMigrations(ctx, r.db, "migrations/sqlite")
 }
 
 // --- users -----------------------------------------------------------------
