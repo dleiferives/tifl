@@ -4,8 +4,13 @@
 // swapping OpenRouter / Anthropic / Ollama is a gateway config change and the
 // API server is unaffected. See context/backend-server.md ("LLM Gateway").
 //
-// Skeleton only: health + a stubbed completions endpoint. Provider routing,
-// retry/backoff and per-call logging land next.
+// Configuration (environment):
+//
+//	GATEWAY_ADDR      listen address                      (default 127.0.0.1:8001)
+//	GATEWAY_PROVIDER  openrouter | ollama | openai | anthropic (default ollama)
+//	GATEWAY_UPSTREAM_URL  override the provider's base URL (default per provider)
+//	GATEWAY_API_KEY   upstream credential
+//	GATEWAY_MODEL     default model when a request omits one
 package main
 
 import (
@@ -13,27 +18,25 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/dleiferives/tifl/internal/gateway"
 )
 
 func main() {
-	addr := os.Getenv("GATEWAY_ADDR")
-	if addr == "" {
-		addr = "127.0.0.1:8001"
+	addr := env("GATEWAY_ADDR", "127.0.0.1:8001")
+
+	provider, err := gateway.NewProvider(gateway.ProviderConfig{
+		Kind:        os.Getenv("GATEWAY_PROVIDER"),
+		UpstreamURL: os.Getenv("GATEWAY_UPSTREAM_URL"),
+		APIKey:      os.Getenv("GATEWAY_API_KEY"),
+	})
+	if err != nil {
+		log.Fatalf("gateway: %v", err)
 	}
 
+	h := gateway.NewHandler(provider, gateway.Config{DefaultModel: os.Getenv("GATEWAY_MODEL")})
 	mux := http.NewServeMux()
-
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
-
-	// TODO: implement an OpenAI-compatible /v1/chat/completions that routes to the
-	// configured upstream provider and logs every call (see llm_calls in
-	// context/database-schema.md and context/prompting-system.md).
-	mux.HandleFunc("POST /v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "gateway not yet implemented", http.StatusNotImplemented)
-	})
+	h.Register(mux)
 
 	srv := &http.Server{
 		Addr:              addr,
@@ -41,6 +44,13 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	log.Printf("tifl gateway listening on http://%s", addr)
+	log.Printf("tifl gateway listening on http://%s (provider=%s)", addr, provider.Name())
 	log.Fatal(srv.ListenAndServe())
+}
+
+func env(key, def string) string {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		return v
+	}
+	return def
 }
