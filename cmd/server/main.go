@@ -25,13 +25,14 @@ import (
 func main() {
 	cfg := config.Load()
 
-	repo, err := openRepo(cfg)
+	ctx := context.Background()
+
+	repo, err := openRepo(ctx, cfg)
 	if err != nil {
 		log.Fatalf("storage: %v", err)
 	}
 	defer repo.Close()
 
-	ctx := context.Background()
 	if err := repo.Migrate(ctx); err != nil {
 		log.Fatalf("migrate: %v", err)
 	}
@@ -72,12 +73,15 @@ func main() {
 	log.Println("tifl server stopped")
 }
 
-func openRepo(cfg config.Config) (db.Repository, error) {
+func openRepo(ctx context.Context, cfg config.Config) (db.Repository, error) {
 	switch cfg.StorageMode {
 	case config.StorageSQLite:
 		return db.OpenSQLite(cfg.DBPath)
 	case config.StoragePostgres:
-		return nil, errors.New("postgres backend not yet implemented")
+		if cfg.DatabaseURL == "" {
+			return nil, errors.New("postgres mode requires DATABASE_URL")
+		}
+		return db.OpenPostgres(ctx, cfg.DatabaseURL)
 	default:
 		return nil, fmt.Errorf("unknown storage mode %q", cfg.StorageMode)
 	}
