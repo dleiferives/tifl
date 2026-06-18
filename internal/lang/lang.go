@@ -1,0 +1,55 @@
+// Package lang is the language-plugin registry. Every language-specific concern
+// — tokenization, key resolution, which item types exist, which task types make
+// sense — lives behind the Language interface, implemented once per language
+// under internal/lang/<code>/. The core system is language-agnostic: adding a
+// language is a new package plus one Register call. See
+// context/language-plugins.md.
+package lang
+
+// KeyStrategy determines what canonical value is stored for a surface token,
+// which depends entirely on the language's morphological family.
+type KeyStrategy string
+
+const (
+	KeySurface KeyStrategy = "surface" // isolating: Chinese, Vietnamese
+	KeyLemma   KeyStrategy = "lemma"   // fusional: Greek, Latin, Russian
+	KeyRoot    KeyStrategy = "root"    // Semitic: Arabic, Hebrew
+	KeyStem    KeyStrategy = "stem"    // agglutinative: Turkish, Finnish
+)
+
+// Token is one element of a tokenized story. Non-word tokens (spaces,
+// punctuation) are included so the reader can reconstruct the text faithfully
+// without doing any text processing itself.
+type Token struct {
+	Surface  string // exact string as it appears, including punctuation
+	Key      string // resolved knowledge key; empty for non-word tokens
+	IsWord   bool   // false for whitespace / punctuation
+	Position int    // stable index in the token array
+}
+
+// Language is implemented by each language plugin.
+type Language interface {
+	Code() string             // BCP-47-ish: "grc", "el", "ar", "zh"
+	Name() string             // display name
+	RTL() bool                // writing direction
+	KeyStrategy() KeyStrategy //
+	Tokenize(text string) []Token
+	ResolveKey(surface string) (string, error) // surface word -> canonical key
+	SupportedTaskTypes() []string              // task type IDs valid for this language
+	Frequency() []string                       // canonical keys, most common first
+}
+
+// Registry maps language code -> plugin. Populated at startup. Missing languages
+// fail loudly; the system never silently falls back to generic behaviour.
+type Registry struct {
+	langs map[string]Language
+}
+
+func NewRegistry() *Registry { return &Registry{langs: make(map[string]Language)} }
+
+func (r *Registry) Register(l Language) { r.langs[l.Code()] = l }
+
+func (r *Registry) Get(code string) (Language, bool) {
+	l, ok := r.langs[code]
+	return l, ok
+}

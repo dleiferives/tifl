@@ -1,82 +1,93 @@
-# Thinking In Foreign Languages
+# tifl — Thinking In Foreign Languages
 
-Implements the architecture from the project spec: input/output cycle, implicit
-grammar acquisition, 95 % comprehension floor, gap-score-driven construction
-targeting, with every LLM call persisted and inspectable.
+A language **acquisition** platform (not memorization). The learner reads
+AI-generated stories at their level, does tasks derived from those stories, and
+every interaction sharpens the system's model of what they know — which drives
+the next round of generation. The pedagogy is comprehensible input and
+phrase-based learning, not flashcards. See [`context/`](context/) for the full
+design.
 
-LLM calls shell out to the `opencode` CLI (`opencode run --format json -m
-<provider/model>`). No API keys required as long as `opencode` is on the PATH
-and configured with a provider.
+> **Status:** ground-up rewrite in progress. The Python proof-of-concept was
+> replaced by this Go + SolidJS implementation. The pre-rewrite code is preserved
+> at the git tag `pre-rewrite-snapshot` (branch `archive/python-prototype`).
+> Current progress: [`context/rewrite-status.md`](context/rewrite-status.md).
 
-## Generation pipeline
+## Architecture
 
-Each session is built in stages (all persisted, inspectable in `ai_logs/` and
-under "AI calls for this session"):
+Three layers, one contract (the OpenAPI spec):
 
-1. **Session plan** — picks a topic, a gap-driven target construction, and new
-   vocabulary chunks.
-2. **Narrative outline** — designs the *plot* before any prose exists: a
-   character with a want/problem, a complication, and a resolution, as 4-6
-   ordered Greek beats. Separating plot design from writing is what yields an
-   actual story instead of a list of facts about the topic (comprehensible +
-   compelling input; TPRS-style "circling" recycles vocabulary by carrying it
-   through the plot rather than stacking `Noun είναι adjective` sentences).
-3. **Story** — the writer renders the outline into at-level Greek (rules in
-   `core/levels.py`), with a coverage-driven retry on top.
-4. **Tasks + glossary** — generated in parallel from the finished story.
+```
+SolidJS client  ──HTTP /api/v1──>  Go API server  ──OpenAI-compatible──>  Go LLM gateway  ──>  provider
+(browser / Tauri / Capacitor)      (DB, auth, selection,                  (provider routing,
+                                    tasks, pipeline)                       credentials, logging)
+```
+
+The API server never talks to a model provider directly — only to the gateway,
+so swapping providers is a gateway config change. A **hard system** (counting,
+selection, scheduling — fast, deterministic Go) and a **soft system** (the LLM —
+generation, grading) cooperate, with the selection layer as the boundary.
+
+See [`context/architecture-overview.md`](context/architecture-overview.md).
 
 ## Layout
 
 ```
-backend/
-    core/         business logic — config, prompts, coverage, pipeline
-    db/           SQLite schema + repository
-    llm/          `opencode` CLI adapter and call logging
-    api/          FastAPI route modules
-    models/       pydantic DTOs (shared with frontend over JSON)
-    main.py       app factory + entrypoint
-frontend/        static SPA — index.html, style.css, src/* ES modules
-tests/           pytest suite (uses FakeLLMClient — no network needed)
-context/         working notes & plans for programmers/agents (may be stale)
-docs/            golden-state docs — authoritative, becomes the published docs
-ai_logs/         per-call JSON dumps (gitignored)
-data/            SQLite database (gitignored)
+cmd/
+  server/      API server entrypoint (serves the client + /api/v1)
+  gateway/     LLM gateway entrypoint (OpenAI-compatible proxy)
+internal/
+  config/      env-driven configuration
+  domain/      core language-agnostic types (KnowledgeItem, SelectedItems, ...)
+  db/          Repository interface + migrations/ (canonical schema)
+  lang/        language plugin registry (greek/, arabic/, ... land here)
+  llm/         gateway client + prompt-builder contract
+  reader/      tokenization + reader signals
+  story/       generation pipeline (staged, checkpointed)
+  tasks/       extensible task-type registry + grading
+  selector/    selection layer (hard-system boundary)
+  predictor/   knowledge-probability estimation (algorithmic -> ML)
+  auth/        JWT, argon2id, refresh tokens
+  handler/     thin HTTP handlers
+web/           SolidJS + TypeScript client (esbuild -> dist/)
+spec/          OpenAPI spec — the canonical API contract
+context/       design docs (the spec for this build) + working notes
+docs/          golden-state docs (authoritative; becomes published docs)
 ```
-
-Contributing & test layers: [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Run
 
 ```bash
-pip install -e .[dev]
-python -m backend.main           # serves on http://127.0.0.1:8000
+make run            # API server on http://127.0.0.1:8000  (/healthz, /api/v1/ping)
+make run-gateway    # LLM gateway on http://127.0.0.1:8001
+
+make web-install    # one-time: install web deps
+make web            # build the SolidJS client into web/dist (then `make run` serves it)
 ```
 
-Visit `http://127.0.0.1:8000/` for the SPA, `/docs` for the OpenAPI UI,
-`/healthz` for a quick check.
+With no web build, the server still runs and serves a placeholder at `/`.
 
-## Test
+## Develop
 
 ```bash
-make test                # unit — fake LLM, no credentials
-make test-integration    # real `opencode` CLI (LEARN_GREEK_REAL_LLM=1)
+make build   # both Go binaries -> bin/
+make test    # go test ./...
+make vet     # go vet ./...
+make fmt     # gofmt -w
 ```
 
-## Extending the frontend
-
-Add a new view under `frontend/src/views/<name>.js` exporting a `render(root,
-params)` function, then register it in `frontend/src/main.js`:
-
-```js
-register('/my-view', myView);
-```
-
-The router supports plain strings and regex patterns with named groups.
+Contributing & test layers: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Configuration
 
-Env vars (all optional):
+The same binary runs cloud (Postgres/JWT) and desktop-local (SQLite/no-auth)
+from environment alone (see `context/backend-server.md`):
 
-- `LEARN_GREEK_MODEL` — model passed to `opencode run -m`, in `provider/model`
-  format. Default: `opencode/deepseek-v4-flash-free`.
-- `LEARN_GREEK_OPENCODE_BIN` — path to the CLI. Default: `opencode`.
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `TIFL_ADDR` | `127.0.0.1:8000` | API server listen address |
+| `STORAGE_MODE` | `sqlite` | `sqlite` or `postgres` |
+| `DB_PATH` | `data/tifl.db` | SQLite file (sqlite mode) |
+| `DATABASE_URL` | — | Postgres DSN (postgres mode) |
+| `LLM_BASE_URL` | `http://127.0.0.1:8001` | where the gateway listens |
+| `AUTH_MODE` | `none` | `jwt` (cloud) or `none` (desktop-local) |
+| `FRONTEND_DIR` | `web/dist` | compiled client assets |

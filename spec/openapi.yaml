@@ -1,0 +1,32 @@
+openapi: 3.1.0
+info:
+  title: tifl API
+  version: 0.0.1
+  description: >
+    Canonical contract for the tifl API server. The OpenAPI spec is the only
+    contract between clients (browser / Tauri / Capacitor) and the server; every
+    client is generated or hand-written against it and reaches no server
+    internals. Endpoints are added here as their handlers land.
+    See context/backend-server.md and context/architecture-overview.md.
+servers:
+  - url: /api/v1
+paths:
+  /ping:
+    get:
+      summary: Liveness ping
+      operationId: ping
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                required: [message]
+# Planned surfaces (see context/): /auth/*, /sessions, /sessions/{id}/generate
+# (SSE), /stories/{id}, /word_knowledge/{token}, /tasks/{id}, /skills.
+components:
+  schemas: {}
