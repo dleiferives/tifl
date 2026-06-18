@@ -10,12 +10,8 @@
 --   * JSON columns are TEXT (SQLite stores JSON as text); annotated "-- JSON"
 --   * booleans are INTEGER 0/1
 --   * FK enforcement requires `PRAGMA foreign_keys = ON;` per connection
-PRAGMA foreign_keys = ON;
-
-CREATE TABLE schema_migrations (
-    version    TEXT PRIMARY KEY,
-    applied_at REAL NOT NULL
-);
+-- (schema_migrations and `PRAGMA foreign_keys = ON` are owned by the migration
+-- runner in internal/db, not this file.)
 
 -- ---------------------------------------------------------------------------
 -- Identity & catalogue

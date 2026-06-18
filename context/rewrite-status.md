@@ -39,11 +39,23 @@ we want to revive or port it.)
 - `spec/openapi.yaml` — contract stub (`/ping`).
 - Repo meta: README, CONTRIBUTING, Makefile, `.gitignore`, `.github/workflows/ci.yml`.
 
+## Done — step 1: storage layer
+
+- `internal/db`: pure-Go SQLite (`modernc.org/sqlite`, no cgo) `Repository`
+  implementation + an embedded migration runner (`go:embed migrations/*.sql`,
+  idempotent, one transaction per file, tracked in `schema_migrations`).
+- Wired into `cmd/server` startup: open → migrate → seed `grc` → ensure local
+  user. `StorageMode` selects the backend (Postgres returns "not implemented").
+- Repository surface implemented + tested: users (incl. dup-email + `ErrNotFound`),
+  languages, knowledge items (upsert that COALESCE-preserves frequency), and
+  `user_knowledge` round-trip. FK enforcement on; JSON metadata round-trips.
+- `internal/id` (UUIDv4); `internal/handler` thin handlers; live DB-backed
+  `GET /api/v1/languages`. Tests in `internal/db/sqlite_test.go` (all green).
+
 ## Next (rough order)
 
-1. **DB layer** — SQLite `Repository` impl + an embedded migration runner
-   (`go:embed migrations/*.sql`); wire `Migrate()` into `cmd/server` startup.
-   Then a Postgres impl behind the same interface.
+1. **Postgres `Repository`** behind the same interface (cloud mode) + a fake
+   in-memory repo for fast handler tests.
 2. **Greek language plugin** (`internal/lang/grc`) — the reference implementation:
    tokenization, LLM-backed key resolution (cache in `story_tokens`), item types,
    frequency list. See `context/language-plugins.md` ("Greek: The Reference
