@@ -11,14 +11,16 @@ import (
 	"time"
 )
 
-//go:embed migrations/*.sql
+//go:embed migrations/sqlite/*.sql migrations/postgres/*.sql
 var migrationFS embed.FS
 
-// runMigrations applies every embedded migration not yet recorded in
-// schema_migrations, in filename order, each in its own transaction. It is
-// idempotent: already-applied migrations are skipped, so it is safe to call on
-// every startup. The runner owns the schema_migrations bookkeeping table.
-func runMigrations(ctx context.Context, sdb *sql.DB) error {
+// runMigrations applies every embedded migration under dir (e.g.
+// "migrations/sqlite") not yet recorded in schema_migrations, in filename order,
+// each in its own transaction. It is idempotent: already-applied migrations are
+// skipped, so it is safe to call on every startup. The runner owns the
+// schema_migrations bookkeeping table. This is the database/sql variant used by
+// the SQLite backend; the Postgres backend has its own pgx-based runner.
+func runMigrations(ctx context.Context, sdb *sql.DB, dir string) error {
 	if _, err := sdb.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		version    TEXT PRIMARY KEY,
 		applied_at REAL NOT NULL
@@ -31,14 +33,14 @@ func runMigrations(ctx context.Context, sdb *sql.DB) error {
 		return err
 	}
 
-	entries, err := fs.Glob(migrationFS, "migrations/*.sql")
+	entries, err := fs.Glob(migrationFS, dir+"/*.sql")
 	if err != nil {
 		return err
 	}
 	sort.Strings(entries)
 
 	for _, path := range entries {
-		version := strings.TrimPrefix(path, "migrations/")
+		version := strings.TrimPrefix(path, dir+"/")
 		if applied[version] {
 			continue
 		}
