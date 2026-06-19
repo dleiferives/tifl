@@ -13,6 +13,9 @@ coverage.txt
 /ai_logs/
 *.db
 
+# Local config — copy tifl.config.example.yaml to tifl.yaml and edit
+/tifl.yaml
+
 # Editors / OS
 .DS_Store
 *.swp

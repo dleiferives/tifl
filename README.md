@@ -66,16 +66,25 @@ make web            # build the SolidJS client into web/dist (then `make run` se
 
 With no web build, the server still runs and serves a placeholder at `/`.
 
-The gateway picks its upstream from `GATEWAY_PROVIDER` (`ollama` default,
-`openrouter`, `openai`, `anthropic`, or `opencode`) plus `GATEWAY_UPSTREAM_URL`,
-`GATEWAY_API_KEY`, and `GATEWAY_MODEL`. For a credential-free local model you can
-point it at a running [OpenCode](https://opencode.ai) server:
+Both binaries read a single YAML config (`./tifl.yaml` by default,
+`-config PATH` to override) — no env vars needed. Copy the example and edit:
 
 ```bash
-opencode serve --port 4202 --hostname 127.0.0.1
-GATEWAY_PROVIDER=opencode GATEWAY_UPSTREAM_URL=http://127.0.0.1:4202 \
-  GATEWAY_MODEL=opencode/nemotron-3-ultra-free make run-gateway
+cp tifl.config.example.yaml tifl.yaml
 ```
+
+The example is wired for a credential-free local model via a running
+[OpenCode](https://opencode.ai) server — the `gateway.provider: opencode` path:
+
+```bash
+opencode serve --port 4202 --hostname 127.0.0.1   # one terminal
+make run-gateway                                   # reads tifl.yaml; no env vars
+make run
+```
+
+Every key can still be overridden by its env var (e.g. `GATEWAY_MODEL`) for CI or
+one-off runs — precedence is defaults < `tifl.yaml` < environment. Providers:
+`ollama` (default), `openrouter`, `openai`, `anthropic`, `opencode`.
 
 ## Develop
 
@@ -91,14 +100,16 @@ Contributing & test layers: [CONTRIBUTING.md](CONTRIBUTING.md).
 ## Configuration
 
 The same binary runs cloud (Postgres/JWT) and desktop-local (SQLite/no-auth)
-from environment alone (see `context/backend-server.md`):
+from a single YAML file (`tifl.yaml`), with env-var overrides. Full reference,
+including every key and the gateway providers: **[docs/configuration.md](docs/configuration.md)**.
+Quick map of the common API-server keys (`server:` section / env override):
 
-| Variable | Default | Effect |
-|----------|---------|--------|
-| `TIFL_ADDR` | `127.0.0.1:8000` | API server listen address |
-| `STORAGE_MODE` | `sqlite` | `sqlite` or `postgres` |
-| `DB_PATH` | `data/tifl.db` | SQLite file (sqlite mode) |
-| `DATABASE_URL` | — | Postgres DSN (postgres mode) |
-| `LLM_BASE_URL` | `http://127.0.0.1:8001` | where the gateway listens |
-| `AUTH_MODE` | `none` | `jwt` (cloud) or `none` (desktop-local) |
-| `FRONTEND_DIR` | `web/dist` | compiled client assets |
+| `tifl.yaml` (`server:`) | Env override | Default | Effect |
+|-------------------------|--------------|---------|--------|
+| `addr` | `TIFL_ADDR` | `127.0.0.1:8000` | API server listen address |
+| `storage_mode` | `STORAGE_MODE` | `sqlite` | `sqlite` or `postgres` |
+| `db_path` | `DB_PATH` | `data/tifl.db` | SQLite file (sqlite mode) |
+| `database_url` | `DATABASE_URL` | — | Postgres DSN (postgres mode) |
+| `llm_base_url` | `LLM_BASE_URL` | `http://127.0.0.1:8001` | where the gateway listens |
+| `auth_mode` | `AUTH_MODE` | `none` | `jwt` (cloud) or `none` (desktop-local) |
+| `frontend_dir` | `FRONTEND_DIR` | `web/dist` | compiled client assets |

@@ -1,0 +1,35 @@
+# tifl configuration — copy to tifl.yaml and edit.
+#
+#   cp tifl.config.example.yaml tifl.yaml
+#   make run-gateway      # reads tifl.yaml, no env vars needed
+#   make run
+#
+# Both binaries read this file (default: ./tifl.yaml, override with -config PATH).
+# Precedence is defaults < this file < environment variables, so any value here
+# can still be overridden by the matching env var (e.g. GATEWAY_MODEL) for CI or
+# one-off runs. Every key is optional; omitted keys fall back to the default
+# shown in the comment.
+
+# The API server (cmd/server).
+server:
+  addr: 127.0.0.1:8000            # listen address                       (default 127.0.0.1:8000)
+  storage_mode: sqlite            # sqlite | postgres                     (default sqlite)
+  db_path: data/tifl.db           # SQLite file (sqlite mode)             (default data/tifl.db)
+  database_url: ""                # Postgres DSN (postgres mode)
+  llm_base_url: http://127.0.0.1:8001  # where the gateway listens        (default http://127.0.0.1:8001)
+  llm_api_key: ""                 # optional gateway auth
+  llm_model: ""                   # model the server requests (blank = gateway default)
+  auth_mode: none                 # none (desktop-local) | jwt (cloud)    (default none)
+  jwt_secret: ""                  # signing key when auth_mode: jwt
+  frontend_dir: web/dist          # compiled SolidJS assets               (default web/dist)
+
+# The LLM gateway (cmd/gateway). The example targets a local OpenCode server —
+# a credential-free way to run a real model. Start it with:
+#   opencode serve --port 4202 --hostname 127.0.0.1
+gateway:
+  addr: 127.0.0.1:8001            # listen address                       (default 127.0.0.1:8001)
+  provider: opencode              # openrouter | ollama | openai | anthropic | opencode  (default ollama)
+  upstream_url: http://127.0.0.1:4202  # provider base URL (required for opencode)
+  api_key: ""                     # upstream credential (not needed for opencode/ollama)
+  model: opencode/nemotron-3-ultra-free  # default model ("providerID/modelID" for opencode)
+  agent: writer                   # opencode only: agent to drive        (default writer)
