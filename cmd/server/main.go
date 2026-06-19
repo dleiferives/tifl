@@ -23,6 +23,7 @@ import (
 	"github.com/dleiferives/tifl/internal/handler"
 	"github.com/dleiferives/tifl/internal/lang"
 	greekplugin "github.com/dleiferives/tifl/internal/lang/el"
+	"github.com/dleiferives/tifl/internal/tasks"
 )
 
 func main() {
@@ -51,6 +52,14 @@ func main() {
 	langRegistry.Register(greekplugin.New())
 	if err := seedLanguages(ctx, repo, langRegistry); err != nil {
 		log.Fatalf("seed languages: %v", err)
+	}
+
+	// Register the built-in task types and verify every language only advertises
+	// task types that actually resolve — a missing type would fail at generation
+	// time deep in a session, so we surface it loudly at startup instead.
+	taskRegistry := tasks.DefaultRegistry()
+	if err := verifyTaskTypes(langRegistry, taskRegistry); err != nil {
+		log.Fatalf("task types: %v", err)
 	}
 	if cfg.AuthMode == config.AuthNone {
 		if _, err := repo.EnsureLocalUser(ctx); err != nil {
@@ -98,6 +107,20 @@ func openRepo(ctx context.Context, cfg config.Config) (db.Repository, error) {
 	default:
 		return nil, fmt.Errorf("unknown storage mode %q", cfg.StorageMode)
 	}
+}
+
+// verifyTaskTypes fails startup if any language advertises a task type id that
+// is not registered, so a typo or a not-yet-built type cannot lurk until a
+// learner hits it mid-session.
+func verifyTaskTypes(langs *lang.Registry, registry *tasks.Registry) error {
+	for _, l := range langs.All() {
+		for _, id := range l.SupportedTaskTypes() {
+			if _, ok := registry.Get(id); !ok {
+				return fmt.Errorf("language %q lists unregistered task type %q", l.Code(), id)
+			}
+		}
+	}
+	return nil
 }
 
 // seedLanguages upserts a catalogue row for every registered language plugin.
