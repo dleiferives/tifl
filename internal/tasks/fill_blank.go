@@ -3,6 +3,7 @@ package tasks
 import (
 	"strings"
 
+	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/dleiferives/tifl/internal/domain"
@@ -71,9 +72,15 @@ func (FillBlank) Targets(content map[string]any) []string {
 }
 
 // normalizeAnswer canonicalizes a typed answer for comparison: NFC-normalize so
-// composed and decomposed accents compare equal, trim surrounding whitespace,
-// and case-fold. It deliberately does not strip accents — in most target
-// languages a missing accent is a different (wrong) word.
+// composed and decomposed accents compare equal, then Unicode case-fold and trim
+// whitespace. Case folding (not strings.ToLower) is what makes Greek work: a
+// trailing capital Σ and a medial σ both fold to σ, so "ΣΚΎΛΟΣ" matches the
+// final-sigma form "σκύλος". It deliberately does not strip accents — in most
+// target languages a missing accent is a different (wrong) word.
+//
+// cases.Caser is not safe for concurrent use, so we build one per call; grading
+// is not hot enough for that to matter.
 func normalizeAnswer(s string) string {
-	return strings.ToLower(strings.TrimSpace(norm.NFC.String(s)))
+	folded := cases.Fold().String(norm.NFC.String(s))
+	return strings.TrimSpace(folded)
 }
