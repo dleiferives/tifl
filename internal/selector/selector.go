@@ -41,7 +41,7 @@ func BudgetForLevel(level string) Budget {
 type SelectRequest struct {
 	UserID       string
 	Language     string
-	Topic        string   // optional; biases background sampling + new-item choice
+	Topic        string // optional; biases background sampling + new-item choice
 	Budget       Budget
 	ForceTargets []string // item_ids to always include in targets
 	ExcludeItems []string // item_ids to exclude entirely

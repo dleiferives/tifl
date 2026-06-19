@@ -91,8 +91,8 @@ func TestResolveKey(t *testing.T) {
 		{"Γεια", "γεια"},
 		{"σου", "σου"},
 		{"τουαλέτα", "τουαλέτα"},
-		{"τουαλέτα,", "τουαλέτα"},   // trailing punctuation stripped
-		{",τουαλέτα", "τουαλέτα"},   // leading punctuation stripped
+		{"τουαλέτα,", "τουαλέτα"}, // trailing punctuation stripped
+		{",τουαλέτα", "τουαλέτα"}, // leading punctuation stripped
 		{"Θέλω", "θέλω"},
 	}
 	for _, tt := range tests {

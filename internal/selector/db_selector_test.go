@@ -94,12 +94,12 @@ func TestSelectBuckets(t *testing.T) {
 
 	// Seed a mix of stages.
 	seedItems(t, repo, userID, lang, []seedItem{
-		{key: "και", freq: 1},                                                                   // unseen (new)
-		{key: "να", freq: 2},                                                                    // unseen (new)
-		{key: "θέλω", freq: 10, stage: domain.StageRecognizing, exposure: 5, lookups: 2},        // target
-		{key: "πάω", freq: 11, stage: domain.StageAcquiring, exposure: 8, lookups: 1, correct: 3, total: 4},    // target
-		{key: "σπίτι", freq: 20, stage: domain.StageAcquired, exposure: 15, lookups: 0, correct: 5, total: 5},  // background
-		{key: "μέρα", freq: 21, stage: domain.StageAutomatic, exposure: 20, lookups: 0, correct: 8, total: 8},  // background
+		{key: "και", freq: 1}, // unseen (new)
+		{key: "να", freq: 2},  // unseen (new)
+		{key: "θέλω", freq: 10, stage: domain.StageRecognizing, exposure: 5, lookups: 2},                      // target
+		{key: "πάω", freq: 11, stage: domain.StageAcquiring, exposure: 8, lookups: 1, correct: 3, total: 4},   // target
+		{key: "σπίτι", freq: 20, stage: domain.StageAcquired, exposure: 15, lookups: 0, correct: 5, total: 5}, // background
+		{key: "μέρα", freq: 21, stage: domain.StageAutomatic, exposure: 20, lookups: 0, correct: 8, total: 8}, // background
 	})
 
 	result, err := sel.Select(ctx, SelectRequest{
