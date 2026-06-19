@@ -51,4 +51,32 @@ type Repository interface {
 	// LLM calls — the audit/cost log written by the gateway client after every
 	// outbound model call. Append-only; the call_id is the caller's idempotency key.
 	InsertLLMCall(ctx context.Context, c domain.LLMCall) error
+
+	// Sessions — the study unit the generation pipeline drives. CreateSession
+	// assigns a session_id (when blank), created_at, and a pending status.
+	CreateSession(ctx context.Context, s domain.Session) (domain.Session, error)
+	GetSession(ctx context.Context, sessionID string) (domain.Session, error)
+	UpdateSessionStatus(ctx context.Context, sessionID string, status domain.SessionStatus) error
+	// SetSessionSelection records the selected target/new item ids and links the
+	// generated story to the session (story stage output).
+	SetSessionSelection(ctx context.Context, sessionID, storyID string, targets, new []string) error
+
+	// Generation stages — the per-stage checkpoints a retry resumes from. Upsert
+	// is keyed by (session_id, stage); ListStages returns every stage for a session.
+	UpsertStage(ctx context.Context, st domain.GenerationStage) error
+	ListStages(ctx context.Context, sessionID string) ([]domain.GenerationStage, error)
+
+	// Stories and their tokenization/glossary. ReplaceStoryTokens and
+	// ReplaceStoryGlossary are delete-then-insert so a stage retry is idempotent.
+	CreateStory(ctx context.Context, s domain.Story) (domain.Story, error)
+	GetStory(ctx context.Context, storyID string) (domain.Story, error)
+	ReplaceStoryTokens(ctx context.Context, storyID string, tokens []domain.StoryToken) error
+	ListStoryTokens(ctx context.Context, storyID string) ([]domain.StoryToken, error)
+	ReplaceStoryGlossary(ctx context.Context, storyID string, entries []domain.StoryGlossaryEntry) error
+	ListStoryGlossary(ctx context.Context, storyID string) ([]domain.StoryGlossaryEntry, error)
+
+	// Tasks — generated exercises. CreateTask inserts the task row and its
+	// task_targets (from tasks.TaskType.Targets) atomically.
+	CreateTask(ctx context.Context, t domain.Task, targets []string) (domain.Task, error)
+	ListSessionTasks(ctx context.Context, sessionID string) ([]domain.Task, error)
 }

@@ -26,6 +26,37 @@ with each language contributing only what it uniquely knows about itself.
 
 ---
 
+## Invariant: language knowledge lives in plugins, never in core
+
+This is the load-bearing rule of the whole platform, and the easiest one to
+violate by accident. **The core engine (`internal/story`, `internal/tasks`,
+`internal/selector`, handlers) must contain no language-specific logic.** Every
+fact a language knows about itself goes behind the `lang.Language` interface:
+
+- tokenization and key/lemma resolution (`Tokenize`, `ResolveKey`);
+- which task types make sense (`SupportedTaskTypes`);
+- **answer normalization for grading** — case folding, accent/diacritic
+  sensitivity, script quirks (Greek final sigma, Arabic tatweel/diacritics,
+  width folding in CJK). How two written answers are judged "the same" is a
+  per-language decision, so it belongs on the plugin (with a generic NFC +
+  Unicode case-fold default), not hardcoded in the task type.
+
+Two concrete smells that mean the invariant is being broken:
+
+1. A `switch` or constant in core that names a language, script, or
+   language-specific normalization rule. Move it to the interface with a default.
+2. A **core test that imports a real language plugin** (e.g. `internal/lang/el`).
+   Core tests must drive a fake in-test `lang.Language` so they exercise
+   orchestration, not one language's morphology. Real plugins are exercised by
+   their own package's tests. Hardcoding Greek (or any single language) into the
+   engine or its tests quietly re-introduces the "privileged language" coupling
+   this whole system exists to prevent.
+
+When in doubt: if adding the Nth language would force you to edit core code,
+the design is wrong — the seam belongs on `lang.Language`.
+
+---
+
 ## The Four Morphological Families
 
 Understanding which family a language belongs to determines the entire knowledge
