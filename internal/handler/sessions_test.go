@@ -32,6 +32,7 @@ func (fakeLang) KeyStrategy() lang.KeyStrategy       { return lang.KeySurface }
 func (fakeLang) ResolveKey(s string) (string, error) { return strings.ToLower(s), nil }
 func (fakeLang) SupportedTaskTypes() []string        { return []string{tasks.TypeComprehensionMC} }
 func (fakeLang) Frequency() []string                 { return nil }
+func (fakeLang) Normalize(s string) string           { return lang.DefaultNormalize(s) }
 func (fakeLang) Tokenize(text string) []lang.Token {
 	var out []lang.Token
 	for i, w := range strings.Fields(text) {

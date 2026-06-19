@@ -36,8 +36,9 @@ func (ComprehensionMC) Generate(string, domain.LearnerCtx) (map[string]any, erro
 
 // Grade returns correct when the response's selected_index matches the content's
 // correct_index. A demonstrated answer credits every target item the question
-// exercises; a wrong answer credits none.
-func (t ComprehensionMC) Grade(content, response map[string]any) (Grade, error) {
+// exercises; a wrong answer credits none. Multiple choice compares option
+// indices, not text, so the normalizer is unused.
+func (t ComprehensionMC) Grade(content, response map[string]any, _ Normalizer) (Grade, error) {
 	correctIdx, ok := asInt(content, "correct_index")
 	if !ok {
 		return Grade{}, ErrBadContent

@@ -1,11 +1,6 @@
 package tasks
 
 import (
-	"strings"
-
-	"golang.org/x/text/cases"
-	"golang.org/x/text/unicode/norm"
-
 	"github.com/dleiferives/tifl/internal/domain"
 )
 
@@ -39,10 +34,11 @@ func (FillBlank) Generate(string, domain.LearnerCtx) (map[string]any, error) {
 	return nil, ErrGenerateExternal
 }
 
-// Grade returns correct when the normalized answer matches any normalized
-// acceptable form. Normalization (NFC, case-fold, trim) absorbs cosmetic
-// differences without accepting a different word.
-func (t FillBlank) Grade(content, response map[string]any) (Grade, error) {
+// Grade returns correct when the answer matches any acceptable form under the
+// session language's normalizer. What counts as "the same" (case, accents,
+// script quirks) is the language's decision; FillBlank only applies whatever
+// normalizer it is given. A nil normalizer compares verbatim.
+func (t FillBlank) Grade(content, response map[string]any, normalize Normalizer) (Grade, error) {
 	forms := asStringSlice(content, "acceptable_forms")
 	if len(forms) == 0 {
 		return Grade{}, ErrBadContent
@@ -52,10 +48,10 @@ func (t FillBlank) Grade(content, response map[string]any) (Grade, error) {
 		return Grade{}, ErrBadResponse
 	}
 
-	want := normalizeAnswer(answer)
+	want := normalize.apply(answer)
 	correct := false
 	for _, f := range forms {
-		if normalizeAnswer(f) == want && want != "" {
+		if normalize.apply(f) == want && want != "" {
 			correct = true
 			break
 		}
@@ -69,18 +65,4 @@ func (FillBlank) Targets(content map[string]any) []string {
 		return []string{id}
 	}
 	return nil
-}
-
-// normalizeAnswer canonicalizes a typed answer for comparison: NFC-normalize so
-// composed and decomposed accents compare equal, then Unicode case-fold and trim
-// whitespace. Case folding (not strings.ToLower) is what makes Greek work: a
-// trailing capital Σ and a medial σ both fold to σ, so "ΣΚΎΛΟΣ" matches the
-// final-sigma form "σκύλος". It deliberately does not strip accents — in most
-// target languages a missing accent is a different (wrong) word.
-//
-// cases.Caser is not safe for concurrent use, so we build one per call; grading
-// is not hot enough for that to matter.
-func normalizeAnswer(s string) string {
-	folded := cases.Fold().String(norm.NFC.String(s))
-	return strings.TrimSpace(folded)
 }
