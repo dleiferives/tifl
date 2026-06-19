@@ -21,6 +21,8 @@ import (
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/handler"
+	"github.com/dleiferives/tifl/internal/lang"
+	greekplugin "github.com/dleiferives/tifl/internal/lang/el"
 )
 
 func main() {
@@ -43,8 +45,12 @@ func main() {
 	if err := repo.Migrate(ctx); err != nil {
 		log.Fatalf("migrate: %v", err)
 	}
-	if err := seed(ctx, repo); err != nil {
-		log.Fatalf("seed: %v", err)
+
+	// Register language plugins and seed their catalogue rows.
+	langRegistry := lang.NewRegistry()
+	langRegistry.Register(greekplugin.New())
+	if err := seedLanguages(ctx, repo, langRegistry); err != nil {
+		log.Fatalf("seed languages: %v", err)
 	}
 	if cfg.AuthMode == config.AuthNone {
 		if _, err := repo.EnsureLocalUser(ctx); err != nil {
@@ -94,14 +100,17 @@ func openRepo(ctx context.Context, cfg config.Config) (db.Repository, error) {
 	}
 }
 
-// seed registers the languages compiled into this build. Until the language
-// plugins land, Ancient Greek is seeded directly so the catalogue endpoint is
-// live end-to-end.
-func seed(ctx context.Context, repo db.Repository) error {
-	return repo.UpsertLanguage(ctx, domain.Language{
-		Code:        "grc",
-		Name:        "Ancient Greek",
-		KeyStrategy: "lemma",
-		Enabled:     true,
-	})
+// seedLanguages upserts a catalogue row for every registered language plugin.
+func seedLanguages(ctx context.Context, repo db.Repository, registry *lang.Registry) error {
+	for _, l := range registry.All() {
+		if err := repo.UpsertLanguage(ctx, domain.Language{
+			Code:        l.Code(),
+			Name:        l.Name(),
+			KeyStrategy: string(l.KeyStrategy()),
+			Enabled:     true,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
