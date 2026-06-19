@@ -35,6 +35,19 @@ make test-live                                       # in another (TIFL_LIVE_MOD
   `internal/handler`. See `context/backend-server.md`.
 - New language → new `internal/lang/<code>/` package + one `Register` call.
 - New task type → one file implementing `tasks.TaskType` + one `Register` call.
+- **Keep the core language-agnostic.** Anything a specific language knows about
+  itself — tokenization, key/lemma resolution, answer normalization (case
+  folding, accent/diacritic handling, script quirks like Greek final sigma),
+  which task types make sense — lives behind the `lang.Language` interface in
+  `internal/lang/<code>/`, never hardcoded in `internal/{story,tasks,selector,…}`.
+  If you reach for a language-specific rule in core code, that rule belongs on the
+  plugin interface with a sensible default. We are building for *many* languages,
+  not a privileged few.
+- **Test the core against a fake `lang.Language`, not a real plugin.** Pipeline,
+  selector and task tests use a trivial in-test plugin so they verify
+  orchestration, not one language's morphology. Language-specific behaviour is
+  tested inside that language's own package (e.g. `internal/lang/el`). A core test
+  that imports `internal/lang/el` is a smell — it couples the engine to Greek.
 - The OpenAPI spec in `spec/` is the contract; update it in the same change that
   adds or alters an endpoint.
 
