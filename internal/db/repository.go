@@ -47,4 +47,8 @@ type Repository interface {
 	// User knowledge — the per-user acquisition state.
 	UpsertUserKnowledge(ctx context.Context, uk domain.UserKnowledge) error
 	UserKnowledge(ctx context.Context, userID, language string) ([]domain.UserKnowledge, error)
+
+	// LLM calls — the audit/cost log written by the gateway client after every
+	// outbound model call. Append-only; the call_id is the caller's idempotency key.
+	InsertLLMCall(ctx context.Context, c domain.LLMCall) error
 }

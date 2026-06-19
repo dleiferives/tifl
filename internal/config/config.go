@@ -29,6 +29,7 @@ type Config struct {
 	DatabaseURL string      // Postgres DSN (postgres mode)
 	LLMBaseURL  string      // where the LLM gateway is listening
 	LLMAPIKey   string      // optional gateway auth
+	LLMModel    string      // model name sent to the gateway (blank = gateway default)
 	AuthMode    AuthMode    // jwt (cloud) or none (desktop-local)
 	JWTSecret   string      // signing key when AuthMode == jwt
 	FrontendDir string      // compiled SolidJS assets (web/dist)
@@ -44,6 +45,7 @@ func Load() Config {
 		DatabaseURL: env("DATABASE_URL", ""),
 		LLMBaseURL:  env("LLM_BASE_URL", "http://127.0.0.1:8001"),
 		LLMAPIKey:   env("LLM_API_KEY", ""),
+		LLMModel:    env("LLM_MODEL", ""),
 		AuthMode:    AuthMode(env("AUTH_MODE", string(AuthNone))),
 		JWTSecret:   env("JWT_SECRET", ""),
 		FrontendDir: env("FRONTEND_DIR", "web/dist"),
