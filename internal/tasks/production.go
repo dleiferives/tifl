@@ -34,7 +34,7 @@ func (Production) Generate(string, domain.LearnerCtx) (map[string]any, error) {
 
 // Grade always returns ErrNeedsLLM. An LLM-graded type must be scored through
 // the Grader, which calls the grader builder; calling Grade directly is a bug.
-func (Production) Grade(map[string]any, map[string]any) (Grade, error) {
+func (Production) Grade(map[string]any, map[string]any, Normalizer) (Grade, error) {
 	return Grade{}, ErrNeedsLLM
 }
 

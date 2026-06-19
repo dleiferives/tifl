@@ -26,6 +26,13 @@ func (Greek) Name() string                  { return "Greek" }
 func (Greek) RTL() bool                     { return false }
 func (Greek) KeyStrategy() lang.KeyStrategy { return lang.KeyLemma }
 
+// Normalize canonicalizes a written answer for grading comparison. Greek needs
+// no special handling beyond the script-generic default: Unicode case folding
+// already maps a trailing capital Σ and a medial σ to the same form, so
+// "ΣΚΎΛΟΣ" and the final-sigma form "σκύλος" compare equal. Accents are kept on
+// purpose — in Greek a missing accent is usually a different word.
+func (Greek) Normalize(s string) string { return lang.DefaultNormalize(s) }
+
 // SupportedTaskTypes returns the task type IDs meaningful for Greek learners.
 func (Greek) SupportedTaskTypes() []string {
 	return []string{"comprehension_mc", "fill_blank", "production"}

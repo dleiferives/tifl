@@ -32,6 +32,7 @@ func (fakeLang) KeyStrategy() lang.KeyStrategy       { return lang.KeySurface }
 func (fakeLang) ResolveKey(s string) (string, error) { return strings.ToLower(s), nil }
 func (f fakeLang) SupportedTaskTypes() []string      { return f.taskTypes }
 func (fakeLang) Frequency() []string                 { return nil }
+func (fakeLang) Normalize(s string) string           { return lang.DefaultNormalize(s) }
 
 // Tokenize splits on single spaces, emitting a word token then a space token so
 // the surface is faithfully reconstructable from the token stream.

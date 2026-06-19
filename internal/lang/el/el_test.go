@@ -6,6 +6,31 @@ import (
 	"github.com/dleiferives/tifl/internal/lang"
 )
 
+// TestNormalize covers the Greek-specific behaviour of answer normalization for
+// grading: case folding must treat a trailing capital Σ and the medial/final
+// sigma forms as equal, while accents (which distinguish words in Greek) are
+// preserved. This is the behaviour fill_blank relies on via Greek.Normalize.
+func TestNormalize(t *testing.T) {
+	g := New()
+	cases := []struct {
+		name  string
+		a, b  string
+		equal bool
+	}{
+		{"final vs capital sigma", "ΣΚΎΛΟΣ", "σκύλος", true},
+		{"surrounding whitespace", "  σκύλος ", "σκύλος", true},
+		{"accent is significant", "σκυλος", "σκύλος", false},
+		{"different word", "γάτα", "σκύλος", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := g.Normalize(c.a) == g.Normalize(c.b); got != c.equal {
+				t.Fatalf("Normalize(%q)==Normalize(%q) = %v, want %v", c.a, c.b, got, c.equal)
+			}
+		})
+	}
+}
+
 func TestCode(t *testing.T) {
 	g := New()
 	if g.Code() != "el" {

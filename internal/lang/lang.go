@@ -6,6 +6,13 @@
 // context/language-plugins.md.
 package lang
 
+import (
+	"strings"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
+)
+
 // KeyStrategy determines what canonical value is stored for a surface token,
 // which depends entirely on the language's morphological family.
 type KeyStrategy string
@@ -37,6 +44,25 @@ type Language interface {
 	ResolveKey(surface string) (string, error) // surface word -> canonical key
 	SupportedTaskTypes() []string              // task type IDs valid for this language
 	Frequency() []string                       // canonical keys, most common first
+
+	// Normalize canonicalizes a written answer for equality comparison during
+	// rule-based grading (e.g. fill-blank). How two answers count as "the same"
+	// is a per-language decision — accent sensitivity, case folding, script
+	// quirks (Greek final sigma, Arabic tatweel, CJK width) — so it lives here,
+	// not in the language-agnostic task types. Most languages can return
+	// DefaultNormalize(s).
+	Normalize(s string) string
+}
+
+// DefaultNormalize is the script-generic answer normalization most languages
+// want: NFC so composed/decomposed accents compare equal, Unicode case folding
+// (which, unlike strings.ToLower, folds a trailing Greek capital Σ and a medial
+// σ to the same form), and trimmed surrounding whitespace. It deliberately does
+// NOT strip accents — in most languages a missing accent is a different word; a
+// language that wants accent-insensitivity overrides Normalize. cases.Caser is
+// not safe for concurrent use, so a fresh one is built per call.
+func DefaultNormalize(s string) string {
+	return strings.TrimSpace(cases.Fold().String(norm.NFC.String(s)))
 }
 
 // Registry maps language code -> plugin. Populated at startup. Missing languages

@@ -19,6 +19,22 @@ type Grade struct {
 	Raw               map[string]any
 }
 
+// Normalizer canonicalizes a written answer for equality comparison. It is the
+// language's Normalize method (see lang.Language), passed in rather than imported
+// so the task package stays language-agnostic — a text-matching type applies
+// whatever normalization the session's language defines, without knowing which
+// language that is. A nil Normalizer means "compare verbatim".
+type Normalizer func(string) string
+
+// apply runs the normalizer, treating nil as the identity function so callers
+// (and direct unit tests) never need a nil check.
+func (n Normalizer) apply(s string) string {
+	if n == nil {
+		return s
+	}
+	return n(s)
+}
+
 // TaskType is pure domain logic: it knows about stories, items and language, and
 // nothing about HTTP, storage or auth.
 type TaskType interface {
@@ -28,8 +44,11 @@ type TaskType interface {
 
 	// Generate produces the task content JSON for a finished story.
 	Generate(story string, ctx domain.LearnerCtx) (content map[string]any, err error)
-	// Grade scores a response against the content.
-	Grade(content, response map[string]any) (Grade, error)
+	// Grade scores a response against the content. normalize is the session
+	// language's answer normalizer (lang.Language.Normalize); text-matching types
+	// (fill_blank) apply it, while types that don't compare free text (MC) ignore
+	// it. The Grader supplies it; it may be nil (compare verbatim).
+	Grade(content, response map[string]any, normalize Normalizer) (Grade, error)
 	// Targets returns the knowledge item ids this task exercises.
 	Targets(content map[string]any) []string
 }

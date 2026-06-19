@@ -24,12 +24,40 @@ const (
 // The Grader does not touch user_knowledge — turning a Grade into a learning
 // signal is the acquisition engine's job (#9).
 type Grader struct {
-	client llm.Client
+	client    llm.Client
+	normalize func(language string) Normalizer
+}
+
+// GraderOption configures a Grader.
+type GraderOption func(*Grader)
+
+// WithNormalizers supplies the per-language answer normalizer used by rule types
+// that compare free text (fill_blank). resolve maps a language code to its
+// Normalizer — typically built from the lang.Registry at the composition root,
+// e.g. func(code string) tasks.Normalizer { l,_ := registry.Get(code); return l.Normalize }.
+// Without it, the Grader compares answers verbatim.
+func WithNormalizers(resolve func(language string) Normalizer) GraderOption {
+	return func(g *Grader) { g.normalize = resolve }
 }
 
 // NewGrader builds a Grader over the gateway client. A nil client is allowed for
 // rule-only use; an LLM-graded task then fails fast rather than panicking.
-func NewGrader(client llm.Client) *Grader { return &Grader{client: client} }
+func NewGrader(client llm.Client, opts ...GraderOption) *Grader {
+	g := &Grader{client: client}
+	for _, o := range opts {
+		o(g)
+	}
+	return g
+}
+
+// normalizerFor returns the answer normalizer for a language, or nil (verbatim
+// comparison) when no resolver is configured.
+func (g *Grader) normalizerFor(language string) Normalizer {
+	if g.normalize == nil {
+		return nil
+	}
+	return g.normalize(language)
+}
 
 // GradeRequest is everything needed to grade one submission. Story and Ctx are
 // only consulted on the LLM path (the grader builder embeds them); rule grading
@@ -47,7 +75,7 @@ type GradeRequest struct {
 // returned GradedBy mirrors the chosen path.
 func (g *Grader) Grade(ctx context.Context, req GradeRequest) (Grade, GradedBy, error) {
 	if !req.Type.NeedsLLM() {
-		grade, err := req.Type.Grade(req.Content, req.Response)
+		grade, err := req.Type.Grade(req.Content, req.Response, g.normalizerFor(req.Ctx.Language))
 		return grade, GradedByRule, err
 	}
 	grade, err := g.gradeWithLLM(ctx, req)
