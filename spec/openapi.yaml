@@ -26,7 +26,111 @@ paths:
                   message:
                     type: string
                 required: [message]
-# Planned surfaces (see context/): /auth/*, /sessions, /sessions/{id}/generate
-# (SSE), /stories/{id}, /word_knowledge/{token}, /tasks/{id}, /skills.
+  /sessions/generate:
+    post:
+      summary: Start generating a session (story + tasks)
+      description: >
+        Creates a session and kicks off the staged generation pipeline
+        asynchronously, returning immediately. Poll progress via
+        /sessions/{id}/events. Returns 503 if no LLM gateway is configured.
+      operationId: generateSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateRequest"
+      responses:
+        "202":
+          description: Generation started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionRef"
+        "400": { description: Missing or unknown language }
+        "503": { description: Generation not configured }
+  /sessions/{id}/events:
+    get:
+      summary: Stream generation progress (SSE)
+      description: >
+        Server-Sent Events stream of stage transitions. On connect the current
+        persisted stage state is replayed, then live events follow until a
+        terminal `{"stage":"done"}` event. token_rate is an approximate upstream
+        tokens/second during story generation (a ticker animation); story text is
+        never streamed.
+      operationId: sessionEvents
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      responses:
+        "200":
+          description: SSE stream
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/GenerationEvent"
+        "404": { description: Session not found }
+  /sessions/{id}/retry:
+    post:
+      summary: Retry a failed generation from its failed stage
+      description: >
+        Resumes generation using session_generation_stages: a full re-run if the
+        story never completed, or only the failed task-type stages otherwise.
+      operationId: retrySession
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      responses:
+        "202":
+          description: Retry started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionRef"
+        "404": { description: Session not found }
+        "503": { description: Generation not configured }
+# Planned surfaces (see context/): /auth/*, /stories/{id},
+# /word_knowledge/{token}, /tasks/{id}, /skills.
 components:
-  schemas: {}
+  parameters:
+    SessionID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+  schemas:
+    GenerateRequest:
+      type: object
+      properties:
+        language: { type: string, description: "registered language code, e.g. 'el'" }
+        level: { type: string, description: "beginner|elementary|intermediate|upper-intermediate|advanced" }
+        session_type:
+          type: string
+          enum: [system, topic_guided, expression_guided]
+        topic: { type: string, description: "topic_guided only" }
+        user_expressions:
+          type: array
+          items: { type: string }
+          description: "expression_guided only"
+        expression_output:
+          type: string
+          enum: [phrases, story]
+          description: "expression_guided only"
+      required: [language]
+    SessionRef:
+      type: object
+      properties:
+        session_id: { type: string }
+        status: { type: string }
+      required: [session_id, status]
+    GenerationEvent:
+      type: object
+      description: One SSE progress message (the JSON in each data line).
+      properties:
+        stage:
+          type: string
+          description: "selection|story_generation|tokenization|task_<type>|done"
+        status:
+          type: string
+          enum: [pending, in_progress, complete, failed]
+        token_rate: { type: integer, description: "approx upstream tokens/sec" }
+        error_code: { type: string, description: "stable code, set only on failure" }
+      required: [stage]

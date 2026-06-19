@@ -6,18 +6,21 @@ import (
 	"os"
 
 	"github.com/dleiferives/tifl/internal/db"
+	"github.com/dleiferives/tifl/internal/story"
 )
 
 // Handler holds the dependencies the HTTP layer needs and registers routes onto
 // a mux. Handlers stay thin: parse, call a repository/domain function, serialize.
 type Handler struct {
 	repo        db.Repository
+	broker      *story.Broker // nil when generation is not configured (no LLM gateway)
 	frontendDir string
 }
 
-// New builds a Handler over the given repository and compiled-client directory.
-func New(repo db.Repository, frontendDir string) *Handler {
-	return &Handler{repo: repo, frontendDir: frontendDir}
+// New builds a Handler over the given repository, generation broker (may be nil)
+// and compiled-client directory.
+func New(repo db.Repository, broker *story.Broker, frontendDir string) *Handler {
+	return &Handler{repo: repo, broker: broker, frontendDir: frontendDir}
 }
 
 // Register wires every route onto mux.
@@ -25,6 +28,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /healthz", h.health)
 	mux.HandleFunc("GET /api/v1/ping", h.ping)
 	mux.HandleFunc("GET /api/v1/languages", h.listLanguages)
+	mux.HandleFunc("POST /api/v1/sessions/generate", h.generateSession)
+	mux.HandleFunc("GET /api/v1/sessions/{id}/events", h.sessionEvents)
+	mux.HandleFunc("POST /api/v1/sessions/{id}/retry", h.retrySession)
 	h.registerStatic(mux)
 }
 

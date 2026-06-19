@@ -23,6 +23,10 @@ import (
 	"github.com/dleiferives/tifl/internal/handler"
 	"github.com/dleiferives/tifl/internal/lang"
 	greekplugin "github.com/dleiferives/tifl/internal/lang/el"
+	"github.com/dleiferives/tifl/internal/llm"
+	"github.com/dleiferives/tifl/internal/predictor"
+	"github.com/dleiferives/tifl/internal/selector"
+	"github.com/dleiferives/tifl/internal/story"
 	"github.com/dleiferives/tifl/internal/tasks"
 )
 
@@ -67,8 +71,31 @@ func main() {
 		}
 	}
 
+	// Wire the generation pipeline: gateway client (logging to llm_calls),
+	// selector over the algorithmic predictor, and the staged story pipeline
+	// fronted by an async broker for SSE progress. The broker is nil only if no
+	// gateway is configured, in which case the generation endpoints report 503.
+	var broker *story.Broker
+	if cfg.LLMBaseURL != "" {
+		client := llm.New(cfg.LLMBaseURL,
+			llm.WithAPIKey(cfg.LLMAPIKey),
+			llm.WithModel(cfg.LLMModel),
+			llm.WithRecorder(repo),
+		)
+		pipeline := story.New(story.Deps{
+			Repo:     repo,
+			Selector: selector.NewDBSelector(repo, predictor.DefaultConfig()),
+			Client:   client,
+			Langs:    langRegistry,
+			Tasks:    taskRegistry,
+		}, story.Config{})
+		broker = story.NewBroker(pipeline)
+	} else {
+		log.Println("no llm_base_url configured: session generation endpoints will return 503")
+	}
+
 	mux := http.NewServeMux()
-	handler.New(repo, cfg.FrontendDir).Register(mux)
+	handler.New(repo, broker, cfg.FrontendDir).Register(mux)
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
