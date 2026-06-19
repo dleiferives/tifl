@@ -1,4 +1,8 @@
-.PHONY: help build server gateway run run-gateway web web-install web-typecheck test vet fmt tidy clean
+.PHONY: help build server gateway run run-gateway web web-install web-typecheck test test-live vet fmt tidy clean
+
+# Live gateway test (opt-in): a real OpenCode server to verify the gateway
+# end-to-end. Override the model with TIFL_LIVE_MODEL.
+TIFL_LIVE_OPENCODE_URL ?= http://127.0.0.1:4202
 
 help: ## list targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -32,8 +36,11 @@ web-typecheck: ## typecheck the web client
 
 ## --- Quality ---
 
-test: ## run Go unit tests
+test: ## run Go unit tests (no network)
 	go test ./...
+
+test-live: ## live gateway test vs a running `opencode serve` (needs TIFL_LIVE_OPENCODE_URL)
+	TIFL_LIVE_OPENCODE_URL=$(TIFL_LIVE_OPENCODE_URL) go test -tags live ./internal/gateway/ -run Live -v
 
 vet: ## go vet
 	go vet ./...

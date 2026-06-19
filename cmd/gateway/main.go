@@ -8,9 +8,12 @@
 //
 //	GATEWAY_ADDR      listen address                      (default 127.0.0.1:8001)
 //	GATEWAY_PROVIDER  openrouter | ollama | openai | anthropic (default ollama)
-//	GATEWAY_UPSTREAM_URL  override the provider's base URL (default per provider)
+//	GATEWAY_UPSTREAM_URL  override the provider's base URL (default per provider;
+//	                      required for opencode — the `opencode serve` address)
 //	GATEWAY_API_KEY   upstream credential
 //	GATEWAY_MODEL     default model when a request omits one
+//	                  (opencode wants "providerID/modelID", e.g. opencode/nemotron-3-ultra-free)
+//	GATEWAY_AGENT     opencode only: agent to drive (default "writer")
 package main
 
 import (
@@ -29,6 +32,7 @@ func main() {
 		Kind:        os.Getenv("GATEWAY_PROVIDER"),
 		UpstreamURL: os.Getenv("GATEWAY_UPSTREAM_URL"),
 		APIKey:      os.Getenv("GATEWAY_API_KEY"),
+		Agent:       os.Getenv("GATEWAY_AGENT"),
 	})
 	if err != nil {
 		log.Fatalf("gateway: %v", err)

@@ -66,6 +66,17 @@ make web            # build the SolidJS client into web/dist (then `make run` se
 
 With no web build, the server still runs and serves a placeholder at `/`.
 
+The gateway picks its upstream from `GATEWAY_PROVIDER` (`ollama` default,
+`openrouter`, `openai`, `anthropic`, or `opencode`) plus `GATEWAY_UPSTREAM_URL`,
+`GATEWAY_API_KEY`, and `GATEWAY_MODEL`. For a credential-free local model you can
+point it at a running [OpenCode](https://opencode.ai) server:
+
+```bash
+opencode serve --port 4202 --hostname 127.0.0.1
+GATEWAY_PROVIDER=opencode GATEWAY_UPSTREAM_URL=http://127.0.0.1:4202 \
+  GATEWAY_MODEL=opencode/nemotron-3-ultra-free make run-gateway
+```
+
 ## Develop
 
 ```bash
