@@ -1,11 +1,22 @@
-// Package config loads server configuration from the environment. The same
+// Package config resolves configuration for both binaries from an optional YAML
+// file plus environment overrides. Precedence is: built-in defaults < the config
+// file < environment variables — so the file is the normal way to configure a
+// deployment and env vars stay available for one-off overrides and CI. The same
 // binary produces different behaviour (cloud/Postgres vs desktop/SQLite, JWT vs
 // no-auth) purely from these values. See context/backend-server.md
 // ("Configuration") and context/deployment-platforms.md ("Config-Driven
 // Deployment").
 package config
 
-import "os"
+import (
+	"fmt"
+	"os"
+
+	"gopkg.in/yaml.v3"
+)
+
+// DefaultPath is the config file both binaries look for when none is given.
+const DefaultPath = "tifl.yaml"
 
 type StorageMode string
 
@@ -21,7 +32,7 @@ const (
 	AuthNone AuthMode = "none"
 )
 
-// Config is the fully-resolved server configuration.
+// Config is the fully-resolved API-server configuration.
 type Config struct {
 	Addr        string      // listen address for the API server
 	StorageMode StorageMode // which Repository implementation to use
@@ -35,26 +46,110 @@ type Config struct {
 	FrontendDir string      // compiled SolidJS assets (web/dist)
 }
 
-// Load reads configuration from the environment, applying single-user / desktop
-// defaults so the server runs out of the box with no setup.
-func Load() Config {
-	return Config{
-		Addr:        env("TIFL_ADDR", "127.0.0.1:8000"),
-		StorageMode: StorageMode(env("STORAGE_MODE", string(StorageSQLite))),
-		DBPath:      env("DB_PATH", "data/tifl.db"),
-		DatabaseURL: env("DATABASE_URL", ""),
-		LLMBaseURL:  env("LLM_BASE_URL", "http://127.0.0.1:8001"),
-		LLMAPIKey:   env("LLM_API_KEY", ""),
-		LLMModel:    env("LLM_MODEL", ""),
-		AuthMode:    AuthMode(env("AUTH_MODE", string(AuthNone))),
-		JWTSecret:   env("JWT_SECRET", ""),
-		FrontendDir: env("FRONTEND_DIR", "web/dist"),
-	}
+// GatewayConfig is the fully-resolved LLM-gateway configuration.
+type GatewayConfig struct {
+	Addr        string // listen address for the gateway
+	Provider    string // openrouter | ollama | openai | anthropic | opencode
+	UpstreamURL string // upstream base URL (required for opencode)
+	APIKey      string // upstream credential
+	Model       string // default model when a request omits one
+	Agent       string // opencode only: agent to drive (default "writer")
 }
 
-func env(key, def string) string {
-	if v, ok := os.LookupEnv(key); ok && v != "" {
+// file mirrors the on-disk YAML. Both sections are optional; a binary reads only
+// the one it needs.
+type file struct {
+	Server struct {
+		Addr        string `yaml:"addr"`
+		StorageMode string `yaml:"storage_mode"`
+		DBPath      string `yaml:"db_path"`
+		DatabaseURL string `yaml:"database_url"`
+		LLMBaseURL  string `yaml:"llm_base_url"`
+		LLMAPIKey   string `yaml:"llm_api_key"`
+		LLMModel    string `yaml:"llm_model"`
+		AuthMode    string `yaml:"auth_mode"`
+		JWTSecret   string `yaml:"jwt_secret"`
+		FrontendDir string `yaml:"frontend_dir"`
+	} `yaml:"server"`
+	Gateway struct {
+		Addr        string `yaml:"addr"`
+		Provider    string `yaml:"provider"`
+		UpstreamURL string `yaml:"upstream_url"`
+		APIKey      string `yaml:"api_key"`
+		Model       string `yaml:"model"`
+		Agent       string `yaml:"agent"`
+	} `yaml:"gateway"`
+}
+
+// Load resolves the API-server configuration from the YAML file at path (if it
+// exists) and the environment. A missing file is fine — defaults apply. A
+// malformed file is an error.
+func Load(path string) (Config, error) {
+	f, err := readFile(path)
+	if err != nil {
+		return Config{}, err
+	}
+	s := f.Server
+	return Config{
+		Addr:        pick("TIFL_ADDR", s.Addr, "127.0.0.1:8000"),
+		StorageMode: StorageMode(pick("STORAGE_MODE", s.StorageMode, string(StorageSQLite))),
+		DBPath:      pick("DB_PATH", s.DBPath, "data/tifl.db"),
+		DatabaseURL: pick("DATABASE_URL", s.DatabaseURL, ""),
+		LLMBaseURL:  pick("LLM_BASE_URL", s.LLMBaseURL, "http://127.0.0.1:8001"),
+		LLMAPIKey:   pick("LLM_API_KEY", s.LLMAPIKey, ""),
+		LLMModel:    pick("LLM_MODEL", s.LLMModel, ""),
+		AuthMode:    AuthMode(pick("AUTH_MODE", s.AuthMode, string(AuthNone))),
+		JWTSecret:   pick("JWT_SECRET", s.JWTSecret, ""),
+		FrontendDir: pick("FRONTEND_DIR", s.FrontendDir, "web/dist"),
+	}, nil
+}
+
+// LoadGateway resolves the gateway configuration from the YAML file at path (if
+// it exists) and the environment, with the same precedence as Load.
+func LoadGateway(path string) (GatewayConfig, error) {
+	f, err := readFile(path)
+	if err != nil {
+		return GatewayConfig{}, err
+	}
+	g := f.Gateway
+	return GatewayConfig{
+		Addr:        pick("GATEWAY_ADDR", g.Addr, "127.0.0.1:8001"),
+		Provider:    pick("GATEWAY_PROVIDER", g.Provider, ""),
+		UpstreamURL: pick("GATEWAY_UPSTREAM_URL", g.UpstreamURL, ""),
+		APIKey:      pick("GATEWAY_API_KEY", g.APIKey, ""),
+		Model:       pick("GATEWAY_MODEL", g.Model, ""),
+		Agent:       pick("GATEWAY_AGENT", g.Agent, ""),
+	}, nil
+}
+
+// readFile parses the YAML at path. A nonexistent path yields an empty file (so
+// the config file is optional); any other read/parse failure is returned.
+func readFile(path string) (file, error) {
+	var f file
+	if path == "" {
+		return f, nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return f, nil
+		}
+		return f, fmt.Errorf("config: read %s: %w", path, err)
+	}
+	if err := yaml.Unmarshal(raw, &f); err != nil {
+		return f, fmt.Errorf("config: parse %s: %w", path, err)
+	}
+	return f, nil
+}
+
+// pick resolves one value: environment override, else the file value, else the
+// built-in default.
+func pick(envKey, fileVal, def string) string {
+	if v, ok := os.LookupEnv(envKey); ok && v != "" {
 		return v
+	}
+	if fileVal != "" {
+		return fileVal
 	}
 	return def
 }

@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -23,7 +24,13 @@ import (
 )
 
 func main() {
-	cfg := config.Load()
+	cfgPath := flag.String("config", config.DefaultPath, "path to the YAML config file (optional)")
+	flag.Parse()
+
+	cfg, err := config.Load(*cfgPath)
+	if err != nil {
+		log.Fatalf("config: %v", err)
+	}
 
 	ctx := context.Background()
 
