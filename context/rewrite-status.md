@@ -52,44 +52,26 @@ we want to revive or port it.)
 - `internal/id` (UUIDv4); `internal/handler` thin handlers; live DB-backed
   `GET /api/v1/languages`. Tests in `internal/db/sqlite_test.go` (all green).
 
-## Done — step 2: Greek plugin (#5) + selection layer (#6)
-
-- **Language correction**: target language is Modern Greek (`el`, ISO 639-1), not
-  Ancient Greek (`grc`). All references updated. Ancient Greek is a future language.
-- `internal/lang/el/` — Modern Greek plugin (reference implementation):
-  - `Greek` struct implements `lang.Language` fully
-  - Tokenizer: Unicode-aware, handles monotonic Greek orthography, NFC normalization,
-    apostrophe elision support, reconstructable token sequence
-  - `ResolveKey`: v1 normalized-surface approximation (lowercase + strip punctuation);
-    TODO spaCy `el_core_news_sm` for true lemmatization
-  - `Frequency()`: ~160 Modern Greek lemmas ordered by frequency (particles,
-    conjunctions, core verbs, nouns, adjectives, adverbs)
-  - `SupportedTaskTypes()`: comprehension_mc, fill_blank, production
-  - Tests: Code/RTL/Strategy, Tokenize (surface reconstruction + position sequence),
-    ResolveKey (lowercase + strip), word/non-word key rules, frequency list shape
-- `lang.Registry.All()` added — used by `seedLanguages` in `cmd/server`
-- `cmd/server/main.go` — plugin registration wired: `lang.NewRegistry()` +
-  `greekplugin.New()` + `seedLanguages` replaces the old hard-coded seed stub
-- `internal/selector/selector.go` — `Selector.Select` now takes `context.Context`;
-  `BudgetForLevel` helper (beginner/elementary/intermediate/upper-intermediate/advanced)
-- `internal/selector/db_selector.go` — `DBSelector` concrete implementation:
-  - Loads all `user_knowledge` + all `knowledge_items` for the language in 2 queries
-  - Runs algorithmic predictor over known items
-  - Buckets: targets (encountered/recognizing/acquiring, respects `next_target_after`),
-    background (acquired/automatic, uniform random shuffle), new (unseen, frequency rank)
-  - `ForceTargets` sort first; `ExcludeItems` filtered before bucketing
-  - `targetPriority` score: 0.5 × (1−probability) + 0.3 × lookupRatio + 0.2 × stalenessFactor
-  - Tests: bucket correctness, exclude filter, empty-knowledge edge case
-
 ## Next (rough order)
 
-1. **Story pipeline** (`internal/story`) — staged, checkpointed generation with
+1. **Postgres `Repository`** behind the same interface (cloud mode) + a fake
+   in-memory repo for fast handler tests.
+2. **Greek language plugin** (`internal/lang/grc`) — the reference implementation:
+   tokenization, LLM-backed key resolution (cache in `story_tokens`), item types,
+   frequency list. See `context/language-plugins.md` ("Greek: The Reference
+   Implementation").
+3. **LLM gateway** — real OpenAI-compatible `/v1/chat/completions` with provider
+   routing + retry + `llm_calls` logging; `internal/llm` gateway client.
+4. **Selection layer** — the hard system. (Algorithmic predictor ✅ done:
+   `internal/predictor`, pure deterministic formula + tests; the selector and a
+   repo-backed `KnowledgePredictor` adapter remain.)
+5. **Story pipeline** (`internal/story`) — staged, checkpointed generation with
    SSE progress (token-rate ticker); session types.
-2. **Task system** — first task types (comprehension MC, fill-blank) + grading.
-3. **Reader** — `story_tokens` API + signal logging (lookup/rate).
-4. **Auth** — JWT + argon2id (cloud); synthetic `local` user (desktop).
-5. **Web** — api/router/store + reader, home, tasks, settings views.
-6. **Shells** — Tauri desktop (Go sidecar), Capacitor mobile.
+6. **Task system** — first task types (comprehension MC, fill-blank) + grading.
+7. **Reader** — `story_tokens` API + signal logging (lookup/rate).
+8. **Auth** — JWT + argon2id (cloud); synthetic `local` user (desktop).
+9. **Web** — api/router/store + reader, home, tasks, settings views.
+10. **Shells** — Tauri desktop (Go sidecar), Capacitor mobile.
 
 ## Open decisions to revisit
 

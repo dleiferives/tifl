@@ -53,12 +53,3 @@ func (r *Registry) Get(code string) (Language, bool) {
 	l, ok := r.langs[code]
 	return l, ok
 }
-
-// All returns every registered language in undefined order.
-func (r *Registry) All() []Language {
-	out := make([]Language, 0, len(r.langs))
-	for _, l := range r.langs {
-		out = append(out, l)
-	}
-	return out
-}
