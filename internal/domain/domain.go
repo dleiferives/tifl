@@ -50,7 +50,21 @@ type LearnerCtx struct {
 	Level         string
 	Selected      SelectedItems
 	RecentHistory []SessionSummary
-	Guidance      *UserGuidance // nil unless the session is topic/expression guided
+	Skills        *SkillConstraints // nil = fall back to the Level label alone
+	Guidance      *UserGuidance     // nil unless the session is topic/expression guided
+}
+
+// SkillConstraints is the precise, per-session description of what the story
+// generator may do — derived from the user's skill XP by the language plugin,
+// which knows the skill-id -> grammatical-concept mapping. The generator is given
+// these concrete constraints instead of a level label because "use the dative in
+// recipient positions" is far less ambiguous than "write at beginner level". See
+// context/prompting-system.md ("Skill-Driven Story Complexity").
+type SkillConstraints struct {
+	Allowed    []string // constructions/cases/tenses to use freely
+	Introduce  []string // tier-0 constructions adjacent to current level; use with support
+	Avoid      []string // constructions the user is not ready for
+	VocabRange string   // e.g. "top 300 lemmas"
 }
 
 // SessionSummary is a compact record of a past session, used to avoid topic
