@@ -7,9 +7,10 @@ import (
 
 // ProviderConfig selects and configures the upstream provider from gateway env.
 type ProviderConfig struct {
-	Kind        string // openrouter | ollama | openai | anthropic
+	Kind        string // openrouter | ollama | openai | anthropic | opencode
 	UpstreamURL string // overrides the per-kind default base URL
 	APIKey      string // upstream credential
+	Agent       string // opencode only: the agent to drive (default "writer")
 }
 
 // defaultBaseURL is the upstream base URL used when UpstreamURL is empty.
@@ -27,8 +28,8 @@ func defaultBaseURL(kind string) string {
 }
 
 // NewProvider builds the configured provider. The OpenAI-compatible kinds share
-// one implementation differing only by base URL and credential; Anthropic uses
-// its native mapping.
+// one implementation differing only by base URL and credential; Anthropic and
+// OpenCode use their native mappings.
 func NewProvider(pc ProviderConfig) (Provider, error) {
 	kind := strings.ToLower(strings.TrimSpace(pc.Kind))
 	if kind == "" {
@@ -37,6 +38,11 @@ func NewProvider(pc ProviderConfig) (Provider, error) {
 	switch kind {
 	case "anthropic":
 		return NewAnthropicProvider(pc.UpstreamURL, pc.APIKey, nil), nil
+	case "opencode":
+		if pc.UpstreamURL == "" {
+			return nil, fmt.Errorf("gateway: opencode provider requires GATEWAY_UPSTREAM_URL (the `opencode serve` address)")
+		}
+		return NewOpenCodeProvider(pc.UpstreamURL, pc.Agent, nil), nil
 	case "openrouter", "ollama", "openai":
 		base := pc.UpstreamURL
 		if base == "" {
@@ -44,6 +50,6 @@ func NewProvider(pc ProviderConfig) (Provider, error) {
 		}
 		return NewOpenAIProvider(kind, base, pc.APIKey, nil), nil
 	default:
-		return nil, fmt.Errorf("gateway: unknown provider %q (want openrouter|ollama|openai|anthropic)", kind)
+		return nil, fmt.Errorf("gateway: unknown provider %q (want openrouter|ollama|openai|anthropic|opencode)", kind)
 	}
 }
