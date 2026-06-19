@@ -244,50 +244,57 @@ Registration happens in `cmd/server/main.go`. Adding a new language requires:
 
 ---
 
-## Modern Greek: The Reference Implementation
+## Greek: The Reference Implementation
 
-Modern Greek (code `el`, ISO 639-1) is the first language and the reference
-implementation. Ancient Greek (`grc`, ISO 639-3) is a planned future language.
-Both are fusional but differ in orthography and grammar.
+Greek (Ancient Greek, code `grc`) is the first language and serves as the
+reference implementation that informs the interface design.
 
 **key_strategy:** `lemma`
 
-**Orthography:** Monotonic — a single acute accent on the stressed syllable, no
-breathings. Simpler Unicode normalization than polytonic Ancient Greek.
-
 **Tokenization approach:**
-Split on whitespace, strip leading/trailing punctuation, NFC-normalize, preserve
-the original surface form including stress accent.
+Split on whitespace, strip leading/trailing punctuation (handling Greek punctuation:
+·, ;, —), Unicode-normalize to NFC, preserve the original surface form.
 
-**Key resolution (v1):** Normalized surface — lowercase, strip punctuation, NFC
-normalize. Not true lemmatization (e.g. "άνθρωπο" → key "άνθρωπο", not "άνθρωπος")
-but functional for invariable words which are the most frequent. TODO: replace
-with spaCy `el_core_news_sm` or a morphological lookup table.
+**Key resolution (v1):** LLM-backed. The word breakdown endpoint accepts a surface
+form and returns structured analysis including the lemma. This is slow (~500ms)
+and costs tokens but works without any language-specific NLP library. Resolved keys
+are cached in `story_tokens` at ingestion time so the reader never waits.
 
-**Key resolution (target):** spaCy `el_core_news_sm` provides lemmatization for
-Modern Greek. A lookup table (top 5,000 lemmas × full paradigm forms) would cover
-~95% of learner-level tokens deterministically, with LLM fallback for the rest.
+**Key resolution (target):** A morphological lookup table or CLTK integration.
+Greek is extremely well-resourced for NLP; a lookup table covering the core
+vocabulary (top 5,000 lemmas × their full paradigm forms) would resolve ~95% of
+tokens in learner-level texts deterministically. LLM fallback for the remaining 5%.
 
 **Item types:** `word`, `phrase`, `construction`
 
 **Construction examples:**
-- να + subjunctive: purpose, intention, soft commands ("θέλω να πάω" = I want to go)
-- Genitive for possession: "το αυτοκίνητο του Γιώργη" (George's car)
-- Aspect (imperfective vs perfective): fundamental to Greek verbs; internalized
-  through massive exposure, not grammar rules
-- θα + verb: future and conditional
-- Diminutives: highly productive in spoken Greek; affection and smallness
+- Genitive absolute: participial phrase grammatically independent from main clause,
+  subject in genitive, used for temporal/causal subordination
+- Accusative + infinitive: indirect statement construction after verbs of thinking,
+  saying, perceiving
+- μέν ... δέ: contrast/balance construction, often untranslatable as a single English
+  equivalent
+- Articular infinitive: infinitive with a definite article, functions as a noun
+
+These constructions are tracked as `knowledge_items` with `item_type = construction`.
+The LLM is given the construction's metadata (pattern, gloss, examples) when
+generating stories, and uses it to embed the construction naturally.
 
 ---
 
 ## Open Questions
 
-- Code-switching and loanwords: Modern Greek texts freely mix English loanwords
-  (σπορ, τσεκάρω, ίντερνετ) — how are these handled as knowledge items?
-- Script normalization: ά and ά (different Unicode compositions) must resolve to
-  the same key — NFC normalization handles this but needs explicit testing.
-- Low-resource languages with no available morphological analyzer: LLM-backed
-  key resolution is the only option; cost and latency need evaluation.
+- How to handle code-switching and loanwords (e.g., Greek texts that use Latin
+  phrases, or Modern Greek with English loanwords)
+- Dialect variation: Ancient Greek has multiple dialects (Attic, Ionic, Doric,
+  Koine) with different forms for the same lemma; should dialect be part of the key?
+- Script normalization: should ά and ά (different Unicode compositions of the
+  same character) resolve to the same key? (Answer is almost certainly yes, but
+  needs explicit handling.)
+- Low-resource languages with no available morphological analyzer: the LLM-backed
+  key resolution becomes the only option; cost and latency implications need
+  evaluation.
 - Construction discovery pipeline: when the LLM generates a story and embeds a
-  construction, how does the system surface it as a `knowledge_item` if it wasn't
-  pre-defined? (Likely: a post-generation analysis pass that upserts new constructions.)
+  construction, how does the system know to surface it as a `knowledge_item` if it
+  wasn't pre-defined? (Likely: a post-generation analysis pass that identifies
+  constructions in the text and upserts them.)
