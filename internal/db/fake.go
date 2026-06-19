@@ -26,6 +26,15 @@ type FakeRepository struct {
 	itemKeys   map[string]string               // language\x00type\x00key -> item_id
 	knowledge  map[string]domain.UserKnowledge // user_id\x00item_id -> state
 	llmCalls   []domain.LLMCall                // append-only audit log
+
+	// Generation-pipeline state.
+	sessions map[string]domain.Session                    // session_id -> session
+	stages   map[string]map[string]domain.GenerationStage // session_id -> stage -> row
+	stories  map[string]domain.Story                      // story_id -> story
+	tokens   map[string][]domain.StoryToken               // story_id -> ordered tokens
+	glossary map[string][]domain.StoryGlossaryEntry       // story_id -> entries
+	tasks    map[string]domain.Task                       // task_id -> task
+	targets  map[string][]string                          // task_id -> item_ids
 }
 
 // compile-time assertion that we satisfy the interface.
@@ -40,6 +49,13 @@ func NewFake() *FakeRepository {
 		items:      make(map[string]domain.KnowledgeItem),
 		itemKeys:   make(map[string]string),
 		knowledge:  make(map[string]domain.UserKnowledge),
+		sessions:   make(map[string]domain.Session),
+		stages:     make(map[string]map[string]domain.GenerationStage),
+		stories:    make(map[string]domain.Story),
+		tokens:     make(map[string][]domain.StoryToken),
+		glossary:   make(map[string][]domain.StoryGlossaryEntry),
+		tasks:      make(map[string]domain.Task),
+		targets:    make(map[string][]string),
 	}
 }
 
