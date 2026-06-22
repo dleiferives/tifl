@@ -277,12 +277,13 @@ func (r *SQLiteRepository) UpsertUserKnowledge(ctx context.Context, uk domain.Us
 	}
 	_, err := r.db.ExecContext(ctx,
 		`INSERT INTO user_knowledge(
-		   user_id, item_id, acquisition_stage, exposure_count, context_variety,
+		   user_id, item_id, acquisition_stage, level, exposure_count, context_variety,
 		   lookup_count, task_correct, task_total, last_seen, last_targeted,
 		   confidence_score, next_target_after)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(user_id, item_id) DO UPDATE SET
 		   acquisition_stage = excluded.acquisition_stage,
+		   level             = excluded.level,
 		   exposure_count    = excluded.exposure_count,
 		   context_variety   = excluded.context_variety,
 		   lookup_count      = excluded.lookup_count,
@@ -292,7 +293,7 @@ func (r *SQLiteRepository) UpsertUserKnowledge(ctx context.Context, uk domain.Us
 		   last_targeted     = excluded.last_targeted,
 		   confidence_score  = excluded.confidence_score,
 		   next_target_after = excluded.next_target_after`,
-		uk.UserID, uk.ItemID, string(uk.AcquisitionStage), uk.ExposureCount, uk.ContextVariety,
+		uk.UserID, uk.ItemID, string(uk.AcquisitionStage), nullLevel(uk.Level), uk.ExposureCount, uk.ContextVariety,
 		uk.LookupCount, uk.TaskCorrect, uk.TaskTotal, nullFloat(uk.LastSeen), nullFloat(uk.LastTargeted),
 		nullFloat(uk.ConfidenceScore), nullFloat(uk.NextTargetAfter))
 	return err
@@ -300,7 +301,7 @@ func (r *SQLiteRepository) UpsertUserKnowledge(ctx context.Context, uk domain.Us
 
 func (r *SQLiteRepository) UserKnowledge(ctx context.Context, userID, language string) ([]domain.UserKnowledge, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT uk.user_id, uk.item_id, uk.acquisition_stage, uk.exposure_count,
+		`SELECT uk.user_id, uk.item_id, uk.acquisition_stage, uk.level, uk.exposure_count,
 		        uk.context_variety, uk.lookup_count, uk.task_correct, uk.task_total,
 		        uk.last_seen, uk.last_targeted, uk.confidence_score, uk.next_target_after
 		 FROM user_knowledge uk
@@ -317,19 +318,77 @@ func (r *SQLiteRepository) UserKnowledge(ctx context.Context, userID, language s
 		var (
 			uk                                             domain.UserKnowledge
 			stage                                          string
+			level                                          sql.NullString
 			lastSeen, lastTargeted, confidence, nextTarget sql.NullFloat64
 		)
-		if err := rows.Scan(&uk.UserID, &uk.ItemID, &stage, &uk.ExposureCount,
+		if err := rows.Scan(&uk.UserID, &uk.ItemID, &stage, &level, &uk.ExposureCount,
 			&uk.ContextVariety, &uk.LookupCount, &uk.TaskCorrect, &uk.TaskTotal,
 			&lastSeen, &lastTargeted, &confidence, &nextTarget); err != nil {
 			return nil, err
 		}
 		uk.AcquisitionStage = domain.AcquisitionStage(stage)
+		uk.Level = domain.ReaderLevel(level.String)
 		uk.LastSeen = floatPtr(lastSeen)
 		uk.LastTargeted = floatPtr(lastTargeted)
 		uk.ConfidenceScore = floatPtr(confidence)
 		uk.NextTargetAfter = floatPtr(nextTarget)
 		out = append(out, uk)
+	}
+	return out, rows.Err()
+}
+
+func (r *SQLiteRepository) GetUserKnowledgeItem(ctx context.Context, userID, itemID string) (domain.UserKnowledge, error) {
+	var (
+		uk                                             domain.UserKnowledge
+		stage                                          string
+		level                                          sql.NullString
+		lastSeen, lastTargeted, confidence, nextTarget sql.NullFloat64
+	)
+	err := r.db.QueryRowContext(ctx,
+		`SELECT user_id, item_id, acquisition_stage, level, exposure_count, context_variety,
+		        lookup_count, task_correct, task_total, last_seen, last_targeted,
+		        confidence_score, next_target_after
+		 FROM user_knowledge WHERE user_id = ? AND item_id = ?`, userID, itemID).
+		Scan(&uk.UserID, &uk.ItemID, &stage, &level, &uk.ExposureCount, &uk.ContextVariety,
+			&uk.LookupCount, &uk.TaskCorrect, &uk.TaskTotal, &lastSeen, &lastTargeted,
+			&confidence, &nextTarget)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.UserKnowledge{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.UserKnowledge{}, err
+	}
+	uk.AcquisitionStage = domain.AcquisitionStage(stage)
+	uk.Level = domain.ReaderLevel(level.String)
+	uk.LastSeen = floatPtr(lastSeen)
+	uk.LastTargeted = floatPtr(lastTargeted)
+	uk.ConfidenceScore = floatPtr(confidence)
+	uk.NextTargetAfter = floatPtr(nextTarget)
+	return uk, nil
+}
+
+func (r *SQLiteRepository) LoadReaderKnowledge(ctx context.Context, userID, language string) ([]domain.ReaderKnowledge, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT ki.key, uk.level, uk.lookup_count
+		 FROM user_knowledge uk
+		 JOIN knowledge_items ki ON ki.item_id = uk.item_id
+		 WHERE uk.user_id = ? AND ki.language = ?
+		 ORDER BY ki.key`, userID, language)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.ReaderKnowledge
+	for rows.Next() {
+		var (
+			rk    domain.ReaderKnowledge
+			level sql.NullString
+		)
+		if err := rows.Scan(&rk.ItemKey, &level, &rk.LookupCount); err != nil {
+			return nil, err
+		}
+		rk.Level = domain.ReaderLevel(level.String)
+		out = append(out, rk)
 	}
 	return out, rows.Err()
 }
@@ -354,7 +413,149 @@ func (r *SQLiteRepository) InsertLLMCall(ctx context.Context, c domain.LLMCall) 
 	return err
 }
 
+// --- reader events ---------------------------------------------------------
+
+func (r *SQLiteRepository) InsertReaderEvents(ctx context.Context, events []domain.ReaderEvent) ([]domain.ReaderEvent, error) {
+	if len(events) == 0 {
+		return nil, nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }() // no-op after a successful Commit
+	// INSERT OR IGNORE makes the flush idempotent: a re-sent batch (the reader
+	// guarantees a flush on unload, which can race a debounced one) skips rows whose
+	// event_id is already stored rather than erroring on the PK. RowsAffected tells
+	// us which rows were genuinely new so the caller derives signals once.
+	stmt, err := tx.PrepareContext(ctx,
+		`INSERT OR IGNORE INTO reader_events(
+		   event_id, user_id, story_id, session_id, event_type, position, value, occurred_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Close()
+	var inserted []domain.ReaderEvent
+	for _, e := range events {
+		if e.EventID == "" {
+			e.EventID = id.New()
+		}
+		if e.OccurredAt == 0 {
+			e.OccurredAt = float64(time.Now().Unix())
+		}
+		res, err := stmt.ExecContext(ctx,
+			e.EventID, e.UserID, e.StoryID, nullString(e.SessionID), string(e.EventType),
+			nullInt(e.Position), nullString(e.Value), e.OccurredAt)
+		if err != nil {
+			return nil, err
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			inserted = append(inserted, e)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return inserted, nil
+}
+
+func (r *SQLiteRepository) HasReaderEvents(ctx context.Context, userID, storyID string) (bool, error) {
+	var exists int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM reader_events WHERE user_id = ? AND story_id = ?)`,
+		userID, storyID).Scan(&exists)
+	return exists == 1, err
+}
+
+// --- definitions & breakdowns (global shared cache) ------------------------
+
+func (r *SQLiteRepository) ListDefinitions(ctx context.Context, language, itemKey string) ([]domain.Definition, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT language, item_key, source, gloss, grammatical_note, example, etymology, created_at
+		 FROM definitions WHERE language = ? AND item_key = ? ORDER BY source`, language, itemKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.Definition
+	for rows.Next() {
+		var (
+			d                        domain.Definition
+			note, example, etymology sql.NullString
+		)
+		if err := rows.Scan(&d.Language, &d.ItemKey, &d.Source, &d.Gloss,
+			&note, &example, &etymology, &d.CreatedAt); err != nil {
+			return nil, err
+		}
+		d.GrammaticalNote, d.Example, d.Etymology = note.String, example.String, etymology.String
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+func (r *SQLiteRepository) UpsertDefinition(ctx context.Context, d domain.Definition) error {
+	if d.CreatedAt == 0 {
+		d.CreatedAt = float64(time.Now().Unix())
+	}
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO definitions(language, item_key, source, gloss, grammatical_note, example, etymology, created_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(language, item_key, source) DO UPDATE SET
+		   gloss = excluded.gloss, grammatical_note = excluded.grammatical_note,
+		   example = excluded.example, etymology = excluded.etymology, created_at = excluded.created_at`,
+		d.Language, d.ItemKey, d.Source, d.Gloss,
+		emptyToNull(d.GrammaticalNote), emptyToNull(d.Example), emptyToNull(d.Etymology), d.CreatedAt)
+	return err
+}
+
+func (r *SQLiteRepository) GetBreakdown(ctx context.Context, scope domain.BreakdownScope, language, cacheKey string) (domain.Breakdown, error) {
+	var (
+		content   sql.NullString
+		createdAt float64
+	)
+	err := r.db.QueryRowContext(ctx,
+		`SELECT content, created_at FROM breakdowns WHERE scope = ? AND language = ? AND cache_key = ?`,
+		string(scope), language, cacheKey).Scan(&content, &createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Breakdown{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.Breakdown{}, err
+	}
+	m, err := unmarshalJSON(content)
+	if err != nil {
+		return domain.Breakdown{}, err
+	}
+	return domain.Breakdown{Scope: scope, Language: language, CacheKey: cacheKey, Content: m, CreatedAt: createdAt}, nil
+}
+
+func (r *SQLiteRepository) UpsertBreakdown(ctx context.Context, b domain.Breakdown) error {
+	if b.CreatedAt == 0 {
+		b.CreatedAt = float64(time.Now().Unix())
+	}
+	content, err := marshalJSON(b.Content)
+	if err != nil {
+		return err
+	}
+	_, err = r.db.ExecContext(ctx,
+		`INSERT INTO breakdowns(scope, language, cache_key, content, created_at)
+		 VALUES(?, ?, ?, ?, ?)
+		 ON CONFLICT(scope, language, cache_key) DO UPDATE SET
+		   content = excluded.content, created_at = excluded.created_at`,
+		string(b.Scope), b.Language, b.CacheKey, content, b.CreatedAt)
+	return err
+}
+
 // --- helpers ---------------------------------------------------------------
+
+// emptyToNull stores an empty optional string as SQL NULL.
+func emptyToNull(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
 
 func marshalJSON(v map[string]any) (any, error) {
 	if v == nil {
@@ -397,6 +598,15 @@ func nullString(p *string) any {
 		return nil
 	}
 	return *p
+}
+
+// nullLevel maps the empty reader level ("unseen") to SQL NULL so an unrated item
+// stores as NULL rather than an empty string.
+func nullLevel(l domain.ReaderLevel) any {
+	if l == domain.LevelUnseen {
+		return nil
+	}
+	return string(l)
 }
 
 func floatPtr(n sql.NullFloat64) *float64 {

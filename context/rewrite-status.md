@@ -81,6 +81,33 @@ we want to revive or port it.)
   - `targetPriority` score: 0.5 × (1−probability) + 0.3 × lookupRatio + 0.2 × stalenessFactor
   - Tests: bucket correctness, exclude filter, empty-knowledge edge case
 
+## Done — reader backend (#10) + acquisition engine (#9)
+
+Landed together on `reader/10-reader-backend` (mutual dependency: #10 produces
+reader signals, #9 consumes them).
+
+- **Reader level vs acquisition_stage** — the reader's user-facing knowledge
+  *level* (`unseen/1..5/well_known/ignored`, the colour a word is painted) is a
+  new `user_knowledge.level` column, deliberately separate from the
+  system-computed `acquisition_stage`. Level granularity is per knowledge item
+  (lemma for `el`) / per phrase; per-inflection is deferred (#43).
+- **Endpoints**: `GET /stories/{id}` (tokens + knowledge in one load),
+  `POST /reader/events` (idempotent batch ingest → signal derivation),
+  `PUT /word_knowledge/{token}` (optimistic rating), `GET /stories/{id}/definition`
+  (glossary → metadata → shared cache → live Wiktionary/LLM), and
+  `POST /stories/{id}/sentence` + `/word` (cached LLM breakdowns).
+- **`internal/acquire`** — stage-transition evaluator (pure, tunable, tested
+  across every documented boundary) + `Engine` that derives `confidence_score`
+  (via the predictor — it was never populated before, so acquired→automatic was
+  dead) and `acquisition_stage`, no-regress on the hard path. `ApplyTaskGrade`
+  is the task-side counterpart (wiring to a grade-submission endpoint is #11).
+- **Shared cache**: global `definitions` (source-split: Wiktionary + LLM coexist)
+  and `breakdowns` (sentence by normalized-hash, word by key) tables — reused
+  across users. Wiktionary is behind an interface, stubbed (kaikki ingestion #41).
+- **Deferred → sub-issues**: #40 per-user dictionary, #41 kaikki ingestion,
+  #42 structure/phrase caching, #43 per-inflection levels, #44 wire the
+  knowledge_predictions cache (selector still scores on the fly — always fresh).
+
 ## Next (rough order)
 
 1. **Story pipeline** (`internal/story`) — staged, checkpointed generation with

@@ -26,6 +26,10 @@ type FakeRepository struct {
 	itemKeys   map[string]string               // language\x00type\x00key -> item_id
 	knowledge  map[string]domain.UserKnowledge // user_id\x00item_id -> state
 	llmCalls   []domain.LLMCall                // append-only audit log
+	readerEvts []domain.ReaderEvent            // append-only reader signal log
+	readerIDs  map[string]bool                 // event_id set, for idempotent insert
+	defs       map[string]domain.Definition    // language\x00key\x00source -> definition
+	breakdowns map[string]domain.Breakdown     // scope\x00language\x00cacheKey -> breakdown
 
 	// Generation-pipeline state.
 	sessions map[string]domain.Session                    // session_id -> session
@@ -49,6 +53,9 @@ func NewFake() *FakeRepository {
 		items:      make(map[string]domain.KnowledgeItem),
 		itemKeys:   make(map[string]string),
 		knowledge:  make(map[string]domain.UserKnowledge),
+		readerIDs:  make(map[string]bool),
+		defs:       make(map[string]domain.Definition),
+		breakdowns: make(map[string]domain.Breakdown),
 		sessions:   make(map[string]domain.Session),
 		stages:     make(map[string]map[string]domain.GenerationStage),
 		stories:    make(map[string]domain.Story),
@@ -249,6 +256,81 @@ func (r *FakeRepository) UserKnowledge(_ context.Context, userID, language strin
 	return out, nil
 }
 
+func (r *FakeRepository) GetUserKnowledgeItem(_ context.Context, userID, itemID string) (domain.UserKnowledge, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	uk, ok := r.knowledge[userID+"\x00"+itemID]
+	if !ok {
+		return domain.UserKnowledge{}, ErrNotFound
+	}
+	return cloneUK(uk), nil
+}
+
+func (r *FakeRepository) LoadReaderKnowledge(_ context.Context, userID, language string) ([]domain.ReaderKnowledge, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []domain.ReaderKnowledge
+	for _, uk := range r.knowledge {
+		if uk.UserID != userID {
+			continue
+		}
+		it, ok := r.items[uk.ItemID]
+		if !ok || it.Language != language {
+			continue
+		}
+		out = append(out, domain.ReaderKnowledge{ItemKey: it.Key, Level: uk.Level, LookupCount: uk.LookupCount})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ItemKey < out[j].ItemKey })
+	return out, nil
+}
+
+// --- definitions & breakdowns ----------------------------------------------
+
+func (r *FakeRepository) ListDefinitions(_ context.Context, language, itemKey string) ([]domain.Definition, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []domain.Definition
+	for _, d := range r.defs {
+		if d.Language == language && d.ItemKey == itemKey {
+			out = append(out, d)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Source < out[j].Source })
+	return out, nil
+}
+
+func (r *FakeRepository) UpsertDefinition(_ context.Context, d domain.Definition) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if d.CreatedAt == 0 {
+		d.CreatedAt = float64(time.Now().Unix())
+	}
+	r.defs[d.Language+"\x00"+d.ItemKey+"\x00"+d.Source] = d
+	return nil
+}
+
+func (r *FakeRepository) GetBreakdown(_ context.Context, scope domain.BreakdownScope, language, cacheKey string) (domain.Breakdown, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	b, ok := r.breakdowns[string(scope)+"\x00"+language+"\x00"+cacheKey]
+	if !ok {
+		return domain.Breakdown{}, ErrNotFound
+	}
+	b.Content = cloneMeta(b.Content)
+	return b, nil
+}
+
+func (r *FakeRepository) UpsertBreakdown(_ context.Context, b domain.Breakdown) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if b.CreatedAt == 0 {
+		b.CreatedAt = float64(time.Now().Unix())
+	}
+	b.Content = cloneMeta(b.Content)
+	r.breakdowns[string(b.Scope)+"\x00"+b.Language+"\x00"+b.CacheKey] = b
+	return nil
+}
+
 // --- llm calls -------------------------------------------------------------
 
 func (r *FakeRepository) InsertLLMCall(_ context.Context, c domain.LLMCall) error {
@@ -262,6 +344,52 @@ func (r *FakeRepository) InsertLLMCall(_ context.Context, c domain.LLMCall) erro
 	}
 	r.llmCalls = append(r.llmCalls, cloneLLMCall(c))
 	return nil
+}
+
+// --- reader events ---------------------------------------------------------
+
+func (r *FakeRepository) InsertReaderEvents(_ context.Context, events []domain.ReaderEvent) ([]domain.ReaderEvent, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var inserted []domain.ReaderEvent
+	for _, e := range events {
+		if e.EventID == "" {
+			e.EventID = id.New()
+		}
+		if r.readerIDs[e.EventID] {
+			continue // idempotent on event_id, like the SQL backends
+		}
+		if e.OccurredAt == 0 {
+			e.OccurredAt = float64(time.Now().Unix())
+		}
+		r.readerIDs[e.EventID] = true
+		r.readerEvts = append(r.readerEvts, cloneReaderEvent(e))
+		inserted = append(inserted, cloneReaderEvent(e))
+	}
+	return inserted, nil
+}
+
+func (r *FakeRepository) HasReaderEvents(_ context.Context, userID, storyID string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, e := range r.readerEvts {
+		if e.UserID == userID && e.StoryID == storyID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// ReaderEvents returns a copy of the recorded reader events, for test inspection.
+// Not part of the Repository interface — only the in-memory backend exposes it.
+func (r *FakeRepository) ReaderEvents() []domain.ReaderEvent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]domain.ReaderEvent, len(r.readerEvts))
+	for i, e := range r.readerEvts {
+		out[i] = cloneReaderEvent(e)
+	}
+	return out
 }
 
 // LLMCalls returns a copy of the recorded calls, for test inspection. It is not
@@ -322,6 +450,13 @@ func cloneStr(p *string) *string {
 	}
 	v := *p
 	return &v
+}
+
+func cloneReaderEvent(e domain.ReaderEvent) domain.ReaderEvent {
+	e.SessionID = cloneStr(e.SessionID)
+	e.Position = cloneInt(e.Position)
+	e.Value = cloneStr(e.Value)
+	return e
 }
 
 func cloneLLMCall(c domain.LLMCall) domain.LLMCall {

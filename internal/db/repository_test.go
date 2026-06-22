@@ -29,6 +29,8 @@ func testRepository(t *testing.T, newRepo repoFactory) {
 	t.Run("UserKnowledge", func(t *testing.T) { testUserKnowledge(t, newRepo(t)) })
 	t.Run("TenantIsolation", func(t *testing.T) { testTenantIsolation(t, newRepo(t)) })
 	t.Run("LLMCalls", func(t *testing.T) { testLLMCalls(t, newRepo(t)) })
+	t.Run("ReaderEvents", func(t *testing.T) { testReaderEvents(t, newRepo(t)) })
+	t.Run("DefinitionsBreakdowns", func(t *testing.T) { testDefinitionsBreakdowns(t, newRepo(t)) })
 	t.Run("Pipeline", func(t *testing.T) { testPipeline(t, newRepo(t)) })
 }
 
@@ -37,6 +39,113 @@ func testRepository(t *testing.T, newRepo repoFactory) {
 // resume ordering, story persistence with tokens + glossary (idempotent
 // replace), and task creation with task_targets. The same behaviour must hold
 // for SQLite, Postgres and the in-memory fake.
+// testReaderEvents verifies the high-volume reader-signal log: a batch inserts,
+// a re-sent batch is idempotent on event_id (the reader guarantees a flush on
+// unload, which can duplicate a debounced one), and an empty batch is a no-op.
+// Backends enforce the users/stories foreign keys, so a real story is set up.
+func testReaderEvents(t *testing.T, repo db.Repository) {
+	ctx := context.Background()
+	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "grc", Name: "Greek", KeyStrategy: "lemma", Enabled: true}))
+	user, err := repo.CreateUser(ctx, domain.User{Email: "r@r.com"})
+	must(t, err)
+	story, err := repo.CreateStory(ctx, domain.Story{UserID: user.UserID, Language: "grc", Text: "λύω", Level: "beginner"})
+	must(t, err)
+
+	has, err := repo.HasReaderEvents(ctx, user.UserID, story.StoryID)
+	must(t, err)
+	if has {
+		t.Fatal("expected no reader events before any insert")
+	}
+
+	pos := 2
+	val := "3"
+	sess := "sess-r"
+	batch := []domain.ReaderEvent{
+		{EventID: "ev-1", UserID: user.UserID, StoryID: story.StoryID, SessionID: &sess,
+			EventType: domain.ReaderEventLookup, Position: &pos, OccurredAt: 1700.0},
+		{EventID: "ev-2", UserID: user.UserID, StoryID: story.StoryID,
+			EventType: domain.ReaderEventRate, Position: &pos, Value: &val, OccurredAt: 1701.0},
+	}
+	ins, err := repo.InsertReaderEvents(ctx, batch)
+	must(t, err)
+	if len(ins) != 2 {
+		t.Fatalf("first insert should report 2 new events, got %d", len(ins))
+	}
+	// Re-sending the same batch must not error on the event_id PK and must report
+	// zero newly-inserted, so the caller derives signals from each event once.
+	ins, err = repo.InsertReaderEvents(ctx, batch)
+	must(t, err)
+	if len(ins) != 0 {
+		t.Fatalf("re-sent batch should report 0 new events, got %d", len(ins))
+	}
+	has, err = repo.HasReaderEvents(ctx, user.UserID, story.StoryID)
+	must(t, err)
+	if !has {
+		t.Fatal("expected reader events to exist after insert")
+	}
+
+	// Empty batch is a no-op.
+	empty, err := repo.InsertReaderEvents(ctx, nil)
+	must(t, err)
+	if len(empty) != 0 {
+		t.Fatalf("empty batch should insert nothing, got %d", len(empty))
+	}
+
+	// An event_id-less event is assigned one rather than colliding on empty PK.
+	ins, err = repo.InsertReaderEvents(ctx, []domain.ReaderEvent{
+		{UserID: user.UserID, StoryID: story.StoryID, EventType: domain.ReaderEventNavigate, OccurredAt: 1702.0},
+	})
+	must(t, err)
+	if len(ins) != 1 || ins[0].EventID == "" {
+		t.Fatalf("id-less event should be inserted with a generated id, got %+v", ins)
+	}
+}
+
+// testDefinitionsBreakdowns covers the global shared cache: two sources coexist
+// for one word, upsert replaces in place, and breakdowns round-trip their JSON
+// content with an ErrNotFound miss.
+func testDefinitionsBreakdowns(t *testing.T, repo db.Repository) {
+	ctx := context.Background()
+	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "grc", Name: "Greek", KeyStrategy: "lemma", Enabled: true}))
+
+	must(t, repo.UpsertDefinition(ctx, domain.Definition{
+		Language: "grc", ItemKey: "λόγος", Source: domain.DefinitionSourceWiktionary,
+		Gloss: "word, reason", Etymology: "from λέγω", CreatedAt: 1700,
+	}))
+	must(t, repo.UpsertDefinition(ctx, domain.Definition{
+		Language: "grc", ItemKey: "λόγος", Source: domain.DefinitionSourceLLM, Gloss: "an account or ratio",
+	}))
+	defs, err := repo.ListDefinitions(ctx, "grc", "λόγος")
+	must(t, err)
+	if len(defs) != 2 {
+		t.Fatalf("want 2 sources for λόγος, got %d", len(defs))
+	}
+
+	// Upsert on the same (language, key, source) replaces rather than duplicating.
+	must(t, repo.UpsertDefinition(ctx, domain.Definition{
+		Language: "grc", ItemKey: "λόγος", Source: domain.DefinitionSourceLLM, Gloss: "speech",
+	}))
+	defs, err = repo.ListDefinitions(ctx, "grc", "λόγος")
+	must(t, err)
+	if len(defs) != 2 {
+		t.Fatalf("upsert should not add a row, got %d", len(defs))
+	}
+
+	// Breakdown cache: miss → ErrNotFound, then round-trip the JSON content.
+	if _, err := repo.GetBreakdown(ctx, domain.BreakdownSentence, "grc", "h1"); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("want ErrNotFound on cache miss, got %v", err)
+	}
+	must(t, repo.UpsertBreakdown(ctx, domain.Breakdown{
+		Scope: domain.BreakdownSentence, Language: "grc", CacheKey: "h1",
+		Content: map[string]any{"translation": "in the beginning was the word"},
+	}))
+	got, err := repo.GetBreakdown(ctx, domain.BreakdownSentence, "grc", "h1")
+	must(t, err)
+	if got.Content["translation"] != "in the beginning was the word" {
+		t.Fatalf("breakdown content not round-tripped: %+v", got.Content)
+	}
+}
+
 func testPipeline(t *testing.T, repo db.Repository) {
 	ctx := context.Background()
 	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "grc", Name: "Greek", KeyStrategy: "lemma", Enabled: true}))
@@ -332,7 +441,7 @@ func testUserKnowledge(t *testing.T, repo db.Repository) {
 	conf := 0.42
 	must(t, repo.UpsertUserKnowledge(ctx, domain.UserKnowledge{
 		UserID: user.UserID, ItemID: itemID, AcquisitionStage: domain.StageRecognizing,
-		ExposureCount: 3, LookupCount: 2, ConfidenceScore: &conf,
+		Level: domain.Level3, ExposureCount: 3, LookupCount: 2, ConfidenceScore: &conf,
 	}))
 
 	uks, err := repo.UserKnowledge(ctx, user.UserID, "grc")
@@ -344,18 +453,26 @@ func testUserKnowledge(t *testing.T, repo db.Repository) {
 	if uk.ExposureCount != 3 || uk.LookupCount != 2 || uk.AcquisitionStage != domain.StageRecognizing {
 		t.Fatalf("round-trip mismatch: %+v", uk)
 	}
+	if uk.Level != domain.Level3 {
+		t.Fatalf("reader level not preserved: %q", uk.Level)
+	}
 	if uk.ConfidenceScore == nil || *uk.ConfidenceScore != 0.42 {
 		t.Fatalf("confidence not preserved: %v", uk.ConfidenceScore)
 	}
 
-	// Re-upsert updates the existing row.
+	// Re-upsert updates the existing row, including clearing the level back to
+	// unseen (NULL), which must round-trip as the empty value, not "".
 	must(t, repo.UpsertUserKnowledge(ctx, domain.UserKnowledge{
-		UserID: user.UserID, ItemID: itemID, AcquisitionStage: domain.StageAcquiring, ExposureCount: 7,
+		UserID: user.UserID, ItemID: itemID, AcquisitionStage: domain.StageAcquiring,
+		Level: domain.LevelUnseen, ExposureCount: 7,
 	}))
 	uks, err = repo.UserKnowledge(ctx, user.UserID, "grc")
 	must(t, err)
 	if uks[0].ExposureCount != 7 || uks[0].AcquisitionStage != domain.StageAcquiring {
 		t.Fatalf("update failed: %+v", uks[0])
+	}
+	if uks[0].Level != domain.LevelUnseen {
+		t.Fatalf("level should clear to unseen, got %q", uks[0].Level)
 	}
 
 	// Foreign-key enforcement: an unknown item must be rejected.

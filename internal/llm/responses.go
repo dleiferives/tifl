@@ -55,6 +55,23 @@ func (r GradeResult) Validate() error {
 	return nil
 }
 
+// DefinitionResult is the live definition lookup's output, cached globally
+// (source=llm) so the next learner of the language gets it without a model call.
+type DefinitionResult struct {
+	Gloss           string `json:"gloss"`
+	GrammaticalNote string `json:"grammatical_note"`
+	Example         string `json:"example"`
+	Etymology       string `json:"etymology"`
+}
+
+// Validate enforces that a definition at least carries a gloss.
+func (r DefinitionResult) Validate() error {
+	if strings.TrimSpace(r.Gloss) == "" {
+		return errors.New("definition gloss is empty")
+	}
+	return nil
+}
+
 // AssessmentResult is the acquisition assessor's structured judgment.
 type AssessmentResult struct {
 	Stage          string `json:"stage"`

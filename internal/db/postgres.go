@@ -333,12 +333,13 @@ func (r *PostgresRepository) UpsertUserKnowledge(ctx context.Context, uk domain.
 	}
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO user_knowledge(
-		   user_id, item_id, acquisition_stage, exposure_count, context_variety,
+		   user_id, item_id, acquisition_stage, level, exposure_count, context_variety,
 		   lookup_count, task_correct, task_total, last_seen, last_targeted,
 		   confidence_score, next_target_after)
-		 VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		 VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		 ON CONFLICT(user_id, item_id) DO UPDATE SET
 		   acquisition_stage = excluded.acquisition_stage,
+		   level             = excluded.level,
 		   exposure_count    = excluded.exposure_count,
 		   context_variety   = excluded.context_variety,
 		   lookup_count      = excluded.lookup_count,
@@ -348,7 +349,7 @@ func (r *PostgresRepository) UpsertUserKnowledge(ctx context.Context, uk domain.
 		   last_targeted     = excluded.last_targeted,
 		   confidence_score  = excluded.confidence_score,
 		   next_target_after = excluded.next_target_after`,
-		uk.UserID, uk.ItemID, string(uk.AcquisitionStage), uk.ExposureCount, uk.ContextVariety,
+		uk.UserID, uk.ItemID, string(uk.AcquisitionStage), nullLevelPG(uk.Level), uk.ExposureCount, uk.ContextVariety,
 		uk.LookupCount, uk.TaskCorrect, uk.TaskTotal, uk.LastSeen, uk.LastTargeted,
 		uk.ConfidenceScore, uk.NextTargetAfter)
 	return err
@@ -356,7 +357,7 @@ func (r *PostgresRepository) UpsertUserKnowledge(ctx context.Context, uk domain.
 
 func (r *PostgresRepository) UserKnowledge(ctx context.Context, userID, language string) ([]domain.UserKnowledge, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT uk.user_id, uk.item_id, uk.acquisition_stage, uk.exposure_count,
+		`SELECT uk.user_id, uk.item_id, uk.acquisition_stage, uk.level, uk.exposure_count,
 		        uk.context_variety, uk.lookup_count, uk.task_correct, uk.task_total,
 		        uk.last_seen, uk.last_targeted, uk.confidence_score, uk.next_target_after
 		 FROM user_knowledge uk
@@ -373,14 +374,73 @@ func (r *PostgresRepository) UserKnowledge(ctx context.Context, userID, language
 		var (
 			uk    domain.UserKnowledge
 			stage string
+			level *string
 		)
-		if err := rows.Scan(&uk.UserID, &uk.ItemID, &stage, &uk.ExposureCount,
+		if err := rows.Scan(&uk.UserID, &uk.ItemID, &stage, &level, &uk.ExposureCount,
 			&uk.ContextVariety, &uk.LookupCount, &uk.TaskCorrect, &uk.TaskTotal,
 			&uk.LastSeen, &uk.LastTargeted, &uk.ConfidenceScore, &uk.NextTargetAfter); err != nil {
 			return nil, err
 		}
 		uk.AcquisitionStage = domain.AcquisitionStage(stage)
+		if level != nil {
+			uk.Level = domain.ReaderLevel(*level)
+		}
 		out = append(out, uk)
+	}
+	return out, rows.Err()
+}
+
+func (r *PostgresRepository) GetUserKnowledgeItem(ctx context.Context, userID, itemID string) (domain.UserKnowledge, error) {
+	var (
+		uk    domain.UserKnowledge
+		stage string
+		level *string
+	)
+	err := r.pool.QueryRow(ctx,
+		`SELECT user_id, item_id, acquisition_stage, level, exposure_count, context_variety,
+		        lookup_count, task_correct, task_total, last_seen, last_targeted,
+		        confidence_score, next_target_after
+		 FROM user_knowledge WHERE user_id = $1 AND item_id = $2`, userID, itemID).
+		Scan(&uk.UserID, &uk.ItemID, &stage, &level, &uk.ExposureCount, &uk.ContextVariety,
+			&uk.LookupCount, &uk.TaskCorrect, &uk.TaskTotal, &uk.LastSeen, &uk.LastTargeted,
+			&uk.ConfidenceScore, &uk.NextTargetAfter)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.UserKnowledge{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.UserKnowledge{}, err
+	}
+	uk.AcquisitionStage = domain.AcquisitionStage(stage)
+	if level != nil {
+		uk.Level = domain.ReaderLevel(*level)
+	}
+	return uk, nil
+}
+
+func (r *PostgresRepository) LoadReaderKnowledge(ctx context.Context, userID, language string) ([]domain.ReaderKnowledge, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT ki.key, uk.level, uk.lookup_count
+		 FROM user_knowledge uk
+		 JOIN knowledge_items ki ON ki.item_id = uk.item_id
+		 WHERE uk.user_id = $1 AND ki.language = $2
+		 ORDER BY ki.key`, userID, language)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.ReaderKnowledge
+	for rows.Next() {
+		var (
+			rk    domain.ReaderKnowledge
+			level *string
+		)
+		if err := rows.Scan(&rk.ItemKey, &level, &rk.LookupCount); err != nil {
+			return nil, err
+		}
+		if level != nil {
+			rk.Level = domain.ReaderLevel(*level)
+		}
+		out = append(out, rk)
 	}
 	return out, rows.Err()
 }
@@ -403,6 +463,160 @@ func (r *PostgresRepository) InsertLLMCall(ctx context.Context, c domain.LLMCall
 		c.CallID, c.SessionID, c.UserID, c.Kind, c.PromptVersion, c.Model,
 		c.InputTokens, c.OutputTokens, c.LatencyMs, c.Status, c.ErrorDetail, c.CalledAt)
 	return err
+}
+
+// --- reader events ---------------------------------------------------------
+
+func (r *PostgresRepository) InsertReaderEvents(ctx context.Context, events []domain.ReaderEvent) ([]domain.ReaderEvent, error) {
+	if len(events) == 0 {
+		return nil, nil
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // no-op after a successful Commit
+	var inserted []domain.ReaderEvent
+	for _, e := range events {
+		if e.EventID == "" {
+			e.EventID = id.New()
+		}
+		if e.OccurredAt == 0 {
+			e.OccurredAt = float64(time.Now().Unix())
+		}
+		// ON CONFLICT DO NOTHING mirrors SQLite's INSERT OR IGNORE: a re-sent flush
+		// batch is idempotent on the event_id primary key. pgx maps nil pointers to
+		// SQL NULL, so the nullable columns need no wrapping. RowsAffected reports
+		// whether the row was new, so the caller derives signals exactly once.
+		tag, err := tx.Exec(ctx,
+			`INSERT INTO reader_events(
+			   event_id, user_id, story_id, session_id, event_type, position, value, occurred_at)
+			 VALUES($1, $2, $3, $4, $5, $6, $7, $8)
+			 ON CONFLICT (event_id) DO NOTHING`,
+			e.EventID, e.UserID, e.StoryID, e.SessionID, string(e.EventType),
+			e.Position, e.Value, e.OccurredAt)
+		if err != nil {
+			return nil, err
+		}
+		if tag.RowsAffected() > 0 {
+			inserted = append(inserted, e)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return inserted, nil
+}
+
+func (r *PostgresRepository) HasReaderEvents(ctx context.Context, userID, storyID string) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM reader_events WHERE user_id = $1 AND story_id = $2)`,
+		userID, storyID).Scan(&exists)
+	return exists, err
+}
+
+// nullLevelPG maps the empty reader level ("unseen") to a nil *string so pgx
+// stores SQL NULL rather than an empty string, matching the SQLite backend.
+func nullLevelPG(l domain.ReaderLevel) *string {
+	if l == domain.LevelUnseen {
+		return nil
+	}
+	s := string(l)
+	return &s
+}
+
+// --- definitions & breakdowns (global shared cache) ------------------------
+
+func (r *PostgresRepository) ListDefinitions(ctx context.Context, language, itemKey string) ([]domain.Definition, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT language, item_key, source, gloss, grammatical_note, example, etymology, created_at
+		 FROM definitions WHERE language = $1 AND item_key = $2 ORDER BY source`, language, itemKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.Definition
+	for rows.Next() {
+		var (
+			d                        domain.Definition
+			note, example, etymology *string
+		)
+		if err := rows.Scan(&d.Language, &d.ItemKey, &d.Source, &d.Gloss,
+			&note, &example, &etymology, &d.CreatedAt); err != nil {
+			return nil, err
+		}
+		d.GrammaticalNote, d.Example, d.Etymology = derefStr(note), derefStr(example), derefStr(etymology)
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+func (r *PostgresRepository) UpsertDefinition(ctx context.Context, d domain.Definition) error {
+	if d.CreatedAt == 0 {
+		d.CreatedAt = float64(time.Now().Unix())
+	}
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO definitions(language, item_key, source, gloss, grammatical_note, example, etymology, created_at)
+		 VALUES($1, $2, $3, $4, $5, $6, $7, $8)
+		 ON CONFLICT(language, item_key, source) DO UPDATE SET
+		   gloss = excluded.gloss, grammatical_note = excluded.grammatical_note,
+		   example = excluded.example, etymology = excluded.etymology, created_at = excluded.created_at`,
+		d.Language, d.ItemKey, d.Source, d.Gloss,
+		nullStr(d.GrammaticalNote), nullStr(d.Example), nullStr(d.Etymology), d.CreatedAt)
+	return err
+}
+
+func (r *PostgresRepository) GetBreakdown(ctx context.Context, scope domain.BreakdownScope, language, cacheKey string) (domain.Breakdown, error) {
+	var (
+		content   []byte
+		createdAt float64
+	)
+	err := r.pool.QueryRow(ctx,
+		`SELECT content, created_at FROM breakdowns WHERE scope = $1 AND language = $2 AND cache_key = $3`,
+		string(scope), language, cacheKey).Scan(&content, &createdAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Breakdown{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.Breakdown{}, err
+	}
+	m, err := unmarshalJSONB(content)
+	if err != nil {
+		return domain.Breakdown{}, err
+	}
+	return domain.Breakdown{Scope: scope, Language: language, CacheKey: cacheKey, Content: m, CreatedAt: createdAt}, nil
+}
+
+func (r *PostgresRepository) UpsertBreakdown(ctx context.Context, b domain.Breakdown) error {
+	if b.CreatedAt == 0 {
+		b.CreatedAt = float64(time.Now().Unix())
+	}
+	content, err := marshalJSONB(b.Content)
+	if err != nil {
+		return err
+	}
+	_, err = r.pool.Exec(ctx,
+		`INSERT INTO breakdowns(scope, language, cache_key, content, created_at)
+		 VALUES($1, $2, $3, $4, $5)
+		 ON CONFLICT(scope, language, cache_key) DO UPDATE SET
+		   content = excluded.content, created_at = excluded.created_at`,
+		string(b.Scope), b.Language, b.CacheKey, content, b.CreatedAt)
+	return err
+}
+
+func derefStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+func nullStr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 // --- helpers ---------------------------------------------------------------

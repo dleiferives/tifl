@@ -5,7 +5,11 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/dleiferives/tifl/internal/acquire"
 	"github.com/dleiferives/tifl/internal/db"
+	"github.com/dleiferives/tifl/internal/llm"
+	"github.com/dleiferives/tifl/internal/predictor"
+	"github.com/dleiferives/tifl/internal/reader"
 	"github.com/dleiferives/tifl/internal/story"
 )
 
@@ -13,14 +17,25 @@ import (
 // a mux. Handlers stay thin: parse, call a repository/domain function, serialize.
 type Handler struct {
 	repo        db.Repository
-	broker      *story.Broker // nil when generation is not configured (no LLM gateway)
+	broker      *story.Broker             // nil when generation is not configured (no LLM gateway)
+	reader      *reader.Service           // reader signal ingest + rating writes (#9/#10)
+	defs        *reader.DefinitionService // definition resolution + cached breakdowns (#10)
 	frontendDir string
 }
 
-// New builds a Handler over the given repository, generation broker (may be nil)
-// and compiled-client directory.
-func New(repo db.Repository, broker *story.Broker, frontendDir string) *Handler {
-	return &Handler{repo: repo, broker: broker, frontendDir: frontendDir}
+// New builds a Handler over the given repository, generation broker (may be nil),
+// LLM client (may be nil — live definition/breakdown paths then return 503), and
+// compiled-client directory. The reader and definition services are built from
+// the repository with default tuning.
+func New(repo db.Repository, broker *story.Broker, client llm.Client, frontendDir string) *Handler {
+	engine := acquire.NewEngine(repo, predictor.DefaultConfig(), acquire.Config{})
+	return &Handler{
+		repo:        repo,
+		broker:      broker,
+		reader:      reader.NewService(repo, engine),
+		defs:        reader.NewDefinitionService(repo, client, nil),
+		frontendDir: frontendDir,
+	}
 }
 
 // Register wires every route onto mux.
@@ -28,6 +43,12 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /healthz", h.health)
 	mux.HandleFunc("GET /api/v1/ping", h.ping)
 	mux.HandleFunc("GET /api/v1/languages", h.listLanguages)
+	mux.HandleFunc("GET /api/v1/stories/{id}", h.getStory)
+	mux.HandleFunc("GET /api/v1/stories/{id}/definition", h.getDefinition)
+	mux.HandleFunc("POST /api/v1/stories/{id}/sentence", h.postSentenceBreakdown)
+	mux.HandleFunc("POST /api/v1/stories/{id}/word", h.postWordBreakdown)
+	mux.HandleFunc("POST /api/v1/reader/events", h.postReaderEvents)
+	mux.HandleFunc("PUT /api/v1/word_knowledge/{token}", h.putWordKnowledge)
 	mux.HandleFunc("POST /api/v1/sessions/generate", h.generateSession)
 	mux.HandleFunc("GET /api/v1/sessions/{id}/events", h.sessionEvents)
 	mux.HandleFunc("POST /api/v1/sessions/{id}/retry", h.retrySession)
