@@ -28,6 +28,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /healthz", h.health)
 	mux.HandleFunc("GET /api/v1/ping", h.ping)
 	mux.HandleFunc("GET /api/v1/languages", h.listLanguages)
+	mux.HandleFunc("GET /api/v1/stories/{id}", h.getStory)
 	mux.HandleFunc("POST /api/v1/sessions/generate", h.generateSession)
 	mux.HandleFunc("GET /api/v1/sessions/{id}/events", h.sessionEvents)
 	mux.HandleFunc("POST /api/v1/sessions/{id}/retry", h.retrySession)

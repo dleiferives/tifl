@@ -337,6 +337,62 @@ func (r *SQLiteRepository) UserKnowledge(ctx context.Context, userID, language s
 	return out, rows.Err()
 }
 
+func (r *SQLiteRepository) GetUserKnowledgeItem(ctx context.Context, userID, itemID string) (domain.UserKnowledge, error) {
+	var (
+		uk                                             domain.UserKnowledge
+		stage                                          string
+		level                                          sql.NullString
+		lastSeen, lastTargeted, confidence, nextTarget sql.NullFloat64
+	)
+	err := r.db.QueryRowContext(ctx,
+		`SELECT user_id, item_id, acquisition_stage, level, exposure_count, context_variety,
+		        lookup_count, task_correct, task_total, last_seen, last_targeted,
+		        confidence_score, next_target_after
+		 FROM user_knowledge WHERE user_id = ? AND item_id = ?`, userID, itemID).
+		Scan(&uk.UserID, &uk.ItemID, &stage, &level, &uk.ExposureCount, &uk.ContextVariety,
+			&uk.LookupCount, &uk.TaskCorrect, &uk.TaskTotal, &lastSeen, &lastTargeted,
+			&confidence, &nextTarget)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.UserKnowledge{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.UserKnowledge{}, err
+	}
+	uk.AcquisitionStage = domain.AcquisitionStage(stage)
+	uk.Level = domain.ReaderLevel(level.String)
+	uk.LastSeen = floatPtr(lastSeen)
+	uk.LastTargeted = floatPtr(lastTargeted)
+	uk.ConfidenceScore = floatPtr(confidence)
+	uk.NextTargetAfter = floatPtr(nextTarget)
+	return uk, nil
+}
+
+func (r *SQLiteRepository) LoadReaderKnowledge(ctx context.Context, userID, language string) ([]domain.ReaderKnowledge, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT ki.key, uk.level, uk.lookup_count
+		 FROM user_knowledge uk
+		 JOIN knowledge_items ki ON ki.item_id = uk.item_id
+		 WHERE uk.user_id = ? AND ki.language = ?
+		 ORDER BY ki.key`, userID, language)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.ReaderKnowledge
+	for rows.Next() {
+		var (
+			rk    domain.ReaderKnowledge
+			level sql.NullString
+		)
+		if err := rows.Scan(&rk.ItemKey, &level, &rk.LookupCount); err != nil {
+			return nil, err
+		}
+		rk.Level = domain.ReaderLevel(level.String)
+		out = append(out, rk)
+	}
+	return out, rows.Err()
+}
+
 // --- llm calls -------------------------------------------------------------
 
 func (r *SQLiteRepository) InsertLLMCall(ctx context.Context, c domain.LLMCall) error {
@@ -359,26 +415,28 @@ func (r *SQLiteRepository) InsertLLMCall(ctx context.Context, c domain.LLMCall) 
 
 // --- reader events ---------------------------------------------------------
 
-func (r *SQLiteRepository) InsertReaderEvents(ctx context.Context, events []domain.ReaderEvent) error {
+func (r *SQLiteRepository) InsertReaderEvents(ctx context.Context, events []domain.ReaderEvent) ([]domain.ReaderEvent, error) {
 	if len(events) == 0 {
-		return nil
+		return nil, nil
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }() // no-op after a successful Commit
 	// INSERT OR IGNORE makes the flush idempotent: a re-sent batch (the reader
 	// guarantees a flush on unload, which can race a debounced one) skips rows whose
-	// event_id is already stored rather than erroring on the PK.
+	// event_id is already stored rather than erroring on the PK. RowsAffected tells
+	// us which rows were genuinely new so the caller derives signals once.
 	stmt, err := tx.PrepareContext(ctx,
 		`INSERT OR IGNORE INTO reader_events(
 		   event_id, user_id, story_id, session_id, event_type, position, value, occurred_at)
 		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer stmt.Close()
+	var inserted []domain.ReaderEvent
 	for _, e := range events {
 		if e.EventID == "" {
 			e.EventID = id.New()
@@ -386,13 +444,28 @@ func (r *SQLiteRepository) InsertReaderEvents(ctx context.Context, events []doma
 		if e.OccurredAt == 0 {
 			e.OccurredAt = float64(time.Now().Unix())
 		}
-		if _, err := stmt.ExecContext(ctx,
+		res, err := stmt.ExecContext(ctx,
 			e.EventID, e.UserID, e.StoryID, nullString(e.SessionID), string(e.EventType),
-			nullInt(e.Position), nullString(e.Value), e.OccurredAt); err != nil {
-			return err
+			nullInt(e.Position), nullString(e.Value), e.OccurredAt)
+		if err != nil {
+			return nil, err
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			inserted = append(inserted, e)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return inserted, nil
+}
+
+func (r *SQLiteRepository) HasReaderEvents(ctx context.Context, userID, storyID string) (bool, error) {
+	var exists int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM reader_events WHERE user_id = ? AND story_id = ?)`,
+		userID, storyID).Scan(&exists)
+	return exists == 1, err
 }
 
 // --- helpers ---------------------------------------------------------------

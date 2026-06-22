@@ -252,6 +252,34 @@ func (r *FakeRepository) UserKnowledge(_ context.Context, userID, language strin
 	return out, nil
 }
 
+func (r *FakeRepository) GetUserKnowledgeItem(_ context.Context, userID, itemID string) (domain.UserKnowledge, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	uk, ok := r.knowledge[userID+"\x00"+itemID]
+	if !ok {
+		return domain.UserKnowledge{}, ErrNotFound
+	}
+	return cloneUK(uk), nil
+}
+
+func (r *FakeRepository) LoadReaderKnowledge(_ context.Context, userID, language string) ([]domain.ReaderKnowledge, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []domain.ReaderKnowledge
+	for _, uk := range r.knowledge {
+		if uk.UserID != userID {
+			continue
+		}
+		it, ok := r.items[uk.ItemID]
+		if !ok || it.Language != language {
+			continue
+		}
+		out = append(out, domain.ReaderKnowledge{ItemKey: it.Key, Level: uk.Level, LookupCount: uk.LookupCount})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ItemKey < out[j].ItemKey })
+	return out, nil
+}
+
 // --- llm calls -------------------------------------------------------------
 
 func (r *FakeRepository) InsertLLMCall(_ context.Context, c domain.LLMCall) error {
@@ -269,9 +297,10 @@ func (r *FakeRepository) InsertLLMCall(_ context.Context, c domain.LLMCall) erro
 
 // --- reader events ---------------------------------------------------------
 
-func (r *FakeRepository) InsertReaderEvents(_ context.Context, events []domain.ReaderEvent) error {
+func (r *FakeRepository) InsertReaderEvents(_ context.Context, events []domain.ReaderEvent) ([]domain.ReaderEvent, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	var inserted []domain.ReaderEvent
 	for _, e := range events {
 		if e.EventID == "" {
 			e.EventID = id.New()
@@ -284,8 +313,20 @@ func (r *FakeRepository) InsertReaderEvents(_ context.Context, events []domain.R
 		}
 		r.readerIDs[e.EventID] = true
 		r.readerEvts = append(r.readerEvts, cloneReaderEvent(e))
+		inserted = append(inserted, cloneReaderEvent(e))
 	}
-	return nil
+	return inserted, nil
+}
+
+func (r *FakeRepository) HasReaderEvents(_ context.Context, userID, storyID string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, e := range r.readerEvts {
+		if e.UserID == userID && e.StoryID == storyID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ReaderEvents returns a copy of the recorded reader events, for test inspection.

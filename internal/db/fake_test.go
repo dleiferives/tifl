@@ -24,8 +24,12 @@ func TestFakeReaderEventDedup(t *testing.T) {
 		{EventID: "a", UserID: "u", StoryID: "s", EventType: domain.ReaderEventLookup},
 		{EventID: "b", UserID: "u", StoryID: "s", EventType: domain.ReaderEventNavigate},
 	}
-	must(t, repo.InsertReaderEvents(ctx, batch))
-	must(t, repo.InsertReaderEvents(ctx, batch)) // duplicate flush
+	if _, err := repo.InsertReaderEvents(ctx, batch); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.InsertReaderEvents(ctx, batch); err != nil { // duplicate flush
+		t.Fatal(err)
+	}
 	if got := len(repo.ReaderEvents()); got != 2 {
 		t.Fatalf("expected 2 deduped events, got %d", got)
 	}

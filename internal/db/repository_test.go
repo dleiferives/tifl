@@ -50,6 +50,12 @@ func testReaderEvents(t *testing.T, repo db.Repository) {
 	story, err := repo.CreateStory(ctx, domain.Story{UserID: user.UserID, Language: "grc", Text: "λύω", Level: "beginner"})
 	must(t, err)
 
+	has, err := repo.HasReaderEvents(ctx, user.UserID, story.StoryID)
+	must(t, err)
+	if has {
+		t.Fatal("expected no reader events before any insert")
+	}
+
 	pos := 2
 	val := "3"
 	sess := "sess-r"
@@ -59,16 +65,39 @@ func testReaderEvents(t *testing.T, repo db.Repository) {
 		{EventID: "ev-2", UserID: user.UserID, StoryID: story.StoryID,
 			EventType: domain.ReaderEventRate, Position: &pos, Value: &val, OccurredAt: 1701.0},
 	}
-	must(t, repo.InsertReaderEvents(ctx, batch))
-	// Re-sending the same batch must not error on the event_id primary key.
-	must(t, repo.InsertReaderEvents(ctx, batch))
+	ins, err := repo.InsertReaderEvents(ctx, batch)
+	must(t, err)
+	if len(ins) != 2 {
+		t.Fatalf("first insert should report 2 new events, got %d", len(ins))
+	}
+	// Re-sending the same batch must not error on the event_id PK and must report
+	// zero newly-inserted, so the caller derives signals from each event once.
+	ins, err = repo.InsertReaderEvents(ctx, batch)
+	must(t, err)
+	if len(ins) != 0 {
+		t.Fatalf("re-sent batch should report 0 new events, got %d", len(ins))
+	}
+	has, err = repo.HasReaderEvents(ctx, user.UserID, story.StoryID)
+	must(t, err)
+	if !has {
+		t.Fatal("expected reader events to exist after insert")
+	}
+
 	// Empty batch is a no-op.
-	must(t, repo.InsertReaderEvents(ctx, nil))
+	empty, err := repo.InsertReaderEvents(ctx, nil)
+	must(t, err)
+	if len(empty) != 0 {
+		t.Fatalf("empty batch should insert nothing, got %d", len(empty))
+	}
 
 	// An event_id-less event is assigned one rather than colliding on empty PK.
-	must(t, repo.InsertReaderEvents(ctx, []domain.ReaderEvent{
+	ins, err = repo.InsertReaderEvents(ctx, []domain.ReaderEvent{
 		{UserID: user.UserID, StoryID: story.StoryID, EventType: domain.ReaderEventNavigate, OccurredAt: 1702.0},
-	}))
+	})
+	must(t, err)
+	if len(ins) != 1 || ins[0].EventID == "" {
+		t.Fatalf("id-less event should be inserted with a generated id, got %+v", ins)
+	}
 }
 
 func testPipeline(t *testing.T, repo db.Repository) {

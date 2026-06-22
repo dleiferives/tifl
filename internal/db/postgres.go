@@ -390,6 +390,61 @@ func (r *PostgresRepository) UserKnowledge(ctx context.Context, userID, language
 	return out, rows.Err()
 }
 
+func (r *PostgresRepository) GetUserKnowledgeItem(ctx context.Context, userID, itemID string) (domain.UserKnowledge, error) {
+	var (
+		uk    domain.UserKnowledge
+		stage string
+		level *string
+	)
+	err := r.pool.QueryRow(ctx,
+		`SELECT user_id, item_id, acquisition_stage, level, exposure_count, context_variety,
+		        lookup_count, task_correct, task_total, last_seen, last_targeted,
+		        confidence_score, next_target_after
+		 FROM user_knowledge WHERE user_id = $1 AND item_id = $2`, userID, itemID).
+		Scan(&uk.UserID, &uk.ItemID, &stage, &level, &uk.ExposureCount, &uk.ContextVariety,
+			&uk.LookupCount, &uk.TaskCorrect, &uk.TaskTotal, &uk.LastSeen, &uk.LastTargeted,
+			&uk.ConfidenceScore, &uk.NextTargetAfter)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.UserKnowledge{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.UserKnowledge{}, err
+	}
+	uk.AcquisitionStage = domain.AcquisitionStage(stage)
+	if level != nil {
+		uk.Level = domain.ReaderLevel(*level)
+	}
+	return uk, nil
+}
+
+func (r *PostgresRepository) LoadReaderKnowledge(ctx context.Context, userID, language string) ([]domain.ReaderKnowledge, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT ki.key, uk.level, uk.lookup_count
+		 FROM user_knowledge uk
+		 JOIN knowledge_items ki ON ki.item_id = uk.item_id
+		 WHERE uk.user_id = $1 AND ki.language = $2
+		 ORDER BY ki.key`, userID, language)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.ReaderKnowledge
+	for rows.Next() {
+		var (
+			rk    domain.ReaderKnowledge
+			level *string
+		)
+		if err := rows.Scan(&rk.ItemKey, &level, &rk.LookupCount); err != nil {
+			return nil, err
+		}
+		if level != nil {
+			rk.Level = domain.ReaderLevel(*level)
+		}
+		out = append(out, rk)
+	}
+	return out, rows.Err()
+}
+
 // --- llm calls -------------------------------------------------------------
 
 func (r *PostgresRepository) InsertLLMCall(ctx context.Context, c domain.LLMCall) error {
@@ -412,15 +467,16 @@ func (r *PostgresRepository) InsertLLMCall(ctx context.Context, c domain.LLMCall
 
 // --- reader events ---------------------------------------------------------
 
-func (r *PostgresRepository) InsertReaderEvents(ctx context.Context, events []domain.ReaderEvent) error {
+func (r *PostgresRepository) InsertReaderEvents(ctx context.Context, events []domain.ReaderEvent) ([]domain.ReaderEvent, error) {
 	if len(events) == 0 {
-		return nil
+		return nil, nil
 	}
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }() // no-op after a successful Commit
+	var inserted []domain.ReaderEvent
 	for _, e := range events {
 		if e.EventID == "" {
 			e.EventID = id.New()
@@ -430,18 +486,34 @@ func (r *PostgresRepository) InsertReaderEvents(ctx context.Context, events []do
 		}
 		// ON CONFLICT DO NOTHING mirrors SQLite's INSERT OR IGNORE: a re-sent flush
 		// batch is idempotent on the event_id primary key. pgx maps nil pointers to
-		// SQL NULL, so the nullable columns need no wrapping.
-		if _, err := tx.Exec(ctx,
+		// SQL NULL, so the nullable columns need no wrapping. RowsAffected reports
+		// whether the row was new, so the caller derives signals exactly once.
+		tag, err := tx.Exec(ctx,
 			`INSERT INTO reader_events(
 			   event_id, user_id, story_id, session_id, event_type, position, value, occurred_at)
 			 VALUES($1, $2, $3, $4, $5, $6, $7, $8)
 			 ON CONFLICT (event_id) DO NOTHING`,
 			e.EventID, e.UserID, e.StoryID, e.SessionID, string(e.EventType),
-			e.Position, e.Value, e.OccurredAt); err != nil {
-			return err
+			e.Position, e.Value, e.OccurredAt)
+		if err != nil {
+			return nil, err
+		}
+		if tag.RowsAffected() > 0 {
+			inserted = append(inserted, e)
 		}
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return inserted, nil
+}
+
+func (r *PostgresRepository) HasReaderEvents(ctx context.Context, userID, storyID string) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM reader_events WHERE user_id = $1 AND story_id = $2)`,
+		userID, storyID).Scan(&exists)
+	return exists, err
 }
 
 // nullLevelPG maps the empty reader level ("unseen") to a nil *string so pgx

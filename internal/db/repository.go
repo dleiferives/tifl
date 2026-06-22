@@ -47,6 +47,14 @@ type Repository interface {
 	// User knowledge — the per-user acquisition state.
 	UpsertUserKnowledge(ctx context.Context, uk domain.UserKnowledge) error
 	UserKnowledge(ctx context.Context, userID, language string) ([]domain.UserKnowledge, error)
+	// GetUserKnowledgeItem returns one (user, item) row, or ErrNotFound. Used by
+	// the reader's read-modify-write of a single item's signals.
+	GetUserKnowledgeItem(ctx context.Context, userID, itemID string) (domain.UserKnowledge, error)
+	// LoadReaderKnowledge returns the reader's per-item view (key → level,
+	// lookup_count) for a language in one query — what the reader needs at story
+	// load time. Items the user has never interacted with have no row and are
+	// "unseen" by absence.
+	LoadReaderKnowledge(ctx context.Context, userID, language string) ([]domain.ReaderKnowledge, error)
 
 	// LLM calls — the audit/cost log written by the gateway client after every
 	// outbound model call. Append-only; the call_id is the caller's idempotency key.
@@ -54,9 +62,13 @@ type Repository interface {
 
 	// Reader events — the high-volume behavioural signal log the reader flushes in
 	// batches. InsertReaderEvents is append-only and idempotent on event_id (a
-	// retried flush does not double-insert); the caller derives user_knowledge
-	// signals from these separately.
-	InsertReaderEvents(ctx context.Context, events []domain.ReaderEvent) error
+	// retried flush does not double-insert) and returns the subset that was newly
+	// inserted, so the caller derives user_knowledge signals from each event
+	// exactly once even when a flush is re-sent. HasReaderEvents reports whether a
+	// (user, story) has any prior events — the gate for counting story exposure
+	// once per first read.
+	InsertReaderEvents(ctx context.Context, events []domain.ReaderEvent) (inserted []domain.ReaderEvent, err error)
+	HasReaderEvents(ctx context.Context, userID, storyID string) (bool, error)
 
 	// Sessions — the study unit the generation pipeline drives. CreateSession
 	// assigns a session_id (when blank), created_at, and a pending status.

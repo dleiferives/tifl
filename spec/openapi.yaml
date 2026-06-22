@@ -87,8 +87,32 @@ paths:
                 $ref: "#/components/schemas/SessionRef"
         "404": { description: Session not found }
         "503": { description: Generation not configured }
-# Planned surfaces (see context/): /auth/*, /stories/{id},
-# /word_knowledge/{token}, /tasks/{id}, /skills.
+  /stories/{id}:
+    get:
+      summary: Load a story for the reader (tokens + knowledge in one call)
+      description: >
+        Returns the server-tokenized story plus the caller's per-item knowledge
+        map (canonical key → level + lookup_count) for the story's language, in a
+        single response — everything the reader needs at load time. Words the user
+        has never interacted with are absent from the map and treated as unseen.
+        Stories are user-scoped; another user's story returns 404.
+      operationId: getStory
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Story tokens + knowledge
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StoryLoad"
+        "404": { description: Story not found }
+# Planned surfaces (see context/): /auth/*, /reader/events,
+# /word_knowledge/{token}, /stories/{id}/sentence, /stories/{id}/word,
+# /tasks/{id}, /skills.
 components:
   parameters:
     SessionID:
@@ -134,3 +158,36 @@ components:
         token_rate: { type: integer, description: "approx upstream tokens/sec" }
         error_code: { type: string, description: "stable code, set only on failure" }
       required: [stage]
+    StoryToken:
+      type: object
+      description: One token of the server-tokenized story; non-word tokens carry no key.
+      properties:
+        position: { type: integer, description: "0-indexed, stable identifier" }
+        surface: { type: string, description: "display form incl. punctuation" }
+        key: { type: string, description: "canonical knowledge key; omitted for non-word tokens" }
+        is_word: { type: boolean }
+      required: [position, surface, is_word]
+    ReaderKnowledge:
+      type: object
+      description: The reader's per-item view, keyed by canonical key.
+      properties:
+        level:
+          type: string
+          description: "learner self-rating; '' (omitted)=unseen"
+          enum: ["", "1", "2", "3", "4", "5", well_known, ignored]
+        lookup_count: { type: integer }
+      required: [level, lookup_count]
+    StoryLoad:
+      type: object
+      description: Everything the reader needs at load time, in one response.
+      properties:
+        story_id: { type: string }
+        language: { type: string }
+        tokens:
+          type: array
+          items: { $ref: "#/components/schemas/StoryToken" }
+        knowledge:
+          type: object
+          description: "canonical key → knowledge state; unseen items are absent"
+          additionalProperties: { $ref: "#/components/schemas/ReaderKnowledge" }
+      required: [story_id, language, tokens, knowledge]
