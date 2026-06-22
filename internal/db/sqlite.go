@@ -277,12 +277,13 @@ func (r *SQLiteRepository) UpsertUserKnowledge(ctx context.Context, uk domain.Us
 	}
 	_, err := r.db.ExecContext(ctx,
 		`INSERT INTO user_knowledge(
-		   user_id, item_id, acquisition_stage, exposure_count, context_variety,
+		   user_id, item_id, acquisition_stage, level, exposure_count, context_variety,
 		   lookup_count, task_correct, task_total, last_seen, last_targeted,
 		   confidence_score, next_target_after)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(user_id, item_id) DO UPDATE SET
 		   acquisition_stage = excluded.acquisition_stage,
+		   level             = excluded.level,
 		   exposure_count    = excluded.exposure_count,
 		   context_variety   = excluded.context_variety,
 		   lookup_count      = excluded.lookup_count,
@@ -292,7 +293,7 @@ func (r *SQLiteRepository) UpsertUserKnowledge(ctx context.Context, uk domain.Us
 		   last_targeted     = excluded.last_targeted,
 		   confidence_score  = excluded.confidence_score,
 		   next_target_after = excluded.next_target_after`,
-		uk.UserID, uk.ItemID, string(uk.AcquisitionStage), uk.ExposureCount, uk.ContextVariety,
+		uk.UserID, uk.ItemID, string(uk.AcquisitionStage), nullLevel(uk.Level), uk.ExposureCount, uk.ContextVariety,
 		uk.LookupCount, uk.TaskCorrect, uk.TaskTotal, nullFloat(uk.LastSeen), nullFloat(uk.LastTargeted),
 		nullFloat(uk.ConfidenceScore), nullFloat(uk.NextTargetAfter))
 	return err
@@ -300,7 +301,7 @@ func (r *SQLiteRepository) UpsertUserKnowledge(ctx context.Context, uk domain.Us
 
 func (r *SQLiteRepository) UserKnowledge(ctx context.Context, userID, language string) ([]domain.UserKnowledge, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT uk.user_id, uk.item_id, uk.acquisition_stage, uk.exposure_count,
+		`SELECT uk.user_id, uk.item_id, uk.acquisition_stage, uk.level, uk.exposure_count,
 		        uk.context_variety, uk.lookup_count, uk.task_correct, uk.task_total,
 		        uk.last_seen, uk.last_targeted, uk.confidence_score, uk.next_target_after
 		 FROM user_knowledge uk
@@ -317,14 +318,16 @@ func (r *SQLiteRepository) UserKnowledge(ctx context.Context, userID, language s
 		var (
 			uk                                             domain.UserKnowledge
 			stage                                          string
+			level                                          sql.NullString
 			lastSeen, lastTargeted, confidence, nextTarget sql.NullFloat64
 		)
-		if err := rows.Scan(&uk.UserID, &uk.ItemID, &stage, &uk.ExposureCount,
+		if err := rows.Scan(&uk.UserID, &uk.ItemID, &stage, &level, &uk.ExposureCount,
 			&uk.ContextVariety, &uk.LookupCount, &uk.TaskCorrect, &uk.TaskTotal,
 			&lastSeen, &lastTargeted, &confidence, &nextTarget); err != nil {
 			return nil, err
 		}
 		uk.AcquisitionStage = domain.AcquisitionStage(stage)
+		uk.Level = domain.ReaderLevel(level.String)
 		uk.LastSeen = floatPtr(lastSeen)
 		uk.LastTargeted = floatPtr(lastTargeted)
 		uk.ConfidenceScore = floatPtr(confidence)
@@ -435,6 +438,15 @@ func nullString(p *string) any {
 		return nil
 	}
 	return *p
+}
+
+// nullLevel maps the empty reader level ("unseen") to SQL NULL so an unrated item
+// stores as NULL rather than an empty string.
+func nullLevel(l domain.ReaderLevel) any {
+	if l == domain.LevelUnseen {
+		return nil
+	}
+	return string(l)
 }
 
 func floatPtr(n sql.NullFloat64) *float64 {

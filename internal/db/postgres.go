@@ -333,12 +333,13 @@ func (r *PostgresRepository) UpsertUserKnowledge(ctx context.Context, uk domain.
 	}
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO user_knowledge(
-		   user_id, item_id, acquisition_stage, exposure_count, context_variety,
+		   user_id, item_id, acquisition_stage, level, exposure_count, context_variety,
 		   lookup_count, task_correct, task_total, last_seen, last_targeted,
 		   confidence_score, next_target_after)
-		 VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		 VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		 ON CONFLICT(user_id, item_id) DO UPDATE SET
 		   acquisition_stage = excluded.acquisition_stage,
+		   level             = excluded.level,
 		   exposure_count    = excluded.exposure_count,
 		   context_variety   = excluded.context_variety,
 		   lookup_count      = excluded.lookup_count,
@@ -348,7 +349,7 @@ func (r *PostgresRepository) UpsertUserKnowledge(ctx context.Context, uk domain.
 		   last_targeted     = excluded.last_targeted,
 		   confidence_score  = excluded.confidence_score,
 		   next_target_after = excluded.next_target_after`,
-		uk.UserID, uk.ItemID, string(uk.AcquisitionStage), uk.ExposureCount, uk.ContextVariety,
+		uk.UserID, uk.ItemID, string(uk.AcquisitionStage), nullLevelPG(uk.Level), uk.ExposureCount, uk.ContextVariety,
 		uk.LookupCount, uk.TaskCorrect, uk.TaskTotal, uk.LastSeen, uk.LastTargeted,
 		uk.ConfidenceScore, uk.NextTargetAfter)
 	return err
@@ -356,7 +357,7 @@ func (r *PostgresRepository) UpsertUserKnowledge(ctx context.Context, uk domain.
 
 func (r *PostgresRepository) UserKnowledge(ctx context.Context, userID, language string) ([]domain.UserKnowledge, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT uk.user_id, uk.item_id, uk.acquisition_stage, uk.exposure_count,
+		`SELECT uk.user_id, uk.item_id, uk.acquisition_stage, uk.level, uk.exposure_count,
 		        uk.context_variety, uk.lookup_count, uk.task_correct, uk.task_total,
 		        uk.last_seen, uk.last_targeted, uk.confidence_score, uk.next_target_after
 		 FROM user_knowledge uk
@@ -373,13 +374,17 @@ func (r *PostgresRepository) UserKnowledge(ctx context.Context, userID, language
 		var (
 			uk    domain.UserKnowledge
 			stage string
+			level *string
 		)
-		if err := rows.Scan(&uk.UserID, &uk.ItemID, &stage, &uk.ExposureCount,
+		if err := rows.Scan(&uk.UserID, &uk.ItemID, &stage, &level, &uk.ExposureCount,
 			&uk.ContextVariety, &uk.LookupCount, &uk.TaskCorrect, &uk.TaskTotal,
 			&uk.LastSeen, &uk.LastTargeted, &uk.ConfidenceScore, &uk.NextTargetAfter); err != nil {
 			return nil, err
 		}
 		uk.AcquisitionStage = domain.AcquisitionStage(stage)
+		if level != nil {
+			uk.Level = domain.ReaderLevel(*level)
+		}
 		out = append(out, uk)
 	}
 	return out, rows.Err()
@@ -437,6 +442,16 @@ func (r *PostgresRepository) InsertReaderEvents(ctx context.Context, events []do
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+// nullLevelPG maps the empty reader level ("unseen") to a nil *string so pgx
+// stores SQL NULL rather than an empty string, matching the SQLite backend.
+func nullLevelPG(l domain.ReaderLevel) *string {
+	if l == domain.LevelUnseen {
+		return nil
+	}
+	s := string(l)
+	return &s
 }
 
 // --- helpers ---------------------------------------------------------------

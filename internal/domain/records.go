@@ -54,6 +54,7 @@ type UserKnowledge struct {
 	UserID           string
 	ItemID           string
 	AcquisitionStage AcquisitionStage
+	Level            ReaderLevel // learner's self-rating (reader); "" = unseen
 	ExposureCount    int
 	ContextVariety   int // distinct stories it appeared in
 	LookupCount      int // Space presses in the reader (strong "not acquired")

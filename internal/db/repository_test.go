@@ -366,7 +366,7 @@ func testUserKnowledge(t *testing.T, repo db.Repository) {
 	conf := 0.42
 	must(t, repo.UpsertUserKnowledge(ctx, domain.UserKnowledge{
 		UserID: user.UserID, ItemID: itemID, AcquisitionStage: domain.StageRecognizing,
-		ExposureCount: 3, LookupCount: 2, ConfidenceScore: &conf,
+		Level: domain.Level3, ExposureCount: 3, LookupCount: 2, ConfidenceScore: &conf,
 	}))
 
 	uks, err := repo.UserKnowledge(ctx, user.UserID, "grc")
@@ -378,18 +378,26 @@ func testUserKnowledge(t *testing.T, repo db.Repository) {
 	if uk.ExposureCount != 3 || uk.LookupCount != 2 || uk.AcquisitionStage != domain.StageRecognizing {
 		t.Fatalf("round-trip mismatch: %+v", uk)
 	}
+	if uk.Level != domain.Level3 {
+		t.Fatalf("reader level not preserved: %q", uk.Level)
+	}
 	if uk.ConfidenceScore == nil || *uk.ConfidenceScore != 0.42 {
 		t.Fatalf("confidence not preserved: %v", uk.ConfidenceScore)
 	}
 
-	// Re-upsert updates the existing row.
+	// Re-upsert updates the existing row, including clearing the level back to
+	// unseen (NULL), which must round-trip as the empty value, not "".
 	must(t, repo.UpsertUserKnowledge(ctx, domain.UserKnowledge{
-		UserID: user.UserID, ItemID: itemID, AcquisitionStage: domain.StageAcquiring, ExposureCount: 7,
+		UserID: user.UserID, ItemID: itemID, AcquisitionStage: domain.StageAcquiring,
+		Level: domain.LevelUnseen, ExposureCount: 7,
 	}))
 	uks, err = repo.UserKnowledge(ctx, user.UserID, "grc")
 	must(t, err)
 	if uks[0].ExposureCount != 7 || uks[0].AcquisitionStage != domain.StageAcquiring {
 		t.Fatalf("update failed: %+v", uks[0])
+	}
+	if uks[0].Level != domain.LevelUnseen {
+		t.Fatalf("level should clear to unseen, got %q", uks[0].Level)
 	}
 
 	// Foreign-key enforcement: an unknown item must be rejected.
