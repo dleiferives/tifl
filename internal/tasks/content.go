@@ -29,6 +29,22 @@ func asInt(m map[string]any, key string) (int, bool) {
 	}
 }
 
+// pick returns a new map holding only the named keys present in m. It is the
+// allowlist behind TaskType.Present: presentation is default-deny, so a field
+// reaches the learner only when a type explicitly lists it. Answer keys
+// (correct_index, acceptable_forms) and internal item ids are dropped by
+// omission, and a new content field never leaks to the client until a type opts
+// it in.
+func pick(m map[string]any, keys ...string) map[string]any {
+	out := make(map[string]any, len(keys))
+	for _, k := range keys {
+		if v, ok := m[k]; ok {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 // asStringSlice returns m[key] as a []string, tolerating the []any that JSON
 // decoding produces as well as a native []string. Non-string elements are
 // skipped; an absent or wrong-typed key yields nil.

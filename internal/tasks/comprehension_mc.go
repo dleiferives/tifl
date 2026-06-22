@@ -57,3 +57,10 @@ func (t ComprehensionMC) Grade(content, response map[string]any, _ Normalizer) (
 func (ComprehensionMC) Targets(content map[string]any) []string {
 	return asStringSlice(content, "target_item_ids")
 }
+
+// Present serves the question and options to the learner while withholding
+// correct_index and the target item ids — everything needed to answer, nothing
+// that reveals the answer.
+func (ComprehensionMC) Present(content map[string]any) map[string]any {
+	return pick(content, "question", "options")
+}
