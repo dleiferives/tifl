@@ -294,6 +294,44 @@ func (r *SQLiteRepository) CreateTask(ctx context.Context, t domain.Task, target
 	return t, nil
 }
 
+func (r *SQLiteRepository) GetTask(ctx context.Context, userID, taskID string) (domain.Task, error) {
+	row := r.db.QueryRowContext(ctx,
+		`SELECT task_id, session_id, user_id, task_type, language, content, response,
+		        input_method, media_path, grade, graded_by, graded_at, created_at
+		 FROM tasks WHERE task_id = ? AND user_id = ?`, taskID, userID)
+	t, err := scanTask(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Task{}, ErrNotFound
+	}
+	return t, err
+}
+
+func (r *SQLiteRepository) RecordTaskGrade(ctx context.Context, userID, taskID string, g domain.TaskGrade) error {
+	response, err := marshalJSON(g.Response)
+	if err != nil {
+		return err
+	}
+	grade, err := marshalJSON(g.Grade)
+	if err != nil {
+		return err
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE tasks SET response = ?, input_method = ?, grade = ?, graded_by = ?, graded_at = ?
+		 WHERE task_id = ? AND user_id = ?`,
+		response, nullEmpty(g.InputMethod), grade, nullEmpty(g.GradedBy), g.GradedAt, taskID, userID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (r *SQLiteRepository) ListSessionTasks(ctx context.Context, sessionID string) ([]domain.Task, error) {
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT task_id, session_id, user_id, task_type, language, content, response,

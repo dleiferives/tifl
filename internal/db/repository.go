@@ -97,6 +97,13 @@ type Repository interface {
 	// task_targets (from tasks.TaskType.Targets) atomically.
 	CreateTask(ctx context.Context, t domain.Task, targets []string) (domain.Task, error)
 	ListSessionTasks(ctx context.Context, sessionID string) ([]domain.Task, error)
+	// GetTask returns one task by id, scoped to the owning user (ErrNotFound when
+	// no task matches both id and user). RecordTaskGrade persists a graded
+	// submission — response, input_method, grade, graded_by, graded_at — in one
+	// update keyed on (task_id, user_id); it is the write half of
+	// POST /tasks/{id}/submit and returns ErrNotFound when no such task exists.
+	GetTask(ctx context.Context, userID, taskID string) (domain.Task, error)
+	RecordTaskGrade(ctx context.Context, userID, taskID string, g domain.TaskGrade) error
 
 	// Definitions & breakdowns — the global, shared, cached reader resources (not
 	// user-scoped). ListDefinitions returns every source's entry for a (language,

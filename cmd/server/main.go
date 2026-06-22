@@ -98,7 +98,7 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	handler.New(repo, broker, client, cfg.FrontendDir).Register(mux)
+	handler.New(repo, broker, client, taskRegistry, langRegistry, cfg.FrontendDir).Register(mux)
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,

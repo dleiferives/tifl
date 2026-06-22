@@ -254,7 +254,84 @@ paths:
       responses:
         "204": { description: Applied }
         "400": { description: Missing language or invalid level }
-# Planned surfaces (see context/): /auth/*, /tasks/{id}, /skills.
+  /sessions/{id}/tasks:
+    get:
+      summary: List a session's tasks to present (answer-free)
+      description: >
+        Returns every task for the session in presentation form — content runs
+        through the task type's Present view, so answer keys (correct_index,
+        acceptable_forms) and internal item ids never reach the client — plus a
+        completed/total progress count. The session is tenant-scoped; another
+        user's session is a 404. A task already submitted carries its grade.
+      operationId: getSessionTasks
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      responses:
+        "200":
+          description: Session tasks + progress
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionTasks"
+        "404": { description: Session not found }
+  /tasks/{id}:
+    get:
+      summary: Fetch one task to present (answer-free)
+      description: >
+        Returns one task in presentation form (Present-filtered content plus the
+        grade once submitted), scoped to the owning user. Another user's task is a
+        404.
+      operationId: getTask
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Presented task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "404": { description: Task not found }
+  /tasks/{id}/submit:
+    post:
+      summary: Submit a response, grade it, update the learning signal
+      description: >
+        Grades the submitted response, persists it, and folds the outcome into
+        user_knowledge (task_total for every targeted item, task_correct for the
+        demonstrated ones). Rule-graded types (comprehension_mc, fill_blank) grade
+        in-process with no model call; LLM-graded types (production) route through
+        the gateway and return 503 when no gateway is configured. input_method is
+        a property of the response — only "typed" is supported today (scan/audio
+        later). A task that already carries a grade is rejected with 409;
+        re-submission to improve a grade is future work.
+      operationId: submitTask
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmitTaskRequest"
+      responses:
+        "200":
+          description: The grade
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubmitTaskResponse"
+        "400": { description: Missing response or unsupported input method }
+        "404": { description: Task not found }
+        "409": { description: Task already submitted }
+        "502": { description: Grading failed upstream (gateway/model) }
+        "503": { description: LLM grading not configured }
+# Planned surfaces (see context/): /auth/*, /skills.
 components:
   parameters:
     SessionID:
@@ -377,3 +454,59 @@ components:
         example: { type: string }
         etymology: { type: string }
       required: [key, source, gloss]
+    Grade:
+      type: object
+      description: The outcome of grading one task response.
+      properties:
+        correct: { type: boolean }
+        score: { type: number, description: "0.0..1.0" }
+        feedback: { type: string }
+        items_demonstrated:
+          type: array
+          items: { type: string }
+          description: knowledge item ids the response demonstrated
+        graded_by:
+          type: string
+          enum: [rule, llm]
+      required: [correct, score, graded_by]
+    Task:
+      type: object
+      description: One task in presentation form (answer-free content + grade once submitted).
+      properties:
+        task_id: { type: string }
+        task_type: { type: string, description: "registered TaskType id" }
+        content:
+          type: object
+          additionalProperties: true
+          description: Present-filtered content — never includes answer keys.
+        graded: { type: boolean }
+        grade: { $ref: "#/components/schemas/Grade" }
+      required: [task_id, task_type, content, graded]
+    SessionTasks:
+      type: object
+      properties:
+        session_id: { type: string }
+        total: { type: integer }
+        completed: { type: integer, description: number of tasks already graded }
+        tasks:
+          type: array
+          items: { $ref: "#/components/schemas/Task" }
+      required: [session_id, total, completed, tasks]
+    SubmitTaskRequest:
+      type: object
+      properties:
+        response:
+          type: object
+          additionalProperties: true
+          description: type-specific response JSON (e.g. {selected_index}, {answer}, {text})
+        input_method:
+          type: string
+          description: 'property of the response; only "typed" supported today'
+          enum: [typed]
+      required: [response]
+    SubmitTaskResponse:
+      type: object
+      properties:
+        task_id: { type: string }
+        grade: { $ref: "#/components/schemas/Grade" }
+      required: [task_id, grade]

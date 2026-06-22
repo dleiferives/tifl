@@ -56,3 +56,9 @@ func (Production) Targets(content map[string]any) []string {
 	}
 	return out
 }
+
+// Present serves the L1 prompt to the learner, withholding the target
+// construction and item ids the response is meant to exercise.
+func (Production) Present(content map[string]any) map[string]any {
+	return pick(content, "prompt_l1")
+}

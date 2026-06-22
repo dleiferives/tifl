@@ -66,3 +66,9 @@ func (FillBlank) Targets(content map[string]any) []string {
 	}
 	return nil
 }
+
+// Present serves only the blanked sentence, withholding acceptable_forms (the
+// answer) and the target item id.
+func (FillBlank) Present(content map[string]any) map[string]any {
+	return pick(content, "sentence")
+}

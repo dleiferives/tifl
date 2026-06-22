@@ -289,6 +289,47 @@ func testPipeline(t *testing.T, repo db.Repository) {
 		t.Fatalf("task content JSON not round-tripped: %+v", tasks[0].Content)
 	}
 
+	// GetTask is user-scoped: the owner sees the task; another user gets
+	// ErrNotFound, as does an unknown id.
+	gotTask, err := repo.GetTask(ctx, user.UserID, task.TaskID)
+	must(t, err)
+	if gotTask.TaskID != task.TaskID || gotTask.TaskType != "comprehension_mc" {
+		t.Fatalf("GetTask mismatch: %+v", gotTask)
+	}
+	if _, err := repo.GetTask(ctx, "someone-else", task.TaskID); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("GetTask cross-tenant: want ErrNotFound, got %v", err)
+	}
+	if _, err := repo.GetTask(ctx, user.UserID, "missing"); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("GetTask missing: want ErrNotFound, got %v", err)
+	}
+
+	// RecordTaskGrade persists the submitted response and grade in one update.
+	must(t, repo.RecordTaskGrade(ctx, user.UserID, task.TaskID, domain.TaskGrade{
+		Response:    map[string]any{"selected_index": float64(1)},
+		InputMethod: "typed",
+		Grade:       map[string]any{"correct": true, "score": float64(1)},
+		GradedBy:    "rule",
+		GradedAt:    1800.0,
+	}))
+	graded, err := repo.GetTask(ctx, user.UserID, task.TaskID)
+	must(t, err)
+	if c, _ := graded.Grade["correct"].(bool); !c {
+		t.Fatalf("grade not persisted: %+v", graded.Grade)
+	}
+	if si, _ := graded.Response["selected_index"].(float64); si != 1 {
+		t.Fatalf("response not persisted: %+v", graded.Response)
+	}
+	if graded.InputMethod != "typed" || graded.GradedBy != "rule" {
+		t.Fatalf("grade metadata wrong: %+v", graded)
+	}
+	if graded.GradedAt == nil || *graded.GradedAt != 1800.0 {
+		t.Fatalf("graded_at not persisted: %+v", graded.GradedAt)
+	}
+	// RecordTaskGrade is user-scoped too.
+	if err := repo.RecordTaskGrade(ctx, "someone-else", task.TaskID, domain.TaskGrade{}); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("RecordTaskGrade cross-tenant: want ErrNotFound, got %v", err)
+	}
+
 	// FK: a task for an unknown session must be rejected.
 	if _, err := repo.CreateTask(ctx, domain.Task{
 		SessionID: "missing", UserID: user.UserID, TaskType: "fill_blank", Language: "grc",

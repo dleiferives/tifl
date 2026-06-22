@@ -51,6 +51,13 @@ type TaskType interface {
 	Grade(content, response map[string]any, normalize Normalizer) (Grade, error)
 	// Targets returns the knowledge item ids this task exercises.
 	Targets(content map[string]any) []string
+	// Present returns the client-safe view of content for rendering: only the
+	// fields a learner needs to attempt the task, with answer keys
+	// (correct_index, acceptable_forms) and internal item ids stripped. The GET
+	// task endpoints serve this, never the raw content, so answers never reach
+	// the browser. Presentation is default-deny — a field is shown only if the
+	// type opts it in.
+	Present(content map[string]any) map[string]any
 }
 
 // Registry maps task type id -> implementation. Populated at startup.
