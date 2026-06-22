@@ -526,6 +526,99 @@ func nullLevelPG(l domain.ReaderLevel) *string {
 	return &s
 }
 
+// --- definitions & breakdowns (global shared cache) ------------------------
+
+func (r *PostgresRepository) ListDefinitions(ctx context.Context, language, itemKey string) ([]domain.Definition, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT language, item_key, source, gloss, grammatical_note, example, etymology, created_at
+		 FROM definitions WHERE language = $1 AND item_key = $2 ORDER BY source`, language, itemKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.Definition
+	for rows.Next() {
+		var (
+			d                        domain.Definition
+			note, example, etymology *string
+		)
+		if err := rows.Scan(&d.Language, &d.ItemKey, &d.Source, &d.Gloss,
+			&note, &example, &etymology, &d.CreatedAt); err != nil {
+			return nil, err
+		}
+		d.GrammaticalNote, d.Example, d.Etymology = derefStr(note), derefStr(example), derefStr(etymology)
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+func (r *PostgresRepository) UpsertDefinition(ctx context.Context, d domain.Definition) error {
+	if d.CreatedAt == 0 {
+		d.CreatedAt = float64(time.Now().Unix())
+	}
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO definitions(language, item_key, source, gloss, grammatical_note, example, etymology, created_at)
+		 VALUES($1, $2, $3, $4, $5, $6, $7, $8)
+		 ON CONFLICT(language, item_key, source) DO UPDATE SET
+		   gloss = excluded.gloss, grammatical_note = excluded.grammatical_note,
+		   example = excluded.example, etymology = excluded.etymology, created_at = excluded.created_at`,
+		d.Language, d.ItemKey, d.Source, d.Gloss,
+		nullStr(d.GrammaticalNote), nullStr(d.Example), nullStr(d.Etymology), d.CreatedAt)
+	return err
+}
+
+func (r *PostgresRepository) GetBreakdown(ctx context.Context, scope domain.BreakdownScope, language, cacheKey string) (domain.Breakdown, error) {
+	var (
+		content   []byte
+		createdAt float64
+	)
+	err := r.pool.QueryRow(ctx,
+		`SELECT content, created_at FROM breakdowns WHERE scope = $1 AND language = $2 AND cache_key = $3`,
+		string(scope), language, cacheKey).Scan(&content, &createdAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Breakdown{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.Breakdown{}, err
+	}
+	m, err := unmarshalJSONB(content)
+	if err != nil {
+		return domain.Breakdown{}, err
+	}
+	return domain.Breakdown{Scope: scope, Language: language, CacheKey: cacheKey, Content: m, CreatedAt: createdAt}, nil
+}
+
+func (r *PostgresRepository) UpsertBreakdown(ctx context.Context, b domain.Breakdown) error {
+	if b.CreatedAt == 0 {
+		b.CreatedAt = float64(time.Now().Unix())
+	}
+	content, err := marshalJSONB(b.Content)
+	if err != nil {
+		return err
+	}
+	_, err = r.pool.Exec(ctx,
+		`INSERT INTO breakdowns(scope, language, cache_key, content, created_at)
+		 VALUES($1, $2, $3, $4, $5)
+		 ON CONFLICT(scope, language, cache_key) DO UPDATE SET
+		   content = excluded.content, created_at = excluded.created_at`,
+		string(b.Scope), b.Language, b.CacheKey, content, b.CreatedAt)
+	return err
+}
+
+func derefStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+func nullStr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
 // --- helpers ---------------------------------------------------------------
 
 // marshalJSONB encodes a metadata map for a JSONB column; nil maps become a SQL

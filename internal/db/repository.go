@@ -97,4 +97,15 @@ type Repository interface {
 	// task_targets (from tasks.TaskType.Targets) atomically.
 	CreateTask(ctx context.Context, t domain.Task, targets []string) (domain.Task, error)
 	ListSessionTasks(ctx context.Context, sessionID string) ([]domain.Task, error)
+
+	// Definitions & breakdowns — the global, shared, cached reader resources (not
+	// user-scoped). ListDefinitions returns every source's entry for a (language,
+	// key); UpsertDefinition is keyed by (language, key, source) so Wiktionary and
+	// LLM entries coexist. Get/UpsertBreakdown cache the LLM-backed sentence/word
+	// breakdowns by (scope, language, cache_key). GetBreakdown returns ErrNotFound
+	// on a cache miss.
+	ListDefinitions(ctx context.Context, language, itemKey string) ([]domain.Definition, error)
+	UpsertDefinition(ctx context.Context, d domain.Definition) error
+	GetBreakdown(ctx context.Context, scope domain.BreakdownScope, language, cacheKey string) (domain.Breakdown, error)
+	UpsertBreakdown(ctx context.Context, b domain.Breakdown) error
 }

@@ -30,6 +30,7 @@ func testRepository(t *testing.T, newRepo repoFactory) {
 	t.Run("TenantIsolation", func(t *testing.T) { testTenantIsolation(t, newRepo(t)) })
 	t.Run("LLMCalls", func(t *testing.T) { testLLMCalls(t, newRepo(t)) })
 	t.Run("ReaderEvents", func(t *testing.T) { testReaderEvents(t, newRepo(t)) })
+	t.Run("DefinitionsBreakdowns", func(t *testing.T) { testDefinitionsBreakdowns(t, newRepo(t)) })
 	t.Run("Pipeline", func(t *testing.T) { testPipeline(t, newRepo(t)) })
 }
 
@@ -97,6 +98,51 @@ func testReaderEvents(t *testing.T, repo db.Repository) {
 	must(t, err)
 	if len(ins) != 1 || ins[0].EventID == "" {
 		t.Fatalf("id-less event should be inserted with a generated id, got %+v", ins)
+	}
+}
+
+// testDefinitionsBreakdowns covers the global shared cache: two sources coexist
+// for one word, upsert replaces in place, and breakdowns round-trip their JSON
+// content with an ErrNotFound miss.
+func testDefinitionsBreakdowns(t *testing.T, repo db.Repository) {
+	ctx := context.Background()
+	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "grc", Name: "Greek", KeyStrategy: "lemma", Enabled: true}))
+
+	must(t, repo.UpsertDefinition(ctx, domain.Definition{
+		Language: "grc", ItemKey: "λόγος", Source: domain.DefinitionSourceWiktionary,
+		Gloss: "word, reason", Etymology: "from λέγω", CreatedAt: 1700,
+	}))
+	must(t, repo.UpsertDefinition(ctx, domain.Definition{
+		Language: "grc", ItemKey: "λόγος", Source: domain.DefinitionSourceLLM, Gloss: "an account or ratio",
+	}))
+	defs, err := repo.ListDefinitions(ctx, "grc", "λόγος")
+	must(t, err)
+	if len(defs) != 2 {
+		t.Fatalf("want 2 sources for λόγος, got %d", len(defs))
+	}
+
+	// Upsert on the same (language, key, source) replaces rather than duplicating.
+	must(t, repo.UpsertDefinition(ctx, domain.Definition{
+		Language: "grc", ItemKey: "λόγος", Source: domain.DefinitionSourceLLM, Gloss: "speech",
+	}))
+	defs, err = repo.ListDefinitions(ctx, "grc", "λόγος")
+	must(t, err)
+	if len(defs) != 2 {
+		t.Fatalf("upsert should not add a row, got %d", len(defs))
+	}
+
+	// Breakdown cache: miss → ErrNotFound, then round-trip the JSON content.
+	if _, err := repo.GetBreakdown(ctx, domain.BreakdownSentence, "grc", "h1"); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("want ErrNotFound on cache miss, got %v", err)
+	}
+	must(t, repo.UpsertBreakdown(ctx, domain.Breakdown{
+		Scope: domain.BreakdownSentence, Language: "grc", CacheKey: "h1",
+		Content: map[string]any{"translation": "in the beginning was the word"},
+	}))
+	got, err := repo.GetBreakdown(ctx, domain.BreakdownSentence, "grc", "h1")
+	must(t, err)
+	if got.Content["translation"] != "in the beginning was the word" {
+		t.Fatalf("breakdown content not round-tripped: %+v", got.Content)
 	}
 }
 

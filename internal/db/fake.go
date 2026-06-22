@@ -28,6 +28,8 @@ type FakeRepository struct {
 	llmCalls   []domain.LLMCall                // append-only audit log
 	readerEvts []domain.ReaderEvent            // append-only reader signal log
 	readerIDs  map[string]bool                 // event_id set, for idempotent insert
+	defs       map[string]domain.Definition    // language\x00key\x00source -> definition
+	breakdowns map[string]domain.Breakdown     // scope\x00language\x00cacheKey -> breakdown
 
 	// Generation-pipeline state.
 	sessions map[string]domain.Session                    // session_id -> session
@@ -52,6 +54,8 @@ func NewFake() *FakeRepository {
 		itemKeys:   make(map[string]string),
 		knowledge:  make(map[string]domain.UserKnowledge),
 		readerIDs:  make(map[string]bool),
+		defs:       make(map[string]domain.Definition),
+		breakdowns: make(map[string]domain.Breakdown),
 		sessions:   make(map[string]domain.Session),
 		stages:     make(map[string]map[string]domain.GenerationStage),
 		stories:    make(map[string]domain.Story),
@@ -278,6 +282,53 @@ func (r *FakeRepository) LoadReaderKnowledge(_ context.Context, userID, language
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ItemKey < out[j].ItemKey })
 	return out, nil
+}
+
+// --- definitions & breakdowns ----------------------------------------------
+
+func (r *FakeRepository) ListDefinitions(_ context.Context, language, itemKey string) ([]domain.Definition, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []domain.Definition
+	for _, d := range r.defs {
+		if d.Language == language && d.ItemKey == itemKey {
+			out = append(out, d)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Source < out[j].Source })
+	return out, nil
+}
+
+func (r *FakeRepository) UpsertDefinition(_ context.Context, d domain.Definition) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if d.CreatedAt == 0 {
+		d.CreatedAt = float64(time.Now().Unix())
+	}
+	r.defs[d.Language+"\x00"+d.ItemKey+"\x00"+d.Source] = d
+	return nil
+}
+
+func (r *FakeRepository) GetBreakdown(_ context.Context, scope domain.BreakdownScope, language, cacheKey string) (domain.Breakdown, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	b, ok := r.breakdowns[string(scope)+"\x00"+language+"\x00"+cacheKey]
+	if !ok {
+		return domain.Breakdown{}, ErrNotFound
+	}
+	b.Content = cloneMeta(b.Content)
+	return b, nil
+}
+
+func (r *FakeRepository) UpsertBreakdown(_ context.Context, b domain.Breakdown) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if b.CreatedAt == 0 {
+		b.CreatedAt = float64(time.Now().Unix())
+	}
+	b.Content = cloneMeta(b.Content)
+	r.breakdowns[string(b.Scope)+"\x00"+b.Language+"\x00"+b.CacheKey] = b
+	return nil
 }
 
 // --- llm calls -------------------------------------------------------------
