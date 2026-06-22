@@ -354,6 +354,44 @@ func (r *SQLiteRepository) InsertLLMCall(ctx context.Context, c domain.LLMCall) 
 	return err
 }
 
+// --- reader events ---------------------------------------------------------
+
+func (r *SQLiteRepository) InsertReaderEvents(ctx context.Context, events []domain.ReaderEvent) error {
+	if len(events) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }() // no-op after a successful Commit
+	// INSERT OR IGNORE makes the flush idempotent: a re-sent batch (the reader
+	// guarantees a flush on unload, which can race a debounced one) skips rows whose
+	// event_id is already stored rather than erroring on the PK.
+	stmt, err := tx.PrepareContext(ctx,
+		`INSERT OR IGNORE INTO reader_events(
+		   event_id, user_id, story_id, session_id, event_type, position, value, occurred_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, e := range events {
+		if e.EventID == "" {
+			e.EventID = id.New()
+		}
+		if e.OccurredAt == 0 {
+			e.OccurredAt = float64(time.Now().Unix())
+		}
+		if _, err := stmt.ExecContext(ctx,
+			e.EventID, e.UserID, e.StoryID, nullString(e.SessionID), string(e.EventType),
+			nullInt(e.Position), nullString(e.Value), e.OccurredAt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // --- helpers ---------------------------------------------------------------
 
 func marshalJSON(v map[string]any) (any, error) {

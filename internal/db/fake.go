@@ -26,6 +26,8 @@ type FakeRepository struct {
 	itemKeys   map[string]string               // language\x00type\x00key -> item_id
 	knowledge  map[string]domain.UserKnowledge // user_id\x00item_id -> state
 	llmCalls   []domain.LLMCall                // append-only audit log
+	readerEvts []domain.ReaderEvent            // append-only reader signal log
+	readerIDs  map[string]bool                 // event_id set, for idempotent insert
 
 	// Generation-pipeline state.
 	sessions map[string]domain.Session                    // session_id -> session
@@ -49,6 +51,7 @@ func NewFake() *FakeRepository {
 		items:      make(map[string]domain.KnowledgeItem),
 		itemKeys:   make(map[string]string),
 		knowledge:  make(map[string]domain.UserKnowledge),
+		readerIDs:  make(map[string]bool),
 		sessions:   make(map[string]domain.Session),
 		stages:     make(map[string]map[string]domain.GenerationStage),
 		stories:    make(map[string]domain.Story),
@@ -264,6 +267,39 @@ func (r *FakeRepository) InsertLLMCall(_ context.Context, c domain.LLMCall) erro
 	return nil
 }
 
+// --- reader events ---------------------------------------------------------
+
+func (r *FakeRepository) InsertReaderEvents(_ context.Context, events []domain.ReaderEvent) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, e := range events {
+		if e.EventID == "" {
+			e.EventID = id.New()
+		}
+		if r.readerIDs[e.EventID] {
+			continue // idempotent on event_id, like the SQL backends
+		}
+		if e.OccurredAt == 0 {
+			e.OccurredAt = float64(time.Now().Unix())
+		}
+		r.readerIDs[e.EventID] = true
+		r.readerEvts = append(r.readerEvts, cloneReaderEvent(e))
+	}
+	return nil
+}
+
+// ReaderEvents returns a copy of the recorded reader events, for test inspection.
+// Not part of the Repository interface — only the in-memory backend exposes it.
+func (r *FakeRepository) ReaderEvents() []domain.ReaderEvent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]domain.ReaderEvent, len(r.readerEvts))
+	for i, e := range r.readerEvts {
+		out[i] = cloneReaderEvent(e)
+	}
+	return out
+}
+
 // LLMCalls returns a copy of the recorded calls, for test inspection. It is not
 // part of the Repository interface — only the in-memory backend exposes it.
 func (r *FakeRepository) LLMCalls() []domain.LLMCall {
@@ -322,6 +358,13 @@ func cloneStr(p *string) *string {
 	}
 	v := *p
 	return &v
+}
+
+func cloneReaderEvent(e domain.ReaderEvent) domain.ReaderEvent {
+	e.SessionID = cloneStr(e.SessionID)
+	e.Position = cloneInt(e.Position)
+	e.Value = cloneStr(e.Value)
+	return e
 }
 
 func cloneLLMCall(c domain.LLMCall) domain.LLMCall {

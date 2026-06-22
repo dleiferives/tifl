@@ -52,6 +52,12 @@ type Repository interface {
 	// outbound model call. Append-only; the call_id is the caller's idempotency key.
 	InsertLLMCall(ctx context.Context, c domain.LLMCall) error
 
+	// Reader events — the high-volume behavioural signal log the reader flushes in
+	// batches. InsertReaderEvents is append-only and idempotent on event_id (a
+	// retried flush does not double-insert); the caller derives user_knowledge
+	// signals from these separately.
+	InsertReaderEvents(ctx context.Context, events []domain.ReaderEvent) error
+
 	// Sessions — the study unit the generation pipeline drives. CreateSession
 	// assigns a session_id (when blank), created_at, and a pending status.
 	CreateSession(ctx context.Context, s domain.Session) (domain.Session, error)

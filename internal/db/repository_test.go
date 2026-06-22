@@ -29,6 +29,7 @@ func testRepository(t *testing.T, newRepo repoFactory) {
 	t.Run("UserKnowledge", func(t *testing.T) { testUserKnowledge(t, newRepo(t)) })
 	t.Run("TenantIsolation", func(t *testing.T) { testTenantIsolation(t, newRepo(t)) })
 	t.Run("LLMCalls", func(t *testing.T) { testLLMCalls(t, newRepo(t)) })
+	t.Run("ReaderEvents", func(t *testing.T) { testReaderEvents(t, newRepo(t)) })
 	t.Run("Pipeline", func(t *testing.T) { testPipeline(t, newRepo(t)) })
 }
 
@@ -37,6 +38,39 @@ func testRepository(t *testing.T, newRepo repoFactory) {
 // resume ordering, story persistence with tokens + glossary (idempotent
 // replace), and task creation with task_targets. The same behaviour must hold
 // for SQLite, Postgres and the in-memory fake.
+// testReaderEvents verifies the high-volume reader-signal log: a batch inserts,
+// a re-sent batch is idempotent on event_id (the reader guarantees a flush on
+// unload, which can duplicate a debounced one), and an empty batch is a no-op.
+// Backends enforce the users/stories foreign keys, so a real story is set up.
+func testReaderEvents(t *testing.T, repo db.Repository) {
+	ctx := context.Background()
+	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "grc", Name: "Greek", KeyStrategy: "lemma", Enabled: true}))
+	user, err := repo.CreateUser(ctx, domain.User{Email: "r@r.com"})
+	must(t, err)
+	story, err := repo.CreateStory(ctx, domain.Story{UserID: user.UserID, Language: "grc", Text: "λύω", Level: "beginner"})
+	must(t, err)
+
+	pos := 2
+	val := "3"
+	sess := "sess-r"
+	batch := []domain.ReaderEvent{
+		{EventID: "ev-1", UserID: user.UserID, StoryID: story.StoryID, SessionID: &sess,
+			EventType: domain.ReaderEventLookup, Position: &pos, OccurredAt: 1700.0},
+		{EventID: "ev-2", UserID: user.UserID, StoryID: story.StoryID,
+			EventType: domain.ReaderEventRate, Position: &pos, Value: &val, OccurredAt: 1701.0},
+	}
+	must(t, repo.InsertReaderEvents(ctx, batch))
+	// Re-sending the same batch must not error on the event_id primary key.
+	must(t, repo.InsertReaderEvents(ctx, batch))
+	// Empty batch is a no-op.
+	must(t, repo.InsertReaderEvents(ctx, nil))
+
+	// An event_id-less event is assigned one rather than colliding on empty PK.
+	must(t, repo.InsertReaderEvents(ctx, []domain.ReaderEvent{
+		{UserID: user.UserID, StoryID: story.StoryID, EventType: domain.ReaderEventNavigate, OccurredAt: 1702.0},
+	}))
+}
+
 func testPipeline(t *testing.T, repo db.Repository) {
 	ctx := context.Background()
 	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "grc", Name: "Greek", KeyStrategy: "lemma", Enabled: true}))

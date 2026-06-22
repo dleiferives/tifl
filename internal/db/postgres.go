@@ -405,6 +405,40 @@ func (r *PostgresRepository) InsertLLMCall(ctx context.Context, c domain.LLMCall
 	return err
 }
 
+// --- reader events ---------------------------------------------------------
+
+func (r *PostgresRepository) InsertReaderEvents(ctx context.Context, events []domain.ReaderEvent) error {
+	if len(events) == 0 {
+		return nil
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // no-op after a successful Commit
+	for _, e := range events {
+		if e.EventID == "" {
+			e.EventID = id.New()
+		}
+		if e.OccurredAt == 0 {
+			e.OccurredAt = float64(time.Now().Unix())
+		}
+		// ON CONFLICT DO NOTHING mirrors SQLite's INSERT OR IGNORE: a re-sent flush
+		// batch is idempotent on the event_id primary key. pgx maps nil pointers to
+		// SQL NULL, so the nullable columns need no wrapping.
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO reader_events(
+			   event_id, user_id, story_id, session_id, event_type, position, value, occurred_at)
+			 VALUES($1, $2, $3, $4, $5, $6, $7, $8)
+			 ON CONFLICT (event_id) DO NOTHING`,
+			e.EventID, e.UserID, e.StoryID, e.SessionID, string(e.EventType),
+			e.Position, e.Value, e.OccurredAt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
 // --- helpers ---------------------------------------------------------------
 
 // marshalJSONB encodes a metadata map for a JSONB column; nil maps become a SQL
