@@ -305,6 +305,40 @@ func (r *PostgresRepository) CreateTask(ctx context.Context, t domain.Task, targ
 	return t, nil
 }
 
+func (r *PostgresRepository) GetTask(ctx context.Context, userID, taskID string) (domain.Task, error) {
+	row := r.pool.QueryRow(ctx,
+		`SELECT task_id, session_id, user_id, task_type, language, content, response,
+		        input_method, media_path, grade, graded_by, graded_at, created_at
+		 FROM tasks WHERE task_id = $1 AND user_id = $2`, taskID, userID)
+	t, err := scanPgTask(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Task{}, ErrNotFound
+	}
+	return t, err
+}
+
+func (r *PostgresRepository) RecordTaskGrade(ctx context.Context, userID, taskID string, g domain.TaskGrade) error {
+	response, err := marshalJSONB(g.Response)
+	if err != nil {
+		return err
+	}
+	grade, err := marshalJSONB(g.Grade)
+	if err != nil {
+		return err
+	}
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE tasks SET response = $1, input_method = $2, grade = $3, graded_by = $4, graded_at = $5
+		 WHERE task_id = $6 AND user_id = $7`,
+		response, pgText(g.InputMethod), grade, pgText(g.GradedBy), g.GradedAt, taskID, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (r *PostgresRepository) ListSessionTasks(ctx context.Context, sessionID string) ([]domain.Task, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT task_id, session_id, user_id, task_type, language, content, response,

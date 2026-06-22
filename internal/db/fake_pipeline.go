@@ -194,6 +194,33 @@ func (r *FakeRepository) CreateTask(_ context.Context, t domain.Task, targets []
 	return t, nil
 }
 
+func (r *FakeRepository) GetTask(_ context.Context, userID, taskID string) (domain.Task, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t, ok := r.tasks[taskID]
+	if !ok || t.UserID != userID {
+		return domain.Task{}, ErrNotFound
+	}
+	return cloneTask(t), nil
+}
+
+func (r *FakeRepository) RecordTaskGrade(_ context.Context, userID, taskID string, g domain.TaskGrade) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t, ok := r.tasks[taskID]
+	if !ok || t.UserID != userID {
+		return ErrNotFound
+	}
+	t.Response = g.Response
+	t.InputMethod = g.InputMethod
+	t.Grade = g.Grade
+	t.GradedBy = g.GradedBy
+	gradedAt := g.GradedAt
+	t.GradedAt = &gradedAt
+	r.tasks[taskID] = cloneTask(t)
+	return nil
+}
+
 func (r *FakeRepository) ListSessionTasks(_ context.Context, sessionID string) ([]domain.Task, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

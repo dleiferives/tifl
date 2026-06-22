@@ -138,3 +138,15 @@ type Task struct {
 	GradedAt    *float64
 	CreatedAt   float64
 }
+
+// TaskGrade is the outcome of grading one submission, persisted onto the task row
+// by Repository.RecordTaskGrade. Response and InputMethod record what the learner
+// submitted; Grade/GradedBy/GradedAt record the result. See
+// context/task-system.md ("The Signal Flow: Task -> Knowledge").
+type TaskGrade struct {
+	Response    map[string]any
+	InputMethod string
+	Grade       map[string]any
+	GradedBy    string
+	GradedAt    float64
+}
