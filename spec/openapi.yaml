@@ -110,6 +110,98 @@ paths:
               schema:
                 $ref: "#/components/schemas/StoryLoad"
         "404": { description: Story not found }
+  /stories/{id}/definition:
+    get:
+      summary: Resolve a word definition for the reader popup
+      description: >
+        Walks the resolution chain for one word key: per-story glossary →
+        knowledge_items.metadata → global shared cache → live (Wiktionary, then
+        LLM). A live result is written to the shared cache so the next learner
+        gets it free. Returns 503 if a live LLM lookup is needed but no gateway is
+        configured.
+      operationId: getDefinition
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: key
+          in: query
+          required: true
+          description: canonical knowledge key to define
+          schema: { type: string }
+      responses:
+        "200":
+          description: Definition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Definition"
+        "400": { description: Missing key }
+        "404": { description: Story not found }
+        "503": { description: Live lookup needed but no gateway configured }
+  /stories/{id}/sentence:
+    post:
+      summary: Sentence breakdown for the sentence containing a position
+      description: >
+        Returns the LLM-backed breakdown of the sentence containing the given
+        token position, served from a global cache keyed by the hash of the
+        normalized sentence (so the same sentence in any story reuses it). The
+        response body is the breakdown JSON (shape owned by the prompt builder).
+      operationId: postSentenceBreakdown
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                position: { type: integer }
+              required: [position]
+      responses:
+        "200":
+          description: Sentence breakdown JSON
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "404": { description: Story not found / no sentence at position }
+        "503": { description: No gateway configured }
+  /stories/{id}/word:
+    post:
+      summary: Deep morphological/etymological breakdown of a word
+      description: >
+        Returns the LLM-backed deep breakdown of a word, served from a global
+        cache keyed by the canonical word key. The response body is the breakdown
+        JSON (shape owned by the prompt builder).
+      operationId: postWordBreakdown
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                key: { type: string }
+              required: [key]
+      responses:
+        "200":
+          description: Word breakdown JSON
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "400": { description: Missing key }
+        "404": { description: Story not found }
+        "503": { description: No gateway configured }
   /reader/events:
     post:
       summary: Ingest a flushed batch of reader events
@@ -162,8 +254,7 @@ paths:
       responses:
         "204": { description: Applied }
         "400": { description: Missing language or invalid level }
-# Planned surfaces (see context/): /auth/*, /stories/{id}/sentence,
-# /stories/{id}/word, /tasks/{id}, /skills.
+# Planned surfaces (see context/): /auth/*, /tasks/{id}, /skills.
 components:
   parameters:
     SessionID:
@@ -272,3 +363,17 @@ components:
           description: "'' clears to unseen"
           enum: ["", "1", "2", "3", "4", "5", well_known, ignored]
       required: [language, level]
+    Definition:
+      type: object
+      description: A resolved word definition for the reader popup.
+      properties:
+        key: { type: string }
+        source:
+          type: string
+          description: where the definition came from
+          enum: [glossary, metadata, wiktionary, llm]
+        gloss: { type: string }
+        grammatical_note: { type: string }
+        example: { type: string }
+        etymology: { type: string }
+      required: [key, source, gloss]

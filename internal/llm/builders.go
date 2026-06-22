@@ -196,10 +196,95 @@ func (b AssessorBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
 	}
 }
 
+// DefinitionBuilder asks for a single word's definition — the live fallback when
+// neither the story glossary, the item metadata, nor the shared cache has it. The
+// result is cached globally (source=llm). The reader popup wants a short gloss
+// first; the heavier morphology lives in the word breakdown.
+type DefinitionBuilder struct {
+	Key     string // canonical knowledge key (lemma/root/stem)
+	Surface string // optional surface form for disambiguation
+}
+
+func (DefinitionBuilder) Kind() string    { return "definition" }
+func (DefinitionBuilder) Version() string { return "definition/v1" }
+
+func (b DefinitionBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
+	var sys strings.Builder
+	fmt.Fprintf(&sys, "You define single %s words for a language learner, concisely and accurately.\n", ctx.Language)
+	sys.WriteString("Respond with a JSON object: ")
+	sys.WriteString(`{"gloss": string, "grammatical_note": string, "example": string, "etymology": string}.`)
+	sys.WriteString("\ngloss is a short definition in English; the other fields may be empty if not applicable.")
+	sys.WriteString("\nReturn JSON only — no prose, no markdown.")
+
+	var usr strings.Builder
+	fmt.Fprintf(&usr, "Define the word with canonical form: %s\n", b.Key)
+	if b.Surface != "" && b.Surface != b.Key {
+		fmt.Fprintf(&usr, "As it appears in the text: %s\n", b.Surface)
+	}
+
+	return LLMRequest{System: sys.String(), User: usr.String(), Temperature: gradeTemperature, MaxTokens: 300, ResponseFormat: "json"}
+}
+
+// SentenceBreakdownBuilder produces the richer, cached analysis of a whole
+// sentence (the reader's `s` key). The result JSON shape is owned here and stored
+// opaquely; it is cached by the hash of the normalized sentence, so the same
+// sentence in another story reuses it.
+type SentenceBreakdownBuilder struct {
+	Sentence string
+}
+
+func (SentenceBreakdownBuilder) Kind() string    { return "sentence_breakdown" }
+func (SentenceBreakdownBuilder) Version() string { return "sentence_breakdown/v1" }
+
+func (b SentenceBreakdownBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
+	var sys strings.Builder
+	fmt.Fprintf(&sys, "You break down %s sentences for a language learner.\n", ctx.Language)
+	sys.WriteString("Respond with a JSON object: ")
+	sys.WriteString(`{"translation": string, "words": [{"surface": string, "gloss": string}], "grammar": [string]}.`)
+	sys.WriteString("\ntranslation is an idiomatic English rendering; words is a word-by-word gloss; ")
+	sys.WriteString("grammar lists the notable constructions present.")
+	sys.WriteString("\nReturn JSON only — no prose, no markdown.")
+
+	var usr strings.Builder
+	fmt.Fprintf(&usr, "Sentence:\n%s\n", b.Sentence)
+
+	return LLMRequest{System: sys.String(), User: usr.String(), Temperature: gradeTemperature, MaxTokens: 700, ResponseFormat: "json"}
+}
+
+// WordBreakdownBuilder produces the deep, on-demand morphological + etymological
+// analysis of one word (from within the definition popup). Cached globally by the
+// canonical key. The JSON shape is owned here and stored opaquely.
+type WordBreakdownBuilder struct {
+	Key     string
+	Surface string
+}
+
+func (WordBreakdownBuilder) Kind() string    { return "word_breakdown" }
+func (WordBreakdownBuilder) Version() string { return "word_breakdown/v1" }
+
+func (b WordBreakdownBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
+	var sys strings.Builder
+	fmt.Fprintf(&sys, "You give a deep morphological and etymological breakdown of a single %s word.\n", ctx.Language)
+	sys.WriteString("Respond with a JSON object: ")
+	sys.WriteString(`{"root": string, "morphology": string, "etymology": string, "related": [string], "examples": [string]}.`)
+	sys.WriteString("\nFields may be empty if not applicable. Return JSON only — no prose, no markdown.")
+
+	var usr strings.Builder
+	fmt.Fprintf(&usr, "Word (canonical form): %s\n", b.Key)
+	if b.Surface != "" && b.Surface != b.Key {
+		fmt.Fprintf(&usr, "Surface form in text: %s\n", b.Surface)
+	}
+
+	return LLMRequest{System: sys.String(), User: usr.String(), Temperature: gradeTemperature, MaxTokens: 600, ResponseFormat: "json"}
+}
+
 // compile-time assertions that every builder satisfies PromptBuilder.
 var (
 	_ PromptBuilder = StoryBuilder{}
 	_ PromptBuilder = TaskBuilder{}
 	_ PromptBuilder = GraderBuilder{}
 	_ PromptBuilder = AssessorBuilder{}
+	_ PromptBuilder = DefinitionBuilder{}
+	_ PromptBuilder = SentenceBreakdownBuilder{}
+	_ PromptBuilder = WordBreakdownBuilder{}
 )

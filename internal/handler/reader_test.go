@@ -168,6 +168,82 @@ func TestPutWordKnowledgeInvalidLevel(t *testing.T) {
 	}
 }
 
+func TestGetDefinitionLiveLLM(t *testing.T) {
+	srv, repo := newServer(t, true) // broker=true wires the fake LLM client
+	storyID := seedStory(t, repo)
+
+	resp, err := http.Get(srv.URL + "/api/v1/stories/" + storyID + "/definition?key=a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	var out struct {
+		Key, Source, Gloss string
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Key != "a" || out.Source != "llm" || out.Gloss == "" {
+		t.Fatalf("unexpected definition: %+v", out)
+	}
+}
+
+func TestGetDefinitionMissingKeyIs400(t *testing.T) {
+	srv, repo := newServer(t, true)
+	storyID := seedStory(t, repo)
+	resp, err := http.Get(srv.URL + "/api/v1/stories/" + storyID + "/definition")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("want 400 without key, got %d", resp.StatusCode)
+	}
+}
+
+func TestBreakdownsWithoutLLMReturn503(t *testing.T) {
+	srv, repo := newServer(t, false) // no broker → no LLM client
+	storyID := seedStory(t, repo)
+
+	resp, err := http.Post(srv.URL+"/api/v1/stories/"+storyID+"/sentence", "application/json",
+		strings.NewReader(`{"position":0}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("want 503 without a gateway, got %d", resp.StatusCode)
+	}
+}
+
+func TestSentenceAndWordBreakdown(t *testing.T) {
+	srv, repo := newServer(t, true)
+	storyID := seedStory(t, repo)
+
+	sresp, err := http.Post(srv.URL+"/api/v1/stories/"+storyID+"/sentence", "application/json",
+		strings.NewReader(`{"position":0}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sresp.Body.Close()
+	if sresp.StatusCode != http.StatusOK {
+		t.Fatalf("sentence: want 200, got %d", sresp.StatusCode)
+	}
+
+	wresp, err := http.Post(srv.URL+"/api/v1/stories/"+storyID+"/word", "application/json",
+		strings.NewReader(`{"key":"a"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer wresp.Body.Close()
+	if wresp.StatusCode != http.StatusOK {
+		t.Fatalf("word: want 200, got %d", wresp.StatusCode)
+	}
+}
+
 // loadKnowledge GETs a story and returns its knowledge map for assertions.
 func loadKnowledge(t *testing.T, baseURL, storyID string) map[string]struct {
 	Level       string `json:"level"`

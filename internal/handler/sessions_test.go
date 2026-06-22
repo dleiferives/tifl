@@ -60,11 +60,21 @@ func newServer(t *testing.T, withBroker bool) (*httptest.Server, *db.FakeReposit
 		t.Fatal(err)
 	}
 
-	var broker *story.Broker
+	var (
+		broker *story.Broker
+		client llm.Client
+	)
 	if withBroker {
-		client := &llm.FakeClient{Func: func(_ context.Context, kind string, _ llm.LLMRequest) (llm.LLMResponse, error) {
-			if kind == "story_generator" {
+		client = &llm.FakeClient{Func: func(_ context.Context, kind string, _ llm.LLMRequest) (llm.LLMResponse, error) {
+			switch kind {
+			case "story_generator":
 				return llm.LLMResponse{Text: `{"story":"a a a","estimated_coverage":0.9,"glossary":[]}`}, nil
+			case "definition":
+				return llm.LLMResponse{Text: `{"gloss":"the letter a","grammatical_note":"","example":"","etymology":""}`}, nil
+			case "sentence_breakdown":
+				return llm.LLMResponse{Text: `{"translation":"a a b","words":[{"surface":"a","gloss":"a"}],"grammar":[]}`}, nil
+			case "word_breakdown":
+				return llm.LLMResponse{Text: `{"root":"a","morphology":"","etymology":"","related":[],"examples":[]}`}, nil
 			}
 			return llm.LLMResponse{Text: `{"question":"q","options":["x","y"],"correct_index":1}`}, nil
 		}}
@@ -82,7 +92,7 @@ func newServer(t *testing.T, withBroker bool) (*httptest.Server, *db.FakeReposit
 	}
 
 	mux := http.NewServeMux()
-	handler.New(repo, broker, "").Register(mux)
+	handler.New(repo, broker, client, "").Register(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv, repo

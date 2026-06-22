@@ -171,14 +171,93 @@ func (h *Handler) putWordKnowledge(w http.ResponseWriter, r *http.Request) {
 }
 
 // writeReaderError maps reader service failures to status codes: bad client input
-// is 400, an unknown or other-user story is 404, anything else is 500.
+// is 400, an unknown or other-user story is 404, a missing gateway is 503,
+// anything else is 500.
 func (h *Handler) writeReaderError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, reader.ErrInvalidEvent):
 		writeError(w, http.StatusBadRequest, err)
 	case errors.Is(err, db.ErrNotFound), errors.Is(err, reader.ErrStoryNotOwned):
 		writeError(w, http.StatusNotFound, errors.New("story not found"))
+	case errors.Is(err, reader.ErrLLMUnavailable):
+		writeError(w, http.StatusServiceUnavailable, err)
 	default:
 		writeError(w, http.StatusInternalServerError, err)
 	}
+}
+
+// --- definition & breakdown popups -----------------------------------------
+
+type definitionDTO struct {
+	Key             string `json:"key"`
+	Source          string `json:"source"`
+	Gloss           string `json:"gloss"`
+	GrammaticalNote string `json:"grammatical_note,omitempty"`
+	Example         string `json:"example,omitempty"`
+	Etymology       string `json:"etymology,omitempty"`
+}
+
+// getDefinition resolves a word's definition for the reader popup, walking
+// glossary → item metadata → shared cache → live (Wiktionary, then LLM). The word
+// key is the required `key` query parameter.
+func (h *Handler) getDefinition(w http.ResponseWriter, r *http.Request) {
+	storyID := r.PathValue("id")
+	key := r.URL.Query().Get("key")
+	if key == "" {
+		writeError(w, http.StatusBadRequest, errors.New("key query parameter is required"))
+		return
+	}
+	d, err := h.defs.Resolve(r.Context(), h.currentUserID(r), storyID, key)
+	if err != nil {
+		h.writeReaderError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, definitionDTO{
+		Key: d.ItemKey, Source: d.Source, Gloss: d.Gloss,
+		GrammaticalNote: d.GrammaticalNote, Example: d.Example, Etymology: d.Etymology,
+	})
+}
+
+type sentenceBreakdownRequest struct {
+	Position int `json:"position"`
+}
+
+// postSentenceBreakdown returns the (cached or freshly computed) breakdown of the
+// sentence containing the given token position.
+func (h *Handler) postSentenceBreakdown(w http.ResponseWriter, r *http.Request) {
+	var req sentenceBreakdownRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
+		return
+	}
+	b, err := h.defs.SentenceBreakdown(r.Context(), h.currentUserID(r), r.PathValue("id"), req.Position)
+	if err != nil {
+		h.writeReaderError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, b.Content)
+}
+
+type wordBreakdownRequest struct {
+	Key string `json:"key"`
+}
+
+// postWordBreakdown returns the (cached or freshly computed) deep breakdown of a
+// word, keyed by its canonical form.
+func (h *Handler) postWordBreakdown(w http.ResponseWriter, r *http.Request) {
+	var req wordBreakdownRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
+		return
+	}
+	if req.Key == "" {
+		writeError(w, http.StatusBadRequest, errors.New("key is required"))
+		return
+	}
+	b, err := h.defs.WordBreakdown(r.Context(), h.currentUserID(r), r.PathValue("id"), req.Key)
+	if err != nil {
+		h.writeReaderError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, b.Content)
 }

@@ -75,9 +75,12 @@ func main() {
 	// selector over the algorithmic predictor, and the staged story pipeline
 	// fronted by an async broker for SSE progress. The broker is nil only if no
 	// gateway is configured, in which case the generation endpoints report 503.
-	var broker *story.Broker
+	var (
+		broker *story.Broker
+		client llm.Client
+	)
 	if cfg.LLMBaseURL != "" {
-		client := llm.New(cfg.LLMBaseURL,
+		client = llm.New(cfg.LLMBaseURL,
 			llm.WithAPIKey(cfg.LLMAPIKey),
 			llm.WithModel(cfg.LLMModel),
 			llm.WithRecorder(repo),
@@ -95,7 +98,7 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	handler.New(repo, broker, cfg.FrontendDir).Register(mux)
+	handler.New(repo, broker, client, cfg.FrontendDir).Register(mux)
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
