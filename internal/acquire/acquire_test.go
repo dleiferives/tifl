@@ -137,6 +137,38 @@ func TestEngineNoRegress(t *testing.T) {
 	}
 }
 
+// TestApplyTaskGrade checks the task-side aggregation moves task_correct/total
+// and re-derives the stage — the grading half of #9.
+func TestApplyTaskGrade(t *testing.T) {
+	ctx := context.Background()
+	repo := db.NewFake()
+	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "X", KeyStrategy: "surface", Enabled: true}))
+	user, err := repo.CreateUser(ctx, domain.User{Email: "g@g.com"})
+	must(t, err)
+	hit, err := repo.UpsertKnowledgeItem(ctx, domain.KnowledgeItem{Language: "xx", ItemType: "word", Key: "hit"})
+	must(t, err)
+	miss, err := repo.UpsertKnowledgeItem(ctx, domain.KnowledgeItem{Language: "xx", ItemType: "word", Key: "miss"})
+	must(t, err)
+
+	eng := acquire.NewEngine(repo, predictor.DefaultConfig(), acquire.Config{})
+	// "hit" was demonstrated, "miss" was not.
+	must(t, eng.ApplyTaskGrade(ctx, user.UserID, []string{hit, miss}, []string{hit}))
+
+	h, err := repo.GetUserKnowledgeItem(ctx, user.UserID, hit)
+	must(t, err)
+	if h.TaskTotal != 1 || h.TaskCorrect != 1 {
+		t.Fatalf("demonstrated item should be 1/1, got %d/%d", h.TaskCorrect, h.TaskTotal)
+	}
+	m, err := repo.GetUserKnowledgeItem(ctx, user.UserID, miss)
+	must(t, err)
+	if m.TaskTotal != 1 || m.TaskCorrect != 0 {
+		t.Fatalf("undemonstrated item should be 0/1, got %d/%d", m.TaskCorrect, m.TaskTotal)
+	}
+	if h.ConfidenceScore == nil {
+		t.Fatal("grading should derive confidence_score")
+	}
+}
+
 func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {

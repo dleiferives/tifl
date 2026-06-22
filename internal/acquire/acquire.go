@@ -16,6 +16,7 @@ package acquire
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/dleiferives/tifl/internal/db"
@@ -166,6 +167,39 @@ func (e *Engine) Refresh(ctx context.Context, uk domain.UserKnowledge) (domain.U
 		return domain.UserKnowledge{}, err
 	}
 	return uk, nil
+}
+
+// ApplyTaskGrade folds a graded task's outcome into the acquisition signals: for
+// every item the task targeted it increments task_total, and task_correct when
+// the item was demonstrated, then refreshes each item's derived fields. This is
+// the task-side counterpart to the reader's signal ingest (the other half of #9's
+// aggregation). It is idempotent only at the row level, not across calls — the
+// caller invokes it once per grading, from the task-submission flow (which is not
+// yet wired; see #11). demonstrated is the subset of itemIDs the response showed
+// real understanding of (the grader's items_demonstrated, resolved to ids).
+func (e *Engine) ApplyTaskGrade(ctx context.Context, userID string, itemIDs, demonstrated []string) error {
+	correct := make(map[string]bool, len(demonstrated))
+	for _, id := range demonstrated {
+		correct[id] = true
+	}
+	for _, itemID := range itemIDs {
+		uk, err := e.repo.GetUserKnowledgeItem(ctx, userID, itemID)
+		if errors.Is(err, db.ErrNotFound) {
+			uk = domain.UserKnowledge{UserID: userID, ItemID: itemID}
+		} else if err != nil {
+			return err
+		}
+		uk.TaskTotal++
+		if correct[itemID] {
+			uk.TaskCorrect++
+		}
+		now := e.now()
+		uk.LastSeen = &now
+		if _, err := e.Refresh(ctx, uk); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // stageOrder ranks stages so the no-regress policy can compare them.
