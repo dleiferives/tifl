@@ -60,6 +60,10 @@ func newServer(t *testing.T, withBroker bool) (*httptest.Server, *db.FakeReposit
 		t.Fatal(err)
 	}
 
+	langs := lang.NewRegistry()
+	langs.Register(fakeLang{})
+	taskRegistry := tasks.DefaultRegistry()
+
 	var (
 		broker *story.Broker
 		client llm.Client
@@ -78,21 +82,19 @@ func newServer(t *testing.T, withBroker bool) (*httptest.Server, *db.FakeReposit
 			}
 			return llm.LLMResponse{Text: `{"question":"q","options":["x","y"],"correct_index":1}`}, nil
 		}}
-		langs := lang.NewRegistry()
-		langs.Register(fakeLang{})
 		bg := domain.KnowledgeItem{ItemID: "bg", Key: "a"}
 		p := story.New(story.Deps{
 			Repo:     repo,
 			Selector: fixedSelector{domain.SelectedItems{Background: []domain.KnowledgeItem{bg}}},
 			Client:   client,
 			Langs:    langs,
-			Tasks:    tasks.DefaultRegistry(),
+			Tasks:    taskRegistry,
 		}, story.Config{})
 		broker = story.NewBroker(p)
 	}
 
 	mux := http.NewServeMux()
-	handler.New(repo, broker, client, "").Register(mux)
+	handler.New(repo, broker, client, taskRegistry, langs, "").Register(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv, repo

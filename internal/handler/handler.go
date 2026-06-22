@@ -7,10 +7,12 @@ import (
 
 	"github.com/dleiferives/tifl/internal/acquire"
 	"github.com/dleiferives/tifl/internal/db"
+	"github.com/dleiferives/tifl/internal/lang"
 	"github.com/dleiferives/tifl/internal/llm"
 	"github.com/dleiferives/tifl/internal/predictor"
 	"github.com/dleiferives/tifl/internal/reader"
 	"github.com/dleiferives/tifl/internal/story"
+	"github.com/dleiferives/tifl/internal/tasks"
 )
 
 // Handler holds the dependencies the HTTP layer needs and registers routes onto
@@ -20,20 +22,38 @@ type Handler struct {
 	broker      *story.Broker             // nil when generation is not configured (no LLM gateway)
 	reader      *reader.Service           // reader signal ingest + rating writes (#9/#10)
 	defs        *reader.DefinitionService // definition resolution + cached breakdowns (#10)
+	taskTypes   *tasks.Registry           // task-type lookup for grading + presentation
+	grader      *tasks.Grader             // routes rule vs LLM grading
+	acquire     *acquire.Engine           // folds grades into user_knowledge signals
+	llmEnabled  bool                      // false when no LLM client: LLM-graded tasks return 503
 	frontendDir string
 }
 
 // New builds a Handler over the given repository, generation broker (may be nil),
-// LLM client (may be nil — live definition/breakdown paths then return 503), and
-// compiled-client directory. The reader and definition services are built from
-// the repository with default tuning.
-func New(repo db.Repository, broker *story.Broker, client llm.Client, frontendDir string) *Handler {
+// LLM client (may be nil — live definition/breakdown and LLM-graded task paths
+// then return 503), task-type registry, language registry (for the per-language
+// answer normalizer), and compiled-client directory. The reader, definition, and
+// acquisition services are built from the repository with default tuning; the
+// acquisition engine is shared between the reader's signal ingest and task
+// grading.
+func New(repo db.Repository, broker *story.Broker, client llm.Client, taskTypes *tasks.Registry, langs *lang.Registry, frontendDir string) *Handler {
 	engine := acquire.NewEngine(repo, predictor.DefaultConfig(), acquire.Config{})
+	grader := tasks.NewGrader(client, tasks.WithNormalizers(func(code string) tasks.Normalizer {
+		l, ok := langs.Get(code)
+		if !ok {
+			return nil
+		}
+		return l.Normalize
+	}))
 	return &Handler{
 		repo:        repo,
 		broker:      broker,
 		reader:      reader.NewService(repo, engine),
 		defs:        reader.NewDefinitionService(repo, client, nil),
+		taskTypes:   taskTypes,
+		grader:      grader,
+		acquire:     engine,
+		llmEnabled:  client != nil,
 		frontendDir: frontendDir,
 	}
 }
@@ -52,6 +72,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/sessions/generate", h.generateSession)
 	mux.HandleFunc("GET /api/v1/sessions/{id}/events", h.sessionEvents)
 	mux.HandleFunc("POST /api/v1/sessions/{id}/retry", h.retrySession)
+	mux.HandleFunc("GET /api/v1/sessions/{id}/tasks", h.getSessionTasks)
+	mux.HandleFunc("GET /api/v1/tasks/{id}", h.getTask)
+	mux.HandleFunc("POST /api/v1/tasks/{id}/submit", h.submitTask)
 	h.registerStatic(mux)
 }
 

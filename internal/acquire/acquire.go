@@ -174,8 +174,9 @@ func (e *Engine) Refresh(ctx context.Context, uk domain.UserKnowledge) (domain.U
 // the item was demonstrated, then refreshes each item's derived fields. This is
 // the task-side counterpart to the reader's signal ingest (the other half of #9's
 // aggregation). It is idempotent only at the row level, not across calls — the
-// caller invokes it once per grading, from the task-submission flow (which is not
-// yet wired; see #11). demonstrated is the subset of itemIDs the response showed
+// caller invokes it once per grading, from the task-submission flow
+// (POST /tasks/{id}/submit), which rejects re-submission so a grade is applied
+// once. demonstrated is the subset of itemIDs the response showed
 // real understanding of (the grader's items_demonstrated, resolved to ids).
 func (e *Engine) ApplyTaskGrade(ctx context.Context, userID string, itemIDs, demonstrated []string) error {
 	correct := make(map[string]bool, len(demonstrated))
