@@ -110,9 +110,60 @@ paths:
               schema:
                 $ref: "#/components/schemas/StoryLoad"
         "404": { description: Story not found }
-# Planned surfaces (see context/): /auth/*, /reader/events,
-# /word_knowledge/{token}, /stories/{id}/sentence, /stories/{id}/word,
-# /tasks/{id}, /skills.
+  /reader/events:
+    post:
+      summary: Ingest a flushed batch of reader events
+      description: >
+        Appends a batch of behavioural events to the durable log (idempotent on
+        event_id) and derives knowledge signals from the newly-stored ones —
+        lookup_count, the per-item level (from rate events), and story exposure /
+        context variety (counted once per first read). The caller's identity is
+        authoritative; the payload carries no user_id.
+      operationId: postReaderEvents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReaderEventsRequest"
+      responses:
+        "202":
+          description: Accepted; reports how many events were newly stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ingested: { type: integer }
+                required: [ingested]
+        "400": { description: Malformed body or event }
+        "404": { description: Referenced story not found / not the caller's }
+  /word_knowledge/{token}:
+    put:
+      summary: Optimistic knowledge-rating write for one word key
+      description: >
+        Sets the learner's level for the word whose canonical key is {token}.
+        Fire-and-forget from the client (the reader updates local state instantly);
+        the response is a bare 204. Idempotent — safe to race a later rate event in
+        a flushed batch.
+      operationId: putWordKnowledge
+      parameters:
+        - name: token
+          in: path
+          required: true
+          description: canonical knowledge key (lemma/root/stem per language)
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WordKnowledgeRequest"
+      responses:
+        "204": { description: Applied }
+        "400": { description: Missing language or invalid level }
+# Planned surfaces (see context/): /auth/*, /stories/{id}/sentence,
+# /stories/{id}/word, /tasks/{id}, /skills.
 components:
   parameters:
     SessionID:
@@ -191,3 +242,33 @@ components:
           description: "canonical key → knowledge state; unseen items are absent"
           additionalProperties: { $ref: "#/components/schemas/ReaderKnowledge" }
       required: [story_id, language, tokens, knowledge]
+    ReaderEvent:
+      type: object
+      description: One logged reader interaction.
+      properties:
+        event_id: { type: string, description: "client idempotency key; generated if omitted" }
+        story_id: { type: string }
+        session_id: { type: string }
+        event_type:
+          type: string
+          enum: [lookup, rate, navigate, sentence_break]
+        position: { type: integer, description: "story token position the event is about" }
+        value: { type: string, description: 'rate only: "1".."5" | "w" | "i"' }
+        occurred_at: { type: number, description: "Unix seconds (client clock)" }
+      required: [story_id, event_type]
+    ReaderEventsRequest:
+      type: object
+      properties:
+        events:
+          type: array
+          items: { $ref: "#/components/schemas/ReaderEvent" }
+      required: [events]
+    WordKnowledgeRequest:
+      type: object
+      properties:
+        language: { type: string }
+        level:
+          type: string
+          description: "'' clears to unseen"
+          enum: ["", "1", "2", "3", "4", "5", well_known, ignored]
+      required: [language, level]

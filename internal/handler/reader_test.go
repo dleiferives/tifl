@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/dleiferives/tifl/internal/domain"
@@ -93,6 +94,101 @@ func TestGetStoryReturnsTokensAndKnowledge(t *testing.T) {
 	if _, ok := out.Knowledge["b"]; ok {
 		t.Fatal("unseen word 'b' should be absent from the knowledge map")
 	}
+}
+
+func TestPostReaderEventsDerivesSignals(t *testing.T) {
+	srv, repo := newServer(t, false)
+	storyID := seedStory(t, repo)
+
+	body := `{"events":[
+		{"event_id":"e1","story_id":"` + storyID + `","event_type":"lookup","position":0},
+		{"event_id":"e2","story_id":"` + storyID + `","event_type":"rate","position":2,"value":"4"}
+	]}`
+	resp, err := http.Post(srv.URL+"/api/v1/reader/events", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("want 202, got %d", resp.StatusCode)
+	}
+	var out struct {
+		Ingested int `json:"ingested"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Ingested != 2 {
+		t.Fatalf("want 2 ingested, got %d", out.Ingested)
+	}
+
+	// The GET load should now reflect the lookup on "a" and the level on "b".
+	k := loadKnowledge(t, srv.URL, storyID)
+	if k["a"].LookupCount != 1 {
+		t.Fatalf("'a' lookup_count = %d, want 1", k["a"].LookupCount)
+	}
+	if k["b"].Level != "4" {
+		t.Fatalf("'b' level = %q, want 4", k["b"].Level)
+	}
+}
+
+func TestPutWordKnowledge(t *testing.T) {
+	srv, repo := newServer(t, false)
+	storyID := seedStory(t, repo)
+
+	req, err := http.NewRequest(http.MethodPut, srv.URL+"/api/v1/word_knowledge/a",
+		strings.NewReader(`{"language":"xx","level":"well_known"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("want 204, got %d", resp.StatusCode)
+	}
+	if k := loadKnowledge(t, srv.URL, storyID); k["a"].Level != "well_known" {
+		t.Fatalf("'a' level = %q, want well_known", k["a"].Level)
+	}
+}
+
+func TestPutWordKnowledgeInvalidLevel(t *testing.T) {
+	srv, _ := newServer(t, false)
+	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/api/v1/word_knowledge/a",
+		strings.NewReader(`{"language":"xx","level":"9"}`))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("want 400 for invalid level, got %d", resp.StatusCode)
+	}
+}
+
+// loadKnowledge GETs a story and returns its knowledge map for assertions.
+func loadKnowledge(t *testing.T, baseURL, storyID string) map[string]struct {
+	Level       string `json:"level"`
+	LookupCount int    `json:"lookup_count"`
+} {
+	t.Helper()
+	resp, err := http.Get(baseURL + "/api/v1/stories/" + storyID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Knowledge map[string]struct {
+			Level       string `json:"level"`
+			LookupCount int    `json:"lookup_count"`
+		} `json:"knowledge"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	return out.Knowledge
 }
 
 func TestGetStoryUnknownReturns404(t *testing.T) {
