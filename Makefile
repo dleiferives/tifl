@@ -1,4 +1,4 @@
-.PHONY: help build server gateway run run-gateway web web-install web-api-types web-typecheck test test-live vet fmt tidy clean
+.PHONY: help build server gateway run run-gateway seed-demo web web-install web-api-types web-typecheck test test-live vet fmt tidy clean
 
 # Live gateway test (opt-in): a real OpenCode server to verify the gateway
 # end-to-end. Override the model with TIFL_LIVE_MODEL.
@@ -22,6 +22,9 @@ run: ## run the API server (http://127.0.0.1:8000)
 
 run-gateway: ## run the LLM gateway (http://127.0.0.1:8001)
 	go run ./cmd/gateway
+
+seed-demo: ## seed deterministic local demo data for UI/API development
+	go run ./cmd/devseed
 
 ## --- Web: SolidJS client ---
 

@@ -19,6 +19,24 @@ npm run api:types  # regenerate src/api-types.ts from ../spec/openapi.yaml
 `npm run typecheck` first runs `npm run api:types:check`, so CI fails when
 `spec/openapi.yaml` and the checked-in generated types drift apart.
 
+## Demo Data
+
+For reader, task, session-list, and generation-status UI work without a live LLM
+run, seed the local SQLite database from the repo root:
+
+```bash
+make seed-demo
+make run
+```
+
+The seed reads `tifl.yaml` like the server does and defaults to
+`server.db_path` (`data/tifl.db` when unset). It creates deterministic local-mode
+demo rows for user `local`: a profile defaulting to Modern Greek, one ready
+Modern Greek session, its story and tokens, glossary/definition data, reader
+knowledge, completed generation stages, and three tasks (`comprehension_mc`,
+`fill_blank`, `production`) with one already graded. Re-running the command
+refreshes the same fixture IDs instead of adding duplicates.
+
 ## Layout (target — see context/frontend-architecture.md)
 
 ```
