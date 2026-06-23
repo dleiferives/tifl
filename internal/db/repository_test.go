@@ -35,7 +35,6 @@ func testRepository(t *testing.T, newRepo repoFactory) {
 	t.Run("ReaderEvents", func(t *testing.T) { testReaderEvents(t, newRepo(t)) })
 	t.Run("DefinitionsBreakdowns", func(t *testing.T) { testDefinitionsBreakdowns(t, newRepo(t)) })
 	t.Run("Pipeline", func(t *testing.T) { testPipeline(t, newRepo(t)) })
-	t.Run("Skills", func(t *testing.T) { testSkills(t, newRepo(t)) })
 }
 
 func testUserProfile(t *testing.T, repo db.Repository) {
@@ -690,55 +689,6 @@ func testUserKnowledge(t *testing.T, repo db.Repository) {
 	}
 }
 
-func testSkills(t *testing.T, repo db.Repository) {
-	ctx := context.Background()
-	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "grc", Name: "Ancient Greek", KeyStrategy: "lemma", Enabled: true}))
-	alice, err := repo.CreateUser(ctx, domain.User{Email: "skill-alice@example.com"})
-	must(t, err)
-	bob, err := repo.CreateUser(ctx, domain.User{Email: "skill-bob@example.com"})
-	must(t, err)
-
-	must(t, repo.UpsertSkill(ctx, domain.Skill{
-		SkillID: "case-nominative", Language: "grc", Name: "Nominative Case",
-		Description: "Recognize subjects and predicate nouns.", Category: "Cases",
-		TierCount: 3, XPPerTier: 100, SortOrder: 20,
-	}))
-	must(t, repo.UpsertSkill(ctx, domain.Skill{
-		SkillID: "verb-present", Language: "grc", Name: "Present Tense",
-		Description: "Read simple present-tense verbs.", Category: "Verb Forms",
-		TierCount: 3, XPPerTier: 120, SortOrder: 10,
-	}))
-	verifiedAt := 1800.0
-	must(t, repo.UpsertUserSkillXP(ctx, domain.UserSkillXP{
-		UserID: alice.UserID, SkillID: "verb-present", XP: 145, Tier: 1,
-		PendingVerify: true, LastVerifiedAt: &verifiedAt, UpdatedAt: 1900,
-	}))
-	must(t, repo.UpsertUserSkillXP(ctx, domain.UserSkillXP{
-		UserID: bob.UserID, SkillID: "verb-present", XP: 300, Tier: 2, UpdatedAt: 2000,
-	}))
-
-	rows, err := repo.ListSkillProgress(ctx, alice.UserID, "grc")
-	must(t, err)
-	if len(rows) != 2 {
-		t.Fatalf("want all skills including untouched, got %d", len(rows))
-	}
-	if rows[0].SkillID != "case-nominative" || rows[0].XP != 0 || rows[0].Tier != 0 {
-		t.Fatalf("untouched skill should be visible first by category/order: %+v", rows[0])
-	}
-	if rows[1].SkillID != "verb-present" || rows[1].XP != 145 || rows[1].Tier != 1 || !rows[1].PendingVerify {
-		t.Fatalf("progress row mismatch: %+v", rows[1])
-	}
-	if rows[1].LastVerifiedAt == nil || *rows[1].LastVerifiedAt != verifiedAt || rows[1].UpdatedAt == nil || *rows[1].UpdatedAt != 1900 {
-		t.Fatalf("skill timestamps did not round-trip: %+v", rows[1])
-	}
-
-	bobRows, err := repo.ListSkillProgress(ctx, bob.UserID, "grc")
-	must(t, err)
-	if len(bobRows) != 2 || bobRows[1].XP != 300 || bobRows[1].Tier != 2 {
-		t.Fatalf("tenant progress leaked or missing: %+v", bobRows)
-	}
-}
-
 // testTenantIsolation seeds two users with knowledge of the same item and
 // confirms a per-user read never leaks the other tenant's rows — the core
 // multi-tenancy guarantee (every query carries WHERE user_id).
@@ -865,6 +815,34 @@ func testSkills(t *testing.T, repo db.Repository) {
 	must(t, err)
 	if len(missingXP) != 0 {
 		t.Fatalf("missing skill XP rows should stay absent: %+v", missingXP)
+	}
+
+	must(t, repo.UpsertSkill(ctx, domain.Skill{
+		SkillID: "el-verb-present", Language: "el", Name: "Present Tense",
+		Description: "Read simple present-tense verbs.", Category: "Verb Forms",
+		TierCount: 3, XPPerTier: 120, SortOrder: &order1,
+	}))
+	progress, err := repo.ListSkillProgress(ctx, user.UserID, "el")
+	must(t, err)
+	if len(progress) != 3 {
+		t.Fatalf("want all skills including untouched, got %+v", progress)
+	}
+	if progress[0].SkillID != "el-case-accusative" || progress[0].XP != 90 || progress[0].Tier != 1 || !progress[0].PendingVerify {
+		t.Fatalf("first progress row mismatch: %+v", progress[0])
+	}
+	if progress[0].LastVerifiedAt == nil || *progress[0].LastVerifiedAt != lastVerified || progress[0].UpdatedAt == nil || *progress[0].UpdatedAt != 1800 {
+		t.Fatalf("skill progress timestamps did not round-trip: %+v", progress[0])
+	}
+	if progress[1].SkillID != "el-case-nominative" || progress[1].XP != 25 || progress[1].Tier != 0 {
+		t.Fatalf("second progress row mismatch: %+v", progress[1])
+	}
+	if progress[2].SkillID != "el-verb-present" || progress[2].XP != 0 || progress[2].Tier != 0 || progress[2].UpdatedAt != nil {
+		t.Fatalf("untouched skill should be visible with zero progress: %+v", progress[2])
+	}
+	otherProgress, err := repo.ListSkillProgress(ctx, otherUser.UserID, "el")
+	must(t, err)
+	if len(otherProgress) != 3 || otherProgress[0].XP != 999 || otherProgress[1].XP != 0 {
+		t.Fatalf("tenant progress leaked or missing: %+v", otherProgress)
 	}
 
 	sess, err := repo.CreateSession(ctx, domain.Session{UserID: user.UserID, Language: "el", Level: "beginner"})

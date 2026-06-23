@@ -77,13 +77,6 @@ type Repository interface {
 	// "unseen" by absence.
 	LoadReaderKnowledge(ctx context.Context, userID, language string) ([]domain.ReaderKnowledge, error)
 
-	// Skills — the read-only competency map plus per-user progress rows. Missing
-	// user progress rows are treated as tier 0 / 0 XP by ListSkillProgress so the
-	// client can show untouched skills.
-	UpsertSkill(ctx context.Context, skill domain.Skill) error
-	UpsertUserSkillXP(ctx context.Context, xp domain.UserSkillXP) error
-	ListSkillProgress(ctx context.Context, userID, language string) ([]domain.SkillProgress, error)
-
 	// LLM calls — the audit/cost log written by the gateway client after every
 	// outbound model call. Append-only; the call_id is the caller's idempotency key.
 	InsertLLMCall(ctx context.Context, c domain.LLMCall) error
@@ -147,6 +140,7 @@ type Repository interface {
 	GetUserSkillXP(ctx context.Context, userID, skillID string) (domain.UserSkillXP, error)
 	ListUserSkillXP(ctx context.Context, userID string, skillIDs []string) ([]domain.UserSkillXP, error)
 	UpsertUserSkillXP(ctx context.Context, xp domain.UserSkillXP) error
+	ListSkillProgress(ctx context.Context, userID, language string) ([]domain.SkillProgress, error)
 	InsertTaskSkillXPLog(ctx context.Context, row domain.TaskSkillXPLog) error
 	ListTaskSkillXPLog(ctx context.Context, userID string, limit int) ([]domain.TaskSkillXPLog, error)
 

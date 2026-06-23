@@ -27,8 +27,6 @@ type FakeRepository struct {
 	items      map[string]domain.KnowledgeItem // item_id -> item
 	itemKeys   map[string]string               // language\x00type\x00key -> item_id
 	knowledge  map[string]domain.UserKnowledge // user_id\x00item_id -> state
-	skills     map[string]domain.Skill         // skill_id -> skill
-	skillXP    map[string]domain.UserSkillXP   // user_id\x00skill_id -> progress
 	llmCalls   []domain.LLMCall                // append-only audit log
 	readerEvts []domain.ReaderEvent            // append-only reader signal log
 	readerIDs  map[string]bool                 // event_id set, for idempotent insert
@@ -62,8 +60,6 @@ func NewFake() *FakeRepository {
 		items:      make(map[string]domain.KnowledgeItem),
 		itemKeys:   make(map[string]string),
 		knowledge:  make(map[string]domain.UserKnowledge),
-		skills:     make(map[string]domain.Skill),
-		skillXP:    make(map[string]domain.UserSkillXP),
 		readerIDs:  make(map[string]bool),
 		defs:       make(map[string]domain.Definition),
 		breakdowns: make(map[string]domain.Breakdown),
@@ -429,65 +425,6 @@ func (r *FakeRepository) LoadReaderKnowledge(_ context.Context, userID, language
 		out = append(out, domain.ReaderKnowledge{ItemKey: it.Key, Level: uk.Level, LookupCount: uk.LookupCount})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ItemKey < out[j].ItemKey })
-	return out, nil
-}
-
-// --- skills ----------------------------------------------------------------
-
-func (r *FakeRepository) UpsertSkill(_ context.Context, skill domain.Skill) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if _, ok := r.languages[skill.Language]; !ok {
-		return errFakeFK("skills.language")
-	}
-	r.skills[skill.SkillID] = skill
-	return nil
-}
-
-func (r *FakeRepository) UpsertUserSkillXP(_ context.Context, xp domain.UserSkillXP) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if _, ok := r.users[xp.UserID]; !ok {
-		return errFakeFK("user_skill_xp.user_id")
-	}
-	if _, ok := r.skills[xp.SkillID]; !ok {
-		return errFakeFK("user_skill_xp.skill_id")
-	}
-	if xp.UpdatedAt == 0 {
-		xp.UpdatedAt = float64(time.Now().Unix())
-	}
-	xp.LastVerifiedAt = cloneFloat(xp.LastVerifiedAt)
-	r.skillXP[xp.UserID+"\x00"+xp.SkillID] = xp
-	return nil
-}
-
-func (r *FakeRepository) ListSkillProgress(_ context.Context, userID, language string) ([]domain.SkillProgress, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	var out []domain.SkillProgress
-	for _, skill := range r.skills {
-		if skill.Language != language {
-			continue
-		}
-		progress := domain.SkillProgress{Skill: skill}
-		if xp, ok := r.skillXP[userID+"\x00"+skill.SkillID]; ok {
-			progress.XP = xp.XP
-			progress.Tier = xp.Tier
-			progress.PendingVerify = xp.PendingVerify
-			progress.LastVerifiedAt = cloneFloat(xp.LastVerifiedAt)
-			progress.UpdatedAt = cloneFloat(&xp.UpdatedAt)
-		}
-		out = append(out, progress)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Category != out[j].Category {
-			return out[i].Category < out[j].Category
-		}
-		if out[i].SortOrder != out[j].SortOrder {
-			return out[i].SortOrder < out[j].SortOrder
-		}
-		return out[i].Name < out[j].Name
-	})
 	return out, nil
 }
 

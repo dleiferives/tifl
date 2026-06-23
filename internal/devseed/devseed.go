@@ -436,9 +436,9 @@ func upsertSkills(ctx context.Context, tx *sql.Tx, skills []domain.Skill) error 
 			   category = excluded.category,
 			   tier_count = excluded.tier_count,
 			   xp_per_tier = excluded.xp_per_tier,
-			   sort_order = excluded.sort_order`,
+		   sort_order = excluded.sort_order`,
 			skill.SkillID, skill.Language, skill.Name, skill.Description, skill.Category,
-			skill.TierCount, skill.XPPerTier, skill.SortOrder); err != nil {
+			skill.TierCount, skill.XPPerTier, nullableInt(skill.SortOrder)); err != nil {
 			return fmt.Errorf("seed skill %q: %w", skill.SkillID, err)
 		}
 	}
@@ -640,6 +640,13 @@ func nullableJSON(v map[string]any) any {
 		return nil
 	}
 	return jsonString(v)
+}
+
+func nullableInt(v *int) any {
+	if v == nil {
+		return nil
+	}
+	return *v
 }
 
 func boolInt(v bool) int {
