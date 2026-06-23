@@ -74,7 +74,7 @@ func TestLearningSignalFromGrade(t *testing.T) {
 			if !reflect.DeepEqual(got.TargetItemIDs, tc.wantTargets) {
 				t.Fatalf("targets = %v, want %v", got.TargetItemIDs, tc.wantTargets)
 			}
-			if !reflect.DeepEqual(got.DemonstratedItemIDs, tc.wantDemo) {
+			if !equalStringSlice(got.DemonstratedItemIDs, tc.wantDemo) {
 				t.Fatalf("demonstrated = %v, want %v", got.DemonstratedItemIDs, tc.wantDemo)
 			}
 			if got.OverallCorrect != tc.wantCorrect || got.Score != tc.wantScore {
@@ -88,4 +88,11 @@ func TestLearningSignalFromGrade(t *testing.T) {
 			}
 		})
 	}
+}
+
+func equalStringSlice(a, b []string) bool {
+	if len(a) == 0 && len(b) == 0 {
+		return true
+	}
+	return reflect.DeepEqual(a, b)
 }
