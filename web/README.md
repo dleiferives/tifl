@@ -31,11 +31,11 @@ make run
 
 The seed reads `tifl.yaml` like the server does and defaults to
 `server.db_path` (`data/tifl.db` when unset). It creates deterministic local-mode
-demo rows for user `local`: one ready Modern Greek session, its story and tokens,
-glossary/definition data, reader knowledge, completed generation stages, and
-three tasks (`comprehension_mc`, `fill_blank`, `production`) with one already
-graded. Re-running the command refreshes the same fixture IDs instead of adding
-duplicates.
+demo rows for user `local`: a profile defaulting to Modern Greek, one ready
+Modern Greek session, its story and tokens, glossary/definition data, reader
+knowledge, completed generation stages, and three tasks (`comprehension_mc`,
+`fill_blank`, `production`) with one already graded. Re-running the command
+refreshes the same fixture IDs instead of adding duplicates.
 
 ## Layout (target — see context/frontend-architecture.md)
 

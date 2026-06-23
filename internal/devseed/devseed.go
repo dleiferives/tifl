@@ -197,11 +197,16 @@ func seedTx(ctx context.Context, tx *sql.Tx) error {
 
 func upsertLocalUser(ctx context.Context, tx *sql.Tx) error {
 	settings := map[string]any{
-		"active_language": "el",
-		"level":           "beginner",
-		"ui_language":     "en",
-		"theme":           "default",
-		"demo_seed":       true,
+		"profile": map[string]any{
+			"active_language": "el",
+			"level":           "beginner",
+			"ui_language":     "en",
+			"theme":           "default",
+			"preferences": map[string]any{
+				"demo_seed": true,
+				"density":   "comfortable",
+			},
+		},
 	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO users(user_id, email, password_hash, created_at, last_login, settings)
@@ -209,7 +214,7 @@ func upsertLocalUser(ctx context.Context, tx *sql.Tx) error {
 		 ON CONFLICT(user_id) DO UPDATE SET
 		   email = excluded.email,
 		   password_hash = excluded.password_hash,
-		   settings = COALESCE(users.settings, excluded.settings)`,
+		   settings = excluded.settings`,
 		domain.LocalUserID, "local@tifl.local", "", demoCreatedAt, nil, jsonString(settings)); err != nil {
 		return fmt.Errorf("seed local user: %w", err)
 	}

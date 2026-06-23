@@ -39,6 +39,15 @@ func TestSeedSQLiteCreatesDemoDataAndIsIdempotent(t *testing.T) {
 	if user.Email != "local@tifl.local" {
 		t.Fatalf("local user email = %q", user.Email)
 	}
+	profile, err := repo.GetUserProfile(ctx, domain.LocalUserID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.ActiveLanguage != "el" || profile.Level != "beginner" ||
+		profile.UILanguage != "en" || profile.Theme != "default" ||
+		profile.Preferences["demo_seed"] != true {
+		t.Fatalf("profile mismatch: %+v", profile)
+	}
 
 	sessions, err := repo.ListSessions(ctx, domain.LocalUserID, domain.ListSessionsOptions{Limit: 10})
 	if err != nil {
