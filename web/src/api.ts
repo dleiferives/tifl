@@ -37,8 +37,16 @@ export function configureAPIBaseURL(url: string) {
   apiBaseURL = trimTrailingSlash(url);
 }
 
+export function getAPIBaseURL(): string {
+  return apiBaseURL;
+}
+
 export function setAccessToken(token: string | null) {
   accessToken = token;
+}
+
+export function getAccessToken(): string | null {
+  return accessToken;
 }
 
 export class APIError extends Error {
@@ -219,7 +227,7 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   const text = await response.text();
-  const body = text ? JSON.parse(text) as unknown : null;
+  const body = parseJSON(text);
   if (!response.ok) {
     throw new APIError(response, isErrorBody(body) ? body : null);
   }
@@ -248,6 +256,17 @@ function defaultAPIBaseURL(): string {
 
 function trimTrailingSlash(url: string): string {
   return url.replace(/\/+$/, "");
+}
+
+function parseJSON(text: string): unknown {
+  if (!text) {
+    return null;
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
 }
 
 function isErrorBody(body: unknown): body is APIErrorBody {

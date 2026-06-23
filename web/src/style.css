@@ -1,0 +1,144 @@
+:root {
+  color: #1f2933;
+  background: #f6f7f9;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  line-height: 1.5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+a {
+  color: #2457a7;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  min-height: 3.5rem;
+  padding: 0.75rem max(1rem, calc((100% - 64rem) / 2));
+  border-bottom: 1px solid #d9dee5;
+  background: #fff;
+}
+
+.brand {
+  color: inherit;
+  font-size: 1.15rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.app-nav {
+  display: flex;
+  gap: 1rem;
+}
+
+.app-nav a {
+  color: #4a5562;
+  text-decoration: none;
+}
+
+.app-nav a[aria-current="page"] {
+  color: #111827;
+  font-weight: 650;
+}
+
+.auth-link {
+  margin-left: auto;
+}
+
+.app-main {
+  width: min(64rem, 100%);
+  min-height: calc(100vh - 3.5rem);
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+.app-main section {
+  padding: 1.5rem;
+  border: 1px solid #e0e4e9;
+  border-radius: 0.5rem;
+  background: #fff;
+}
+
+.app-main h1 {
+  margin-top: 0;
+}
+
+.button-link {
+  display: inline-block;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.35rem;
+  background: #2457a7;
+  color: #fff;
+  text-decoration: none;
+}
+
+.status-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.status-list div {
+  display: grid;
+  grid-template-columns: 10rem 1fr;
+}
+
+.status-list dt {
+  font-weight: 650;
+}
+
+.status-list dd {
+  margin: 0;
+}
+
+.toast {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  max-width: min(28rem, calc(100vw - 2rem));
+  padding: 0.75rem 1rem;
+  border: 1px solid #c9d1dc;
+  border-radius: 0.4rem;
+  background: #fff;
+  box-shadow: 0 0.5rem 1.5rem rgb(31 41 51 / 12%);
+}
+
+.toast[data-kind="error"] {
+  border-color: #d14343;
+}
+
+.toast button {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+@media (max-width: 36rem) {
+  .app-header {
+    flex-wrap: wrap;
+    gap: 0.75rem 1rem;
+  }
+
+  .app-nav {
+    order: 3;
+    width: 100%;
+  }
+}
