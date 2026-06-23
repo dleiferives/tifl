@@ -8,6 +8,7 @@ import (
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/predictor"
+	"github.com/dleiferives/tifl/internal/tasks"
 )
 
 func ptr[T any](v T) *T { return &v }
@@ -166,6 +167,41 @@ func TestApplyTaskGrade(t *testing.T) {
 	}
 	if h.ConfidenceScore == nil {
 		t.Fatal("grading should derive confidence_score")
+	}
+}
+
+func TestApplyTaskSignalPartialCredit(t *testing.T) {
+	ctx := context.Background()
+	repo := db.NewFake()
+	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "X", KeyStrategy: "surface", Enabled: true}))
+	user, err := repo.CreateUser(ctx, domain.User{Email: "p@g.com"})
+	must(t, err)
+	word, err := repo.UpsertKnowledgeItem(ctx, domain.KnowledgeItem{Language: "xx", ItemType: "word", Key: "word"})
+	must(t, err)
+	construction, err := repo.UpsertKnowledgeItem(ctx, domain.KnowledgeItem{Language: "xx", ItemType: "construction", Key: "concept"})
+	must(t, err)
+
+	eng := acquire.NewEngine(repo, predictor.DefaultConfig(), acquire.Config{})
+	signal := tasks.LearningSignalFromGrade(tasks.Grade{
+		Correct:           false,
+		Score:             0.6,
+		ItemsDemonstrated: []string{construction},
+		Raw: map[string]any{
+			"demonstrated_concept": true,
+			"surface_correct":      false,
+		},
+	}, []string{word, construction})
+	must(t, eng.ApplyTaskSignal(ctx, user.UserID, signal))
+
+	w, err := repo.GetUserKnowledgeItem(ctx, user.UserID, word)
+	must(t, err)
+	if w.TaskTotal != 1 || w.TaskCorrect != 0 {
+		t.Fatalf("surface word should be 0/1, got %d/%d", w.TaskCorrect, w.TaskTotal)
+	}
+	c, err := repo.GetUserKnowledgeItem(ctx, user.UserID, construction)
+	must(t, err)
+	if c.TaskTotal != 1 || c.TaskCorrect != 1 {
+		t.Fatalf("construction should be 1/1, got %d/%d", c.TaskCorrect, c.TaskTotal)
 	}
 }
 

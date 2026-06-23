@@ -22,6 +22,7 @@ import (
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/predictor"
+	"github.com/dleiferives/tifl/internal/tasks"
 )
 
 // Config holds the (tunable) stage-transition thresholds. The defaults encode the
@@ -179,11 +180,18 @@ func (e *Engine) Refresh(ctx context.Context, uk domain.UserKnowledge) (domain.U
 // once. demonstrated is the subset of itemIDs the response showed
 // real understanding of (the grader's items_demonstrated, resolved to ids).
 func (e *Engine) ApplyTaskGrade(ctx context.Context, userID string, itemIDs, demonstrated []string) error {
-	correct := make(map[string]bool, len(demonstrated))
-	for _, id := range demonstrated {
-		correct[id] = true
-	}
-	for _, itemID := range itemIDs {
+	return e.ApplyTaskSignal(ctx, userID, tasks.LearningSignalFromGrade(tasks.Grade{
+		ItemsDemonstrated: demonstrated,
+	}, itemIDs))
+}
+
+// ApplyTaskSignal folds a normalized task learning signal into acquisition
+// counters. The signal decides item-level demonstration before this layer sees
+// it: target items get task_total; demonstrated target items get task_correct.
+// Whole-task score/correctness stays available on the signal for future skill XP
+// consumers but does not affect integer acquisition counters here.
+func (e *Engine) ApplyTaskSignal(ctx context.Context, userID string, signal tasks.LearningSignal) error {
+	for _, itemID := range signal.TargetItemIDs {
 		uk, err := e.repo.GetUserKnowledgeItem(ctx, userID, itemID)
 		if errors.Is(err, db.ErrNotFound) {
 			uk = domain.UserKnowledge{UserID: userID, ItemID: itemID}
@@ -191,7 +199,7 @@ func (e *Engine) ApplyTaskGrade(ctx context.Context, userID string, itemIDs, dem
 			return err
 		}
 		uk.TaskTotal++
-		if correct[itemID] {
+		if signal.Demonstrated(itemID) {
 			uk.TaskCorrect++
 		}
 		now := e.now()

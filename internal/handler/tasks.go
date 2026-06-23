@@ -187,8 +187,9 @@ func (h *Handler) submitTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fold the grade into user_knowledge: every targeted item gets task_total++,
-	// and task_correct++ for the items the response demonstrated.
-	if err := h.acquire.ApplyTaskGrade(r.Context(), userID, tt.Targets(task.Content), grade.ItemsDemonstrated); err != nil {
+	// and task_correct++ only for target items the response demonstrated.
+	signal := tasks.LearningSignalFromGrade(grade, tt.Targets(task.Content))
+	if err := h.acquire.ApplyTaskSignal(r.Context(), userID, signal); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("recording learning signal: %w", err))
 		return
 	}

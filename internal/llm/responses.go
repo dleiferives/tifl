@@ -40,10 +40,12 @@ func (r StoryResult) Validate() error {
 // GradeResult is the grader's output and the minimum every grade carries. It
 // maps onto tasks.Grade once the task system consumes it.
 type GradeResult struct {
-	Correct           bool     `json:"correct"`
-	Score             float64  `json:"score"`
-	Feedback          string   `json:"feedback"`
-	ItemsDemonstrated []string `json:"items_demonstrated"`
+	Correct             bool     `json:"correct"`
+	Score               float64  `json:"score"`
+	Feedback            string   `json:"feedback"`
+	ItemsDemonstrated   []string `json:"items_demonstrated"`
+	DemonstratedConcept *bool    `json:"demonstrated_concept,omitempty"`
+	SurfaceCorrect      *bool    `json:"surface_correct,omitempty"`
 }
 
 // Validate enforces the score range; an out-of-range score signals a malformed

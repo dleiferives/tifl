@@ -49,7 +49,14 @@ func TestGrader_LLMPath(t *testing.T) {
 		Content:  content,
 		Response: map[string]any{"text": "δίδωμι τὸ βιβλίον τῷ ἀνθρώπῳ"},
 		Story:    "a short story",
-		Ctx:      domain.LearnerCtx{Language: "grc", Level: "intermediate"},
+		Ctx: domain.LearnerCtx{
+			Language: "grc",
+			Level:    "intermediate",
+			Selected: domain.SelectedItems{Targets: []domain.KnowledgeItem{
+				{ItemID: "item-give", Key: "δίδωμι"},
+				{ItemID: "constr-dative", Key: "dative"},
+			}},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -60,9 +67,10 @@ func TestGrader_LLMPath(t *testing.T) {
 	if !grade.Correct || grade.Score != 0.9 || grade.Feedback == "" {
 		t.Fatalf("grade not mapped from model output: %+v", grade)
 	}
-	// items_demonstrated on the Grade are item *ids* (from Targets), not the
-	// model's keys, since ids are what task_targets and #9 key on.
-	if !reflect.DeepEqual(grade.ItemsDemonstrated, []string{"item-give", "constr-dative"}) {
+	// items_demonstrated on the Grade are target item *ids* mapped from the
+	// model's demonstrated keys. Overall correctness does not blanket-credit
+	// every target; only the demonstrated key is credited.
+	if !reflect.DeepEqual(grade.ItemsDemonstrated, []string{"item-give"}) {
 		t.Fatalf("demonstrated ids wrong: %v", grade.ItemsDemonstrated)
 	}
 	// The model's raw keys are preserved for inspection.
@@ -91,6 +99,69 @@ func TestGrader_LLMPath_IncorrectCreditsNothing(t *testing.T) {
 	}
 	if grade.Correct || len(grade.ItemsDemonstrated) != 0 {
 		t.Fatalf("an incorrect grade must credit no items: %+v", grade)
+	}
+}
+
+func TestGrader_LLMPath_ConceptDemonstratedSurfaceWrong(t *testing.T) {
+	concept := true
+	surface := false
+	fake := &llm.FakeClient{Response: llm.LLMResponse{
+		Text: `{"correct": false, "score": 0.6, "feedback": "concept is right, form is wrong", "items_demonstrated": ["dative"], "demonstrated_concept": true, "surface_correct": false}`,
+	}}
+	g := NewGrader(fake)
+
+	content := map[string]any{
+		"prompt_l1":              "Say: I give the book to the man.",
+		"target_construction_id": "constr-dative",
+		"target_item_ids":        []any{"item-give"},
+	}
+	grade, _, err := g.Grade(context.Background(), GradeRequest{
+		Type:     Production{},
+		Content:  content,
+		Response: map[string]any{"text": "wrong surface, right construction"},
+		Ctx: domain.LearnerCtx{Selected: domain.SelectedItems{Targets: []domain.KnowledgeItem{
+			{ItemID: "item-give", Key: "δίδωμι"},
+			{ItemID: "constr-dative", Key: "dative"},
+		}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grade.Correct || grade.Score != 0.6 {
+		t.Fatalf("overall grade not preserved: %+v", grade)
+	}
+	if !reflect.DeepEqual(grade.ItemsDemonstrated, []string{"constr-dative"}) {
+		t.Fatalf("concept-only demonstration should credit construction only: %v", grade.ItemsDemonstrated)
+	}
+	if got, _ := grade.Raw["demonstrated_concept"].(bool); got != concept {
+		t.Fatalf("raw demonstrated_concept = %v, want %v", got, concept)
+	}
+	if got, _ := grade.Raw["surface_correct"].(bool); got != surface {
+		t.Fatalf("raw surface_correct = %v, want %v", got, surface)
+	}
+}
+
+func TestGrader_LLMPath_ScoreOnlyCreditsNothing(t *testing.T) {
+	fake := &llm.FakeClient{Response: llm.LLMResponse{
+		Text: `{"correct": true, "score": 0.7, "feedback": "partly right", "items_demonstrated": []}`,
+	}}
+	g := NewGrader(fake)
+
+	grade, _, err := g.Grade(context.Background(), GradeRequest{
+		Type:    Production{},
+		Content: map[string]any{"target_item_ids": []any{"item-give"}},
+		Ctx: domain.LearnerCtx{Selected: domain.SelectedItems{Targets: []domain.KnowledgeItem{
+			{ItemID: "item-give", Key: "δίδωμι"},
+		}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !grade.Correct || grade.Score != 0.7 {
+		t.Fatalf("overall score-only grade not preserved: %+v", grade)
+	}
+	if len(grade.ItemsDemonstrated) != 0 {
+		t.Fatalf("score-only grade must not credit items: %v", grade.ItemsDemonstrated)
 	}
 }
 

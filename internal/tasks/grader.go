@@ -111,8 +111,54 @@ func (g *Grader) gradeWithLLM(ctx context.Context, req GradeRequest) (Grade, err
 		Feedback: res.Feedback,
 		Raw:      map[string]any{"items_demonstrated_keys": res.ItemsDemonstrated},
 	}
-	if res.Correct {
-		grade.ItemsDemonstrated = req.Type.Targets(req.Content)
+	if res.DemonstratedConcept != nil {
+		grade.Raw["demonstrated_concept"] = *res.DemonstratedConcept
 	}
+	if res.SurfaceCorrect != nil {
+		grade.Raw["surface_correct"] = *res.SurfaceCorrect
+	}
+	grade.ItemsDemonstrated = demonstratedTargetIDs(res.ItemsDemonstrated, req.Ctx.Selected.Targets, req.Type.Targets(req.Content))
 	return grade, nil
+}
+
+func demonstratedTargetIDs(demonstrated []string, targets []domain.KnowledgeItem, fallbackTargetIDs []string) []string {
+	if len(demonstrated) == 0 {
+		return nil
+	}
+	mentioned := make(map[string]bool, len(demonstrated))
+	for _, s := range demonstrated {
+		if s != "" {
+			mentioned[s] = true
+		}
+	}
+
+	targetIDSet := make(map[string]bool, len(fallbackTargetIDs))
+	for _, id := range fallbackTargetIDs {
+		if id != "" {
+			targetIDSet[id] = true
+		}
+	}
+
+	out := make([]string, 0, len(targets))
+	seen := make(map[string]bool, len(targets))
+	for _, item := range targets {
+		if item.ItemID == "" || seen[item.ItemID] || !targetIDSet[item.ItemID] {
+			continue
+		}
+		if mentioned[item.ItemID] || mentioned[item.Key] {
+			seen[item.ItemID] = true
+			out = append(out, item.ItemID)
+		}
+	}
+
+	// If no selected target metadata was available, accept demonstrated strings
+	// that exactly match task target IDs. Handler submit normally supplies the
+	// metadata, but this keeps the grader deterministic for direct callers.
+	for _, id := range fallbackTargetIDs {
+		if id != "" && mentioned[id] && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
 }
