@@ -18,12 +18,14 @@ func profileFromSettings(userID string, settings map[string]any, defaultLanguage
 	}
 
 	source := settings
+	nestedSource := false
 	if nested, ok := objectMap(settings[profileSettingsKey]); ok {
 		source = nested
+		nestedSource = true
 	}
 	applyProfileSettings(&profile, source)
 
-	if source != settings {
+	if nestedSource {
 		// Compatibility fallback: top-level keys fill gaps not present in the
 		// canonical nested profile object.
 		fallback := profile
