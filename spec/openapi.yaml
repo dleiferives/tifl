@@ -308,9 +308,13 @@ paths:
       description: >
         Server-Sent Events stream of stage transitions. On connect the current
         persisted stage state is replayed, then live events follow until a
-        terminal `{"stage":"done"}` event. token_rate is an approximate upstream
-        tokens/second during story generation (a ticker animation); story text is
-        never streamed.
+        terminal `{"stage":"done"}` event. The terminal event is enriched from
+        persisted session detail so late subscribers receive the same navigation
+        fields as live subscribers: final status, session_id, story_id when
+        ready, compact task progress, stage summary, and failed stage/error code
+        when generation failed. token_rate is an approximate upstream
+        tokens/second during story generation (a ticker animation); story text
+        is never streamed.
       operationId: sessionEvents
       parameters:
         - $ref: "#/components/parameters/SessionID"
@@ -875,16 +879,37 @@ components:
           required: [stage_summary, stages]
     GenerationEvent:
       type: object
-      description: One SSE progress message (the JSON in each data line).
+      description: >
+        One SSE progress message (the JSON in each data line). Non-terminal
+        events report a pipeline stage status. The terminal `stage: done` event
+        reports the final session status plus enough persisted state for the
+        client to navigate to reader/tasks or show retry/error UI without
+        guessing.
       properties:
         stage:
           type: string
           description: "selection|story_generation|tokenization|task_<type>|done"
         status:
           type: string
-          enum: [pending, in_progress, generating, ready, reading, complete, failed]
+          description: "stage status for progress events; final session status for stage=done"
+          enum: [pending, in_progress, complete, failed, generating, ready, reading]
+        session_id:
+          type: string
+          description: "present on stage=done"
+        story_id:
+          type: string
+          description: "present on stage=done once a story has been persisted"
         token_rate: { type: integer, description: "approx upstream tokens/sec" }
-        error_code: { type: string, description: "stable code, set only on failure" }
+        error_code:
+          type: string
+          description: "stable code on failed progress events and failed terminal events"
+        failed_stage:
+          type: string
+          description: "first failed stage, present on failed terminal events"
+        tasks:
+          $ref: "#/components/schemas/TaskProgress"
+        stage_summary:
+          $ref: "#/components/schemas/StageSummary"
       required: [stage]
     StoryToken:
       type: object

@@ -70,6 +70,18 @@ type generationStageDTO struct {
 	RetryCount  int      `json:"retry_count"`
 }
 
+type generationEventDTO struct {
+	Stage        string           `json:"stage"`
+	Status       string           `json:"status,omitempty"`
+	SessionID    string           `json:"session_id,omitempty"`
+	StoryID      *string          `json:"story_id,omitempty"`
+	TokenRate    int              `json:"token_rate,omitempty"`
+	ErrorCode    string           `json:"error_code,omitempty"`
+	FailedStage  *string          `json:"failed_stage,omitempty"`
+	Tasks        *taskProgressDTO `json:"tasks,omitempty"`
+	StageSummary *stageSummaryDTO `json:"stage_summary,omitempty"`
+}
+
 type sessionOverviewDTO struct {
 	SessionID        string            `json:"session_id"`
 	StoryID          *string           `json:"story_id,omitempty"`
@@ -388,7 +400,7 @@ func (h *Handler) sessionEvents(w http.ResponseWriter, r *http.Request) {
 	// "done" event was already published to nobody — emit it from the persisted
 	// status and close, rather than blocking on a stream that will never tick.
 	if sess, err := h.repo.GetSession(r.Context(), id); err == nil && isTerminal(sess.Status) {
-		writeSSE(w, story.Event{Stage: story.DoneStage, Status: string(sess.Status)})
+		writeSSE(w, h.terminalGenerationEvent(r, id, string(sess.Status)))
 		flusher.Flush()
 		return
 	}
@@ -405,7 +417,7 @@ func (h *Handler) sessionEvents(w http.ResponseWriter, r *http.Request) {
 	// publishes "done", so if it finished in the gap between the check above and
 	// Subscribe, we emit the terminal event here instead of blocking forever.
 	if sess, err := h.repo.GetSession(r.Context(), id); err == nil && isTerminal(sess.Status) {
-		writeSSE(w, story.Event{Stage: story.DoneStage, Status: string(sess.Status)})
+		writeSSE(w, h.terminalGenerationEvent(r, id, string(sess.Status)))
 		flusher.Flush()
 		return
 	}
@@ -424,16 +436,57 @@ func (h *Handler) sessionEvents(w http.ResponseWriter, r *http.Request) {
 			if !open {
 				return
 			}
-			writeSSE(w, ev)
-			flusher.Flush()
 			if ev.Stage == story.DoneStage {
+				writeSSE(w, h.terminalGenerationEvent(r, id, ev.Status))
+				flusher.Flush()
 				return
 			}
+			writeSSE(w, progressGenerationEvent(ev))
+			flusher.Flush()
 		}
 	}
 }
 
-func writeSSE(w http.ResponseWriter, ev story.Event) {
+func progressGenerationEvent(ev story.Event) generationEventDTO {
+	return generationEventDTO{
+		Stage:     ev.Stage,
+		Status:    ev.Status,
+		TokenRate: ev.TokenRate,
+		ErrorCode: ev.ErrorCode,
+	}
+}
+
+func (h *Handler) terminalGenerationEvent(r *http.Request, sessionID, fallbackStatus string) generationEventDTO {
+	out := generationEventDTO{
+		Stage:     story.DoneStage,
+		Status:    fallbackStatus,
+		SessionID: sessionID,
+	}
+	detail, err := h.repo.GetSessionDetail(r.Context(), h.currentUserID(r), sessionID)
+	if err != nil {
+		return out
+	}
+	dto := toSessionDetailDTO(detail)
+	out.Status = dto.Status
+	out.StoryID = dto.StoryID
+	out.Tasks = &dto.Tasks
+	out.StageSummary = &dto.StageSummary
+	if dto.Status != string(domain.StatusFailed) {
+		return out
+	}
+	out.FailedStage = dto.StageSummary.FailedStage
+	if out.FailedStage != nil {
+		for _, st := range dto.Stages {
+			if st.Stage == *out.FailedStage && st.ErrorCode != nil {
+				out.ErrorCode = *st.ErrorCode
+				break
+			}
+		}
+	}
+	return out
+}
+
+func writeSSE(w http.ResponseWriter, ev any) {
 	b, err := json.Marshal(ev)
 	if err != nil {
 		return

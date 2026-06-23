@@ -28,6 +28,7 @@ export type APIResponse<
   ID extends APIOperationID,
   Status extends keyof operations[ID]["responses"] = SuccessStatus<ID>,
 > = JSONResponseBody<ID, Status>;
+export type GenerationEvent = APISchema<"GenerationEvent">;
 
 let apiBaseURL = defaultAPIBaseURL();
 let accessToken: string | null = null;
@@ -116,6 +117,10 @@ export async function retrySession(sessionID: string): Promise<APIResponse<"retr
 
 export function sessionEventsURL(sessionID: string): string {
   return apiURL(`/sessions/${encodeURIComponent(sessionID)}/events`);
+}
+
+export function parseGenerationEvent(data: string): GenerationEvent {
+  return JSON.parse(data) as GenerationEvent;
 }
 
 export async function getStory(storyID: string): Promise<APIResponse<"getStory", 200>> {
