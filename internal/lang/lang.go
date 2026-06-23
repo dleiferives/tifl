@@ -62,6 +62,30 @@ type SkillProvider interface {
 	Skills() []domain.Skill
 }
 
+// SkillDefinitionProvider is the richer language-owned skill catalogue used by
+// later association and prompt-constraint work. Storage seeding persists only
+// Skill; the other fields remain plugin metadata until #68/#50 consume them.
+type SkillDefinitionProvider interface {
+	SkillDefinitions() []SkillDefinition
+}
+
+// SkillDefinition describes one language competency. Concept is the stable
+// grammatical/semantic handle prompt builders can later map to
+// SkillConstraints, while Associations is an explicit small key map for #68.
+type SkillDefinition struct {
+	Skill        domain.Skill
+	Concept      string
+	Associations []SkillAssociationDeclaration
+}
+
+// SkillAssociationDeclaration says this skill covers the listed canonical keys
+// for one knowledge item type. It is deliberately simple: no predicates,
+// embeddings, or model classification.
+type SkillAssociationDeclaration struct {
+	ItemType string
+	Keys     []string
+}
+
 // DefaultNormalize is the script-generic answer normalization most languages
 // want: NFC so composed/decomposed accents compare equal, Unicode case folding
 // (which, unlike strings.ToLower, folds a trailing Greek capital Σ and a medial
