@@ -112,6 +112,10 @@ export async function patchProfile(request: APIRequest<"patchProfile">): Promise
   return apiFetch<APIResponse<"patchProfile", 200>>("/profile", jsonRequest("PATCH", request));
 }
 
+export async function listSkills(query: APIQuery<"listSkills"> = {}): Promise<APIResponse<"listSkills", 200>> {
+  return apiFetch<APIResponse<"listSkills", 200>>(`/skills${queryString(query)}`);
+}
+
 export async function listSessions(query: APIQuery<"listSessions"> = {}): Promise<APIResponse<"listSessions", 200>> {
   return apiFetch<APIResponse<"listSessions", 200>>(`/sessions${queryString(query)}`);
 }

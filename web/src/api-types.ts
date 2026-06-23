@@ -164,6 +164,26 @@ export interface paths {
         patch: operations["patchProfile"];
         trace?: never;
     };
+    "/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Return the current user's skill tree for a language
+         * @description Returns every skill defined for the requested language, grouped by category and left-joined with the current user's XP/tier progress. Untouched skills are included with tier 0 and 0 XP so the client can render the complete read-only competency map. If `language` is omitted, the current profile's active_language is used.
+         */
+        get: operations["listSkills"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions": {
         parameters: {
             query?: never;
@@ -529,6 +549,38 @@ export interface components {
             preferences?: {
                 [key: string]: unknown;
             };
+        };
+        SkillTree: {
+            /** @description Language code the skill tree is scoped to. */
+            language: string;
+            categories: components["schemas"]["SkillCategory"][];
+        };
+        SkillCategory: {
+            id: string;
+            title: string;
+            skills: components["schemas"]["SkillProgress"][];
+        };
+        SkillProgress: {
+            skill_id: string;
+            name: string;
+            description: string;
+            category: string;
+            tier: number;
+            tier_count: number;
+            /** @description Display label for the current tier, e.g. Not started, Introduced, Practicing, Acquired. */
+            tier_label: string;
+            xp: number;
+            xp_per_tier: number;
+            /** @description XP remaining before the next tier threshold; 0 at the max tier. */
+            xp_to_next: number;
+            /** @description Progress through the current tier as a 0..1 ratio. */
+            progress_ratio: number;
+            /** @description True when XP has crossed a tier boundary and AI verification has not completed. */
+            pending_verification: boolean;
+            /** @description True shortly after a verified tier promotion. */
+            recently_promoted: boolean;
+            last_verified_at?: number;
+            updated_at?: number;
         };
         SessionRef: {
             session_id: string;
@@ -1046,6 +1098,32 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Profile"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listSkills: {
+        parameters: {
+            query?: {
+                /** @description Optional enabled language code; defaults to profile.active_language. */
+                language?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Skill tree */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillTree"];
                 };
             };
             400: components["responses"]["BadRequest"];
