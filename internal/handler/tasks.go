@@ -174,6 +174,14 @@ func (h *Handler) submitTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	targetIDs := tt.Targets(task.Content)
+	if h.skillAssoc != nil {
+		if err := h.skillAssoc.EnsureAssociationsForItems(r.Context(), targetIDs); err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Errorf("ensuring skill associations: %w", err))
+			return
+		}
+	}
+
 	now := float64(time.Now().Unix())
 	if err := h.repo.RecordTaskGrade(r.Context(), userID, id, domain.TaskGrade{
 		Response:    req.Response,
@@ -188,7 +196,7 @@ func (h *Handler) submitTask(w http.ResponseWriter, r *http.Request) {
 
 	// Fold the grade into user_knowledge: every targeted item gets task_total++,
 	// and task_correct++ only for target items the response demonstrated.
-	signal := tasks.LearningSignalFromGrade(grade, tt.Targets(task.Content))
+	signal := tasks.LearningSignalFromGrade(grade, targetIDs)
 	if err := h.acquire.ApplyTaskSignal(r.Context(), userID, signal); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("recording learning signal: %w", err))
 		return

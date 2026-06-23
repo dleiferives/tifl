@@ -9,6 +9,7 @@ import (
 	"github.com/dleiferives/tifl/internal/acquire"
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
+	"github.com/dleiferives/tifl/internal/skills"
 )
 
 // wordItemType is the knowledge-item type the reader rates. The reader operates
@@ -29,14 +30,31 @@ var (
 // the acquisition engine so confidence_score and acquisition_stage stay current.
 // See context/reader-mode.md ("Signal Collection") and issues #9/#10.
 type Service struct {
-	repo   db.Repository
-	engine *acquire.Engine
-	now    func() float64
+	repo       db.Repository
+	engine     *acquire.Engine
+	associator *skills.Associator
+	now        func() float64
+}
+
+// Option customizes reader service dependencies.
+type Option func(*Service)
+
+// WithSkillAssociator hooks lazy skill association materialization into reader
+// item creation. A nil associator leaves the reader usable without the skill
+// system.
+func WithSkillAssociator(associator *skills.Associator) Option {
+	return func(s *Service) {
+		s.associator = associator
+	}
 }
 
 // NewService builds a reader Service over the repository and acquisition engine.
-func NewService(repo db.Repository, engine *acquire.Engine) *Service {
-	return &Service{repo: repo, engine: engine, now: func() float64 { return float64(time.Now().Unix()) }}
+func NewService(repo db.Repository, engine *acquire.Engine, opts ...Option) *Service {
+	s := &Service{repo: repo, engine: engine, now: func() float64 { return float64(time.Now().Unix()) }}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // SetLevel applies the learner's knowledge rating for one word key — the
@@ -48,7 +66,7 @@ func (s *Service) SetLevel(ctx context.Context, userID, language, key string, le
 	if !domain.ValidReaderLevel(level) {
 		return fmt.Errorf("%w: invalid reader level %q", ErrInvalidEvent, level)
 	}
-	itemID, err := s.repo.UpsertKnowledgeItem(ctx,
+	itemID, err := s.upsertKnowledgeItem(ctx,
 		domain.KnowledgeItem{Language: language, ItemType: wordItemType, Key: key})
 	if err != nil {
 		return err
@@ -96,7 +114,7 @@ func (s *Service) Ingest(ctx context.Context, userID string, events []domain.Rea
 		return 0, err
 	}
 
-	acc := newAccumulator(s.repo, userID, s.now())
+	acc := newAccumulator(s.repo, s.associator, userID, s.now())
 
 	// Exposure + context variety, once per first read of each story.
 	for _, sc := range stories {
@@ -207,4 +225,19 @@ func (s *Service) load(ctx context.Context, userID, itemID string) (domain.UserK
 		return domain.UserKnowledge{UserID: userID, ItemID: itemID}, nil
 	}
 	return uk, err
+}
+
+func (s *Service) upsertKnowledgeItem(ctx context.Context, item domain.KnowledgeItem) (string, error) {
+	itemID, err := s.repo.UpsertKnowledgeItem(ctx, item)
+	if err != nil {
+		return "", err
+	}
+	if s.associator == nil {
+		return itemID, nil
+	}
+	item.ItemID = itemID
+	if err := s.associator.AssociateItem(ctx, item); err != nil {
+		return "", err
+	}
+	return itemID, nil
 }

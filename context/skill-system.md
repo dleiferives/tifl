@@ -68,9 +68,12 @@ When a task is graded, the system maps the task's target knowledge items to thei
 associated skills, then awards or deducts XP accordingly.
 
 The mapping is defined in the language plugin's skill definitions. Each skill
-declares which knowledge item types or specific items it covers. This is
-materialized at server startup into an `item_skill_associations` table so that
-XP computation is a fast lookup, not a runtime classification call.
+declares which knowledge item types or specific canonical keys it covers. Because
+knowledge items are created lazily as stories, reader events, and tasks encounter
+them, `item_skill_associations` is materialized lazily after an item has a stable
+`item_id`. Creation paths call the associator directly, and grade-time code can
+run the same associator as a safety fallback before XP computation reads the
+association table.
 
 ```
 task graded
@@ -209,8 +212,9 @@ skills
 
 ### `item_skill_associations`
 
-Materialized at startup from language plugin skill definitions. Maps knowledge
-items to the skills they count toward.
+Materialized lazily from language plugin skill definitions as knowledge items are
+created or prepared for grading. Maps knowledge items to the skills they count
+toward.
 
 ```
 item_skill_associations

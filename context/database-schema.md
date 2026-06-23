@@ -422,8 +422,9 @@ skills
 
 ### `item_skill_associations`
 
-Materialized at server startup from language plugin skill definitions. Maps
-knowledge items to the skills they count toward.
+Materialized lazily from language plugin skill definitions after knowledge items
+are created or before graded task targets need XP attribution. Maps knowledge
+items to the skills they count toward.
 
 ```
 item_skill_associations

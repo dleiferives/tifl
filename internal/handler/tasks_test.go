@@ -102,6 +102,49 @@ func TestSubmitRuleGradedMC(t *testing.T) {
 	}
 }
 
+func TestSubmitEnsuresSkillAssociationsForTargets(t *testing.T) {
+	ctx := context.Background()
+	repo := db.NewFake()
+	if err := repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "Testish", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.EnsureLocalUser(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpsertSkill(ctx, domain.Skill{
+		SkillID: "xx-basic-words", Language: "xx", Name: "Basic Words",
+		Category: "Vocabulary", TierCount: 3, XPPerTier: 100,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	langs := lang.NewRegistry()
+	langs.Register(skillFakeLang{})
+	mux := http.NewServeMux()
+	handler.New(repo, nil, nil, tasks.DefaultRegistry(), langs, "").Register(mux)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	seedItem(t, repo, "it1", "alpha")
+	content := map[string]any{
+		"question": "τί;", "options": []any{"x", "y"},
+		"correct_index": float64(1), "target_item_ids": []any{"it1"},
+	}
+	_, taskID := seedTask(t, repo, tasks.TypeComprehensionMC, content, []string{"it1"})
+
+	resp := submit(t, srv, taskID, `{"response":{"selected_index":1}}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("submit status = %d", resp.StatusCode)
+	}
+	rows, err := repo.ListItemSkillAssociations(ctx, []string{"it1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].SkillID != "xx-basic-words" {
+		t.Fatalf("target associations = %+v, want xx-basic-words", rows)
+	}
+}
+
 func TestSubmitRuleGradedFillBlankWrong(t *testing.T) {
 	srv, repo := newServer(t, false)
 	seedItem(t, repo, "it2", "kalos")
@@ -351,4 +394,18 @@ func newGraderServerWithResponse(t *testing.T, gradeJSON string) (*httptest.Serv
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv, repo
+}
+
+type skillFakeLang struct {
+	fakeLang
+}
+
+func (skillFakeLang) SkillDefinitions() []lang.SkillDefinition {
+	return []lang.SkillDefinition{{
+		Skill: domain.Skill{
+			SkillID: "xx-basic-words", Language: "xx", Name: "Basic Words",
+			Category: "Vocabulary", TierCount: 3, XPPerTier: 100,
+		},
+		Associations: []lang.SkillAssociationDeclaration{{ItemType: "word", Keys: []string{"alpha"}}},
+	}}
 }
