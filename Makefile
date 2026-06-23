@@ -1,4 +1,4 @@
-.PHONY: help build server gateway run run-gateway web web-install web-typecheck test test-live vet fmt tidy clean
+.PHONY: help build server gateway run run-gateway web web-install web-api-types web-typecheck test test-live vet fmt tidy clean
 
 # Live gateway test (opt-in): a real OpenCode server to verify the gateway
 # end-to-end. Override the model with TIFL_LIVE_MODEL.
@@ -30,6 +30,9 @@ web-install: ## install web dependencies
 
 web: ## build the SolidJS client into web/dist
 	cd web && npm run build
+
+web-api-types: ## regenerate TypeScript API types from spec/openapi.yaml
+	cd web && npm run api:types
 
 web-typecheck: ## typecheck the web client
 	cd web && npm run typecheck

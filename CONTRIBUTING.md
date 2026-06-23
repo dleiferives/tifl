@@ -50,6 +50,10 @@ make test-live                                       # in another (TIFL_LIVE_MOD
   that imports `internal/lang/el` is a smell — it couples the engine to Greek.
 - The OpenAPI spec in `spec/` is the contract; update it in the same change that
   adds or alters an endpoint.
+- Endpoint changes must keep the client contract in lockstep: handler + tests,
+  `spec/openapi.yaml`, regenerated web API types (`make web-api-types`), and a
+  typed wrapper in `web/src/api.ts` belong in the same PR. `make web-typecheck`
+  verifies that the checked-in generated types still match the spec.
 
 ## Where things live
 

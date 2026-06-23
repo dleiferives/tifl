@@ -36,6 +36,47 @@ type Handler struct {
 
 type Option func(*Handler)
 
+type apiRoute struct {
+	Method      string
+	Path        string
+	Handler     func(*Handler, http.ResponseWriter, *http.Request)
+	RequireUser bool
+	AuthOnly    bool
+}
+
+func (r apiRoute) pattern() string {
+	return r.Method + " " + r.Path
+}
+
+func currentAPIRoutes() []apiRoute {
+	return []apiRoute{
+		{Method: http.MethodGet, Path: "/api/v1/ping", Handler: (*Handler).ping, RequireUser: true},
+		{Method: http.MethodGet, Path: "/api/v1/languages", Handler: (*Handler).listLanguages, RequireUser: true},
+		{Method: http.MethodGet, Path: "/api/v1/profile", Handler: (*Handler).getProfile, RequireUser: true},
+		{Method: http.MethodPatch, Path: "/api/v1/profile", Handler: (*Handler).patchProfile, RequireUser: true},
+		{Method: http.MethodGet, Path: "/api/v1/stories/{id}", Handler: (*Handler).getStory, RequireUser: true},
+		{Method: http.MethodGet, Path: "/api/v1/stories/{id}/definition", Handler: (*Handler).getDefinition, RequireUser: true},
+		{Method: http.MethodPost, Path: "/api/v1/stories/{id}/sentence", Handler: (*Handler).postSentenceBreakdown, RequireUser: true},
+		{Method: http.MethodPost, Path: "/api/v1/stories/{id}/word", Handler: (*Handler).postWordBreakdown, RequireUser: true},
+		{Method: http.MethodPost, Path: "/api/v1/reader/events", Handler: (*Handler).postReaderEvents, RequireUser: true},
+		{Method: http.MethodPut, Path: "/api/v1/word_knowledge/{token}", Handler: (*Handler).putWordKnowledge, RequireUser: true},
+		{Method: http.MethodGet, Path: "/api/v1/sessions", Handler: (*Handler).listSessions, RequireUser: true},
+		{Method: http.MethodPost, Path: "/api/v1/sessions/generate", Handler: (*Handler).generateSession, RequireUser: true},
+		{Method: http.MethodGet, Path: "/api/v1/sessions/{id}", Handler: (*Handler).getSessionDetail, RequireUser: true},
+		{Method: http.MethodGet, Path: "/api/v1/sessions/{id}/events", Handler: (*Handler).sessionEvents, RequireUser: true},
+		{Method: http.MethodPost, Path: "/api/v1/sessions/{id}/retry", Handler: (*Handler).retrySession, RequireUser: true},
+		{Method: http.MethodGet, Path: "/api/v1/sessions/{id}/tasks", Handler: (*Handler).getSessionTasks, RequireUser: true},
+		{Method: http.MethodGet, Path: "/api/v1/tasks/{id}", Handler: (*Handler).getTask, RequireUser: true},
+		{Method: http.MethodPost, Path: "/api/v1/tasks/{id}/submit", Handler: (*Handler).submitTask, RequireUser: true},
+		{Method: http.MethodPost, Path: "/api/v1/auth/register", Handler: (*Handler).register, AuthOnly: true},
+		{Method: http.MethodPost, Path: "/api/v1/auth/login", Handler: (*Handler).login, AuthOnly: true},
+		{Method: http.MethodPost, Path: "/api/v1/auth/refresh", Handler: (*Handler).refresh, AuthOnly: true},
+		{Method: http.MethodPost, Path: "/api/v1/auth/logout", Handler: (*Handler).logout, AuthOnly: true},
+		{Method: http.MethodPost, Path: "/api/v1/auth/logout-all", Handler: (*Handler).logoutAll, RequireUser: true, AuthOnly: true},
+		{Method: http.MethodGet, Path: "/api/v1/auth/me", Handler: (*Handler).me, RequireUser: true, AuthOnly: true},
+	}
+}
+
 // WithAuth enables JWT mode. Without it, the handler runs in desktop-local mode
 // and injects domain.LocalUserID into every application API request.
 func WithAuth(service *authn.Service, secureCookie bool) Option {
@@ -82,31 +123,19 @@ func New(repo db.Repository, broker *story.Broker, client llm.Client, taskTypes 
 // Register wires every route onto mux.
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /healthz", h.health)
-	h.registerAPI(mux, "GET /api/v1/ping", h.ping)
-	h.registerAPI(mux, "GET /api/v1/languages", h.listLanguages)
-	h.registerAPI(mux, "GET /api/v1/profile", h.getProfile)
-	h.registerAPI(mux, "PATCH /api/v1/profile", h.patchProfile)
-	h.registerAPI(mux, "GET /api/v1/stories/{id}", h.getStory)
-	h.registerAPI(mux, "GET /api/v1/stories/{id}/definition", h.getDefinition)
-	h.registerAPI(mux, "POST /api/v1/stories/{id}/sentence", h.postSentenceBreakdown)
-	h.registerAPI(mux, "POST /api/v1/stories/{id}/word", h.postWordBreakdown)
-	h.registerAPI(mux, "POST /api/v1/reader/events", h.postReaderEvents)
-	h.registerAPI(mux, "PUT /api/v1/word_knowledge/{token}", h.putWordKnowledge)
-	h.registerAPI(mux, "GET /api/v1/sessions", h.listSessions)
-	h.registerAPI(mux, "POST /api/v1/sessions/generate", h.generateSession)
-	h.registerAPI(mux, "GET /api/v1/sessions/{id}", h.getSessionDetail)
-	h.registerAPI(mux, "GET /api/v1/sessions/{id}/events", h.sessionEvents)
-	h.registerAPI(mux, "POST /api/v1/sessions/{id}/retry", h.retrySession)
-	h.registerAPI(mux, "GET /api/v1/sessions/{id}/tasks", h.getSessionTasks)
-	h.registerAPI(mux, "GET /api/v1/tasks/{id}", h.getTask)
-	h.registerAPI(mux, "POST /api/v1/tasks/{id}/submit", h.submitTask)
-	if h.auth != nil {
-		mux.HandleFunc("POST /api/v1/auth/register", h.register)
-		mux.HandleFunc("POST /api/v1/auth/login", h.login)
-		mux.HandleFunc("POST /api/v1/auth/refresh", h.refresh)
-		mux.HandleFunc("POST /api/v1/auth/logout", h.logout)
-		h.registerAPI(mux, "POST /api/v1/auth/logout-all", h.logoutAll)
-		h.registerAPI(mux, "GET /api/v1/auth/me", h.me)
+	for _, route := range currentAPIRoutes() {
+		if route.AuthOnly && h.auth == nil {
+			continue
+		}
+		route := route
+		fn := func(w http.ResponseWriter, r *http.Request) {
+			route.Handler(h, w, r)
+		}
+		if route.RequireUser {
+			h.registerAPI(mux, route.pattern(), fn)
+			continue
+		}
+		mux.HandleFunc(route.pattern(), fn)
 	}
 	h.registerStatic(mux)
 }
