@@ -1,6 +1,7 @@
 package handler_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -91,8 +92,101 @@ func TestSkillsSupportsExplicitLanguageAndRecentPromotion(t *testing.T) {
 	}
 }
 
+func TestSkillsJWTModeScopesProgressToBearerUser(t *testing.T) {
+	srv, repo := newAuthServer(t)
+	ctx := context.Background()
+	if err := repo.UpsertLanguage(ctx, domain.Language{Code: "zz", Name: "Zed", KeyStrategy: "surface", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpsertSkill(ctx, domain.Skill{
+		SkillID: "zz-core", Language: "zz", Name: "Core Skill",
+		Description: "Read the core forms.", Category: "Core",
+		TierCount: 3, XPPerTier: 100, SortOrder: testSkillOrder(1),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	alice := registerSkillUser(t, srv.URL, "alice-skills@example.com")
+	bob := registerSkillUser(t, srv.URL, "bob-skills@example.com")
+	if err := repo.UpsertUserSkillXP(ctx, domain.UserSkillXP{
+		UserID: alice.UserID, SkillID: "zz-core", XP: 40, Tier: 0, UpdatedAt: 1000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpsertUserSkillXP(ctx, domain.UserSkillXP{
+		UserID: bob.UserID, SkillID: "zz-core", XP: 999, Tier: 3, UpdatedAt: 1001,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(srv.URL + "/api/v1/skills")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("uncredentialed skills = %d, want 401", resp.StatusCode)
+	}
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/skills", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+alice.AccessToken)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("authenticated skills = %d, want 200", resp.StatusCode)
+	}
+	var out skillTreePayload
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Language != "zz" || len(out.Categories) != 1 || len(out.Categories[0].Skills) != 1 {
+		t.Fatalf("skill tree shape mismatch: %+v", out)
+	}
+	skill := out.Categories[0].Skills[0]
+	if skill.XP != 40 || skill.Tier != 0 || skill.XPToNext != 60 {
+		t.Fatalf("bearer user's skill progress mismatch or leaked another tenant: %+v", skill)
+	}
+}
+
 func testSkillOrder(order int) *int {
 	return &order
+}
+
+func registerSkillUser(t *testing.T, baseURL, email string) struct {
+	AccessToken string
+	UserID      string
+} {
+	t.Helper()
+	resp, err := http.Post(baseURL+"/api/v1/auth/register", "application/json", bytes.NewReader([]byte(`{"email":"`+email+`","password":"correct horse battery staple"}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("register %s = %d, want 201", email, resp.StatusCode)
+	}
+	var out struct {
+		AccessToken string `json:"access_token"`
+		User        struct {
+			UserID string `json:"user_id"`
+		} `json:"user"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.AccessToken == "" || out.User.UserID == "" {
+		t.Fatalf("incomplete register response for %s: %+v", email, out)
+	}
+	return struct {
+		AccessToken string
+		UserID      string
+	}{AccessToken: out.AccessToken, UserID: out.User.UserID}
 }
 
 func getSkills(t *testing.T, url string) skillTreePayload {
