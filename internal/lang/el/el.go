@@ -106,7 +106,17 @@ func normalizeKey(surface string) string {
 	s := norm.NFC.String(surface)
 	s = strings.TrimFunc(s, func(r rune) bool { return !unicode.IsLetter(r) })
 	s = strings.ToLower(s)
+	s = normalizeFinalSigma(s)
 	return s
+}
+
+func normalizeFinalSigma(s string) string {
+	runes := []rune(s)
+	if len(runes) == 0 || runes[len(runes)-1] != 'σ' {
+		return s
+	}
+	runes[len(runes)-1] = 'ς'
+	return string(runes)
 }
 
 // Frequency returns Modern Greek lemmas ordered from most to least common.
