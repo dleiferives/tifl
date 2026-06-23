@@ -117,6 +117,46 @@ paths:
               schema:
                 $ref: "#/components/schemas/User"
         "401": { description: Missing or invalid access token }
+  /profile:
+    get:
+      summary: Return the current user's profile and client preferences
+      description: >
+        Returns the typed product profile used for default session generation
+        and UI bootstrapping. In local/no-auth mode this is the synthetic
+        `local` user's profile. Missing fields are defaulted server-side.
+      operationId: getProfile
+      responses:
+        "200":
+          description: Current profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Profile"
+        "401": { description: Missing or invalid access token }
+    patch:
+      summary: Partially update the current user's profile
+      description: >
+        Updates typed profile fields and shallow-merges the `preferences` object
+        into the existing arbitrary client-preferences map. A preference value of
+        `null` deletes that key. Unknown top-level fields are rejected so product
+        state stays explicit; client-owned arbitrary values belong under
+        `preferences`.
+      operationId: patchProfile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfilePatch"
+      responses:
+        "200":
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Profile"
+        "400": { description: Invalid profile field, language, level, theme, or preferences shape }
+        "401": { description: Missing or invalid access token }
   /sessions:
     get:
       summary: List sessions for the current user
@@ -155,7 +195,8 @@ paths:
       summary: Start generating a session (story + tasks)
       description: >
         Creates a session and kicks off the staged generation pipeline
-        asynchronously, returning immediately. Poll progress via
+        asynchronously, returning immediately. If language or level is omitted,
+        the current profile's active_language or level is used. Poll progress via
         /sessions/{id}/events. Returns 503 if no LLM gateway is configured.
       operationId: generateSession
       requestBody:
@@ -171,7 +212,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SessionRef"
-        "400": { description: Missing or unknown language }
+        "400": { description: Missing, unknown, or disabled language; invalid level }
         "503": { description: Generation not configured }
   /sessions/{id}:
     get:
@@ -516,8 +557,12 @@ components:
     GenerateRequest:
       type: object
       properties:
-        language: { type: string, description: "registered language code, e.g. 'el'" }
-        level: { type: string, description: "beginner|elementary|intermediate|upper-intermediate|advanced" }
+        language:
+          type: string
+          description: "registered enabled language code, e.g. 'el'; defaults to profile.active_language"
+        level:
+          type: string
+          description: "beginner|elementary|intermediate|upper-intermediate|advanced; defaults to profile.level"
         session_type:
           type: string
           enum: [system, topic_guided, expression_guided]
@@ -530,7 +575,49 @@ components:
           type: string
           enum: [phrases, story]
           description: "expression_guided only"
-      required: [language]
+    Profile:
+      type: object
+      properties:
+        user_id: { type: string }
+        active_language:
+          type: string
+          description: "enabled language code used when generation omits language"
+        level:
+          type: string
+          enum: [beginner, elementary, intermediate, upper-intermediate, advanced]
+          description: "current generation default; product state that level-derivation can update"
+        ui_language:
+          type: string
+          description: "BCP-47 style UI/gloss language tag, e.g. 'en'"
+        theme:
+          type: string
+          description: "theme id, e.g. 'default' or 'high-contrast'"
+        preferences:
+          type: object
+          additionalProperties: true
+          description: "arbitrary client-owned preferences; product-critical fields remain top-level"
+      required: [user_id, active_language, level, ui_language, theme, preferences]
+    ProfilePatch:
+      type: object
+      additionalProperties: false
+      properties:
+        active_language:
+          type: string
+          description: "must name an enabled language"
+        level:
+          type: string
+          enum: [beginner, elementary, intermediate, upper-intermediate, advanced]
+          description: "current generation default; clients should not treat this as arbitrary preference state"
+        ui_language:
+          type: string
+          description: "BCP-47 style UI/gloss language tag"
+        theme:
+          type: string
+          description: "letters, numbers, '_' and '-' only"
+        preferences:
+          type: object
+          additionalProperties: true
+          description: "shallow-merged; null values delete keys"
     SessionRef:
       type: object
       properties:

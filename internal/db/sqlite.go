@@ -122,6 +122,59 @@ func (r *SQLiteRepository) UpdateUserLastLogin(ctx context.Context, userID strin
 	return nil
 }
 
+func (r *SQLiteRepository) GetUserProfile(ctx context.Context, userID string) (domain.UserProfile, error) {
+	user, err := r.GetUser(ctx, userID)
+	if err != nil {
+		return domain.UserProfile{}, err
+	}
+	languages, err := r.ListLanguages(ctx)
+	if err != nil {
+		return domain.UserProfile{}, err
+	}
+	return profileFromSettings(user.UserID, user.Settings, firstEnabledLanguage(languages)), nil
+}
+
+func (r *SQLiteRepository) UpdateUserProfile(ctx context.Context, userID string, patch domain.UserProfilePatch) (domain.UserProfile, error) {
+	if patch.ActiveLanguage != nil {
+		language, err := r.GetLanguage(ctx, *patch.ActiveLanguage)
+		if errors.Is(err, ErrNotFound) || (err == nil && !language.Enabled) {
+			return domain.UserProfile{}, invalidProfile("active_language %q is not enabled", *patch.ActiveLanguage)
+		}
+		if err != nil {
+			return domain.UserProfile{}, err
+		}
+	}
+
+	user, err := r.GetUser(ctx, userID)
+	if err != nil {
+		return domain.UserProfile{}, err
+	}
+	languages, err := r.ListLanguages(ctx)
+	if err != nil {
+		return domain.UserProfile{}, err
+	}
+	profile := applyProfilePatch(profileFromSettings(user.UserID, user.Settings, firstEnabledLanguage(languages)), patch)
+	if err := validateProfile(profile); err != nil {
+		return domain.UserProfile{}, err
+	}
+	settings, err := marshalJSON(settingsWithProfile(user.Settings, profile))
+	if err != nil {
+		return domain.UserProfile{}, err
+	}
+	res, err := r.db.ExecContext(ctx, `UPDATE users SET settings = ? WHERE user_id = ?`, settings, userID)
+	if err != nil {
+		return domain.UserProfile{}, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return domain.UserProfile{}, err
+	}
+	if n == 0 {
+		return domain.UserProfile{}, ErrNotFound
+	}
+	return profile, nil
+}
+
 func (r *SQLiteRepository) CreateRefreshToken(ctx context.Context, token domain.RefreshToken) error {
 	_, err := r.db.ExecContext(ctx,
 		`INSERT INTO refresh_tokens(token_hash, family_id, user_id, issued_at, expires_at, revoked_at, replaced_by_hash)

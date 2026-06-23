@@ -90,7 +90,7 @@ func (r *FakeRepository) CreateUser(_ context.Context, u domain.User) (domain.Us
 	if u.CreatedAt == 0 {
 		u.CreatedAt = float64(time.Now().Unix())
 	}
-	u.Settings = cloneMeta(u.Settings)
+	u.Settings = cloneJSONMap(u.Settings)
 	u.LastLogin = cloneFloat(u.LastLogin)
 	r.users[u.UserID] = u
 	r.emailIndex[u.Email] = u.UserID
@@ -137,6 +137,47 @@ func (r *FakeRepository) UpdateUserLastLogin(_ context.Context, userID string, a
 	u.LastLogin = &at
 	r.users[userID] = u
 	return nil
+}
+
+func (r *FakeRepository) GetUserProfile(_ context.Context, userID string) (domain.UserProfile, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	user, ok := r.users[userID]
+	if !ok {
+		return domain.UserProfile{}, ErrNotFound
+	}
+	return profileFromSettings(user.UserID, user.Settings, r.firstEnabledLanguageLocked()), nil
+}
+
+func (r *FakeRepository) UpdateUserProfile(_ context.Context, userID string, patch domain.UserProfilePatch) (domain.UserProfile, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if patch.ActiveLanguage != nil {
+		language, ok := r.languages[*patch.ActiveLanguage]
+		if !ok || !language.Enabled {
+			return domain.UserProfile{}, invalidProfile("active_language %q is not enabled", *patch.ActiveLanguage)
+		}
+	}
+	user, ok := r.users[userID]
+	if !ok {
+		return domain.UserProfile{}, ErrNotFound
+	}
+	profile := applyProfilePatch(profileFromSettings(user.UserID, user.Settings, r.firstEnabledLanguageLocked()), patch)
+	if err := validateProfile(profile); err != nil {
+		return domain.UserProfile{}, err
+	}
+	user.Settings = settingsWithProfile(user.Settings, profile)
+	r.users[userID] = cloneUser(user)
+	return profile, nil
+}
+
+func (r *FakeRepository) firstEnabledLanguageLocked() string {
+	out := make([]domain.Language, 0, len(r.languages))
+	for _, l := range r.languages {
+		out = append(out, l)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Code < out[j].Code })
+	return firstEnabledLanguage(out)
 }
 
 func (r *FakeRepository) CreateRefreshToken(_ context.Context, token domain.RefreshToken) error {
@@ -503,14 +544,7 @@ func (r *FakeRepository) LLMCalls() []domain.LLMCall {
 // --- clone / error helpers -------------------------------------------------
 
 func cloneMeta(m map[string]any) map[string]any {
-	if m == nil {
-		return nil
-	}
-	out := make(map[string]any, len(m))
-	for k, v := range m {
-		out[k] = v
-	}
-	return out
+	return cloneJSONMap(m)
 }
 
 func cloneFloat(p *float64) *float64 {
@@ -522,7 +556,7 @@ func cloneFloat(p *float64) *float64 {
 }
 
 func cloneUser(u domain.User) domain.User {
-	u.Settings = cloneMeta(u.Settings)
+	u.Settings = cloneJSONMap(u.Settings)
 	u.LastLogin = cloneFloat(u.LastLogin)
 	return u
 }
@@ -534,7 +568,7 @@ func cloneRefreshToken(token domain.RefreshToken) domain.RefreshToken {
 }
 
 func cloneItem(it domain.KnowledgeItem) domain.KnowledgeItem {
-	it.Metadata = cloneMeta(it.Metadata)
+	it.Metadata = cloneJSONMap(it.Metadata)
 	return it
 }
 

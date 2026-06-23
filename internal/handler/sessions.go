@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	authn "github.com/dleiferives/tifl/internal/auth"
@@ -154,19 +155,40 @@ func (h *Handler) generateSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
 		return
 	}
-	if req.Language == "" {
+
+	language := strings.ToLower(strings.TrimSpace(req.Language))
+	level := strings.TrimSpace(req.Level)
+	if language == "" || level == "" {
+		profile, err := h.currentProfile(r)
+		if err != nil {
+			h.writeProfileError(w, err)
+			return
+		}
+		if language == "" {
+			language = profile.ActiveLanguage
+		}
+		if level == "" {
+			level = profile.Level
+		}
+	}
+	if language == "" {
 		writeError(w, http.StatusBadRequest, errors.New("language is required"))
 		return
 	}
-	if _, err := h.repo.GetLanguage(r.Context(), req.Language); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("unknown language %q", req.Language))
+	if !domain.ValidLearnerLevel(level) {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("unsupported level %q", level))
+		return
+	}
+	languageRow, err := h.repo.GetLanguage(r.Context(), language)
+	if err != nil || !languageRow.Enabled {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("unknown language %q", language))
 		return
 	}
 
 	sess, err := h.repo.CreateSession(r.Context(), domain.Session{
 		UserID:           h.currentUserID(r),
-		Language:         req.Language,
-		Level:            levelOrDefault(req.Level),
+		Language:         language,
+		Level:            level,
 		SessionType:      sessionTypeOrDefault(req.SessionType),
 		Topic:            req.Topic,
 		UserExpressions:  req.UserExpressions,
@@ -425,13 +447,6 @@ func (h *Handler) writeSessionLookupError(w http.ResponseWriter, err error) {
 		return
 	}
 	writeError(w, http.StatusInternalServerError, err)
-}
-
-func levelOrDefault(level string) string {
-	if level == "" {
-		return "beginner"
-	}
-	return level
 }
 
 // isTerminal reports whether a session has reached a state generation no longer

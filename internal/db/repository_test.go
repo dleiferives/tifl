@@ -24,6 +24,7 @@ func must(t *testing.T, err error) {
 // behaviour is guaranteed regardless of which backend a deployment selects.
 func testRepository(t *testing.T, newRepo repoFactory) {
 	t.Run("Users", func(t *testing.T) { testUsers(t, newRepo(t)) })
+	t.Run("UserProfile", func(t *testing.T) { testUserProfile(t, newRepo(t)) })
 	t.Run("RefreshTokens", func(t *testing.T) { testRefreshTokens(t, newRepo(t)) })
 	t.Run("Languages", func(t *testing.T) { testLanguages(t, newRepo(t)) })
 	t.Run("KnowledgeItems", func(t *testing.T) { testKnowledgeItems(t, newRepo(t)) })
@@ -33,6 +34,85 @@ func testRepository(t *testing.T, newRepo repoFactory) {
 	t.Run("ReaderEvents", func(t *testing.T) { testReaderEvents(t, newRepo(t)) })
 	t.Run("DefinitionsBreakdowns", func(t *testing.T) { testDefinitionsBreakdowns(t, newRepo(t)) })
 	t.Run("Pipeline", func(t *testing.T) { testPipeline(t, newRepo(t)) })
+}
+
+func testUserProfile(t *testing.T, repo db.Repository) {
+	ctx := context.Background()
+	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "aa", Name: "Disabled", KeyStrategy: "surface", Enabled: false}))
+	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "el", Name: "Greek", KeyStrategy: "lemma", Enabled: true}))
+	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "zz", Name: "Zed", KeyStrategy: "surface", Enabled: true}))
+	user, err := repo.CreateUser(ctx, domain.User{Email: "profile@example.com"})
+	must(t, err)
+
+	profile, err := repo.GetUserProfile(ctx, user.UserID)
+	must(t, err)
+	if profile.ActiveLanguage != "el" || profile.Level != "beginner" ||
+		profile.UILanguage != "en" || profile.Theme != "default" {
+		t.Fatalf("default profile mismatch: %+v", profile)
+	}
+
+	active := "zz"
+	level := "intermediate"
+	ui := "es"
+	theme := "high-contrast"
+	profile, err = repo.UpdateUserProfile(ctx, user.UserID, domain.UserProfilePatch{
+		ActiveLanguage: &active,
+		Level:          &level,
+		UILanguage:     &ui,
+		Theme:          &theme,
+		Preferences: map[string]any{
+			"density": "compact",
+			"reader":  map[string]any{"showGlosses": true},
+		},
+	})
+	must(t, err)
+	if profile.ActiveLanguage != "zz" || profile.Level != "intermediate" ||
+		profile.UILanguage != "es" || profile.Theme != "high-contrast" {
+		t.Fatalf("updated profile mismatch: %+v", profile)
+	}
+	if profile.Preferences["density"] != "compact" {
+		t.Fatalf("preference was not stored: %+v", profile.Preferences)
+	}
+
+	got, err := repo.GetUserProfile(ctx, user.UserID)
+	must(t, err)
+	if got.Theme != "high-contrast" || got.Preferences["density"] != "compact" {
+		t.Fatalf("profile did not persist through users.settings: %+v", got)
+	}
+
+	got.Preferences["density"] = "mutated"
+	got, err = repo.GetUserProfile(ctx, user.UserID)
+	must(t, err)
+	if got.Preferences["density"] != "compact" {
+		t.Fatalf("profile preferences should be returned by copy: %+v", got.Preferences)
+	}
+
+	got, err = repo.UpdateUserProfile(ctx, user.UserID, domain.UserProfilePatch{
+		Preferences: map[string]any{"density": nil, "keyboard_mode": "vim"},
+	})
+	must(t, err)
+	if _, ok := got.Preferences["density"]; ok {
+		t.Fatalf("nil preference value should delete key: %+v", got.Preferences)
+	}
+	if got.Preferences["keyboard_mode"] != "vim" {
+		t.Fatalf("new preference was not merged: %+v", got.Preferences)
+	}
+
+	disabled := "aa"
+	if _, err := repo.UpdateUserProfile(ctx, user.UserID, domain.UserProfilePatch{ActiveLanguage: &disabled}); !errors.Is(err, db.ErrInvalidProfile) {
+		t.Fatalf("disabled language error = %v, want ErrInvalidProfile", err)
+	}
+	badLevel := "expert"
+	if _, err := repo.UpdateUserProfile(ctx, user.UserID, domain.UserProfilePatch{Level: &badLevel}); !errors.Is(err, db.ErrInvalidProfile) {
+		t.Fatalf("invalid level error = %v, want ErrInvalidProfile", err)
+	}
+	badTheme := "bad theme"
+	if _, err := repo.UpdateUserProfile(ctx, user.UserID, domain.UserProfilePatch{Theme: &badTheme}); !errors.Is(err, db.ErrInvalidProfile) {
+		t.Fatalf("invalid theme error = %v, want ErrInvalidProfile", err)
+	}
+	if _, err := repo.GetUserProfile(ctx, "missing"); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("missing profile error = %v, want ErrNotFound", err)
+	}
 }
 
 func testRefreshTokens(t *testing.T, repo db.Repository) {

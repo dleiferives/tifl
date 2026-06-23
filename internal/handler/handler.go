@@ -84,6 +84,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /healthz", h.health)
 	h.registerAPI(mux, "GET /api/v1/ping", h.ping)
 	h.registerAPI(mux, "GET /api/v1/languages", h.listLanguages)
+	h.registerAPI(mux, "GET /api/v1/profile", h.getProfile)
+	h.registerAPI(mux, "PATCH /api/v1/profile", h.patchProfile)
 	h.registerAPI(mux, "GET /api/v1/stories/{id}", h.getStory)
 	h.registerAPI(mux, "GET /api/v1/stories/{id}/definition", h.getDefinition)
 	h.registerAPI(mux, "POST /api/v1/stories/{id}/sentence", h.postSentenceBreakdown)

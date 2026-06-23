@@ -21,6 +21,10 @@ import (
 // ErrNotFound is returned by Get* methods when no row matches.
 var ErrNotFound = errors.New("db: not found")
 
+// ErrInvalidProfile is returned when a profile update would store a value that
+// violates repository-owned invariants, such as selecting a disabled language.
+var ErrInvalidProfile = errors.New("db: invalid profile")
+
 // ErrRefreshTokenReuse means a previously rotated refresh token was presented
 // again. The backend atomically revokes that token family before returning it.
 var ErrRefreshTokenReuse = errors.New("db: refresh token reuse detected")
@@ -38,6 +42,8 @@ type Repository interface {
 	GetUserByEmail(ctx context.Context, email string) (domain.User, error)
 	EnsureLocalUser(ctx context.Context) (domain.User, error)
 	UpdateUserLastLogin(ctx context.Context, userID string, at float64) error
+	GetUserProfile(ctx context.Context, userID string) (domain.UserProfile, error)
+	UpdateUserProfile(ctx context.Context, userID string, patch domain.UserProfilePatch) (domain.UserProfile, error)
 
 	// Refresh tokens. Rotation is atomic: the old token is invalidated and the
 	// replacement inserted in one transaction. Reuse of an already-rotated
