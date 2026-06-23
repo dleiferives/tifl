@@ -290,10 +290,20 @@ breathings. Simpler Unicode normalization than polytonic Ancient Greek.
 Split on whitespace, strip leading/trailing punctuation, NFC-normalize, preserve
 the original surface form including stress accent.
 
-**Key resolution (v1):** Normalized surface — lowercase, strip punctuation, NFC
-normalize. Not true lemmatization (e.g. "άνθρωπο" → key "άνθρωπο", not "άνθρωπος")
-but functional for invariable words which are the most frequent. TODO: replace
-with spaCy `el_core_news_sm` or a morphological lookup table.
+**Key resolution (v1):** NFC normalize, strip leading/trailing punctuation,
+lowercase, then check a bundled form-to-lemma table for common beginner forms
+from the frequency list. If no table entry exists, fall back to the normalized
+surface. This keeps high-frequency invariable words stable while preventing the
+most common noun, adjective, and verb inflections from fragmenting into separate
+knowledge keys. The table is deliberately small and deterministic: no Python
+runtime, network service, or LLM call is required.
+
+The v1 table covers tested forms for frequent nouns such as `άνθρωπος`, `παιδί`,
+`σπίτι`, `βιβλίο`; adjectives such as `καλός`, `μεγάλος`, `εύκολος`; and core
+verbs such as `είμαι`, `έχω`, `κάνω`, `πάω`, `πηγαίνω`, `βλέπω`, `λέω`, and
+`θέλω`. It is not a complete Modern Greek morphological analyzer. Existing
+pre-release development databases may still contain older normalized-surface keys;
+no migration is planned until the key model has real user data behind it.
 
 **Key resolution (target):** spaCy `el_core_news_sm` provides lemmatization for
 Modern Greek. A lookup table (top 5,000 lemmas × full paradigm forms) would cover

@@ -1,9 +1,9 @@
 // Package el is the Modern Greek language plugin (ISO 639-1: "el"). It is the
 // reference implementation of the lang.Language interface. Key strategy: lemma —
 // every surface form should resolve to its dictionary headword. v1 key resolution
-// is a normalized-surface approximation; replace with spaCy el_core_news_sm or a
-// morphological lookup table when precision matters. See
-// context/language-plugins.md ("Modern Greek: The Reference Implementation").
+// uses a small bundled form-to-lemma table for common beginner forms and falls
+// back to normalized surface forms. See context/language-plugins.md ("Modern
+// Greek: The Reference Implementation").
 package el
 
 import (
@@ -16,10 +16,12 @@ import (
 )
 
 // Greek implements lang.Language for Modern Greek.
-type Greek struct{}
+type Greek struct {
+	resolver keyResolver
+}
 
 // New returns the Modern Greek plugin.
-func New() *Greek { return &Greek{} }
+func New() *Greek { return &Greek{resolver: defaultKeyResolver} }
 
 func (Greek) Code() string                  { return "el" }
 func (Greek) Name() string                  { return "Greek" }
@@ -83,20 +85,28 @@ func (g Greek) Tokenize(text string) []lang.Token {
 	return tokens
 }
 
-// ResolveKey returns the canonical knowledge key for a surface form. In v1 this
-// is a normalized approximation: NFC, lowercase, punctuation stripped. It does
-// NOT produce true lemmas — "άνθρωπο" (accusative) will not resolve to
-// "άνθρωπος" (nominative lemma). Invariable words (particles, prepositions,
-// conjunctions) — which are the most frequent words in any Greek text — resolve
-// correctly because their surface form IS their lemma.
-//
-// TODO: replace with spaCy el_core_news_sm or a form→lemma lookup table covering
-// the top 5,000 Greek lemmas × their paradigm forms.
-func (Greek) ResolveKey(surface string) (string, error) {
+// ResolveKey returns the canonical knowledge key for a surface form. It first
+// performs the same deterministic normalization as the original v1 resolver
+// (NFC, punctuation stripping, lowercase), then checks the bundled common-form
+// lexicon. Unknown forms deliberately fall back to the normalized surface so key
+// resolution is predictable and never needs a runtime network, LLM, or Python
+// dependency.
+func (g Greek) ResolveKey(surface string) (string, error) {
+	s := normalizeKey(surface)
+	if g.resolver == nil {
+		g.resolver = defaultKeyResolver
+	}
+	if lemma, ok := g.resolver.Resolve(s); ok {
+		return lemma, nil
+	}
+	return s, nil
+}
+
+func normalizeKey(surface string) string {
 	s := norm.NFC.String(surface)
 	s = strings.TrimFunc(s, func(r rune) bool { return !unicode.IsLetter(r) })
 	s = strings.ToLower(s)
-	return s, nil
+	return s
 }
 
 // Frequency returns Modern Greek lemmas ordered from most to least common.
