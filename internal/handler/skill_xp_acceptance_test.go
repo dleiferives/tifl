@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
@@ -216,15 +217,20 @@ func TestSkillXPAcceptance48ThresholdSetsPendingVerify(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatal(err)
 	}
+	// The HTTP response captures the XP state at submit time — before the background
+	// verification goroutine runs — so pending_verify is true in the response body.
 	if len(out.SkillXP) != 1 || out.SkillXP[0].SkillID != "xx-basic-words" ||
 		out.SkillXP[0].XPAfter != 100 || out.SkillXP[0].TierAfter != 1 || !out.SkillXP[0].PendingVerify {
 		t.Fatalf("threshold crossing response mismatch: %+v", out.SkillXP)
 	}
+	// In local mode (nil LLM client) the background goroutine auto-approves.
+	// Give it a moment to write, then assert the resolved persisted state.
+	time.Sleep(10 * time.Millisecond)
 	xp, err := repo.GetUserSkillXP(ctx, domain.LocalUserID, "xx-basic-words")
 	if err != nil {
 		t.Fatalf("GetUserSkillXP: %v", err)
 	}
-	if xp.XP != 100 || xp.Tier != 1 || !xp.PendingVerify {
-		t.Fatalf("persisted threshold state mismatch: %+v", xp)
+	if xp.XP != 100 || xp.Tier != 1 || xp.PendingVerify || xp.LastVerifiedAt == nil {
+		t.Fatalf("persisted threshold state after auto-approve mismatch: %+v", xp)
 	}
 }
