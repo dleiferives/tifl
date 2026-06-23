@@ -172,11 +172,16 @@ export async function wordBreakdown(
   );
 }
 
-export async function postReaderEvents(request: APIRequest<"postReaderEvents">): Promise<APIResponse<"postReaderEvents", 202>> {
-  return apiFetch<APIResponse<"postReaderEvents", 202>>(
-    "/reader/events",
-    jsonRequest("POST", request),
-  );
+export async function postReaderEvents(
+  request: APIRequest<"postReaderEvents">,
+  options: { keepalive?: boolean } = {},
+): Promise<APIResponse<"postReaderEvents", 202>> {
+  const init = jsonRequest("POST", request);
+  if (options.keepalive) {
+    // Lets the batch survive a flush fired from visibilitychange/beforeunload.
+    init.keepalive = true;
+  }
+  return apiFetch<APIResponse<"postReaderEvents", 202>>("/reader/events", init, !options.keepalive);
 }
 
 export async function setWordKnowledge(token: string, request: APIRequest<"putWordKnowledge">): Promise<void> {
