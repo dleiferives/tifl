@@ -61,6 +61,12 @@ textarea {
   margin-left: auto;
 }
 
+.auth-state {
+  margin-left: auto;
+  color: #66717f;
+  font-size: 0.9rem;
+}
+
 .app-main {
   width: min(64rem, 100%);
   min-height: calc(100vh - 3.5rem);
@@ -129,6 +135,125 @@ textarea {
   border: 0;
   background: transparent;
   cursor: pointer;
+}
+
+.auth-checking {
+  display: grid;
+  min-height: 100vh;
+  place-content: center;
+  text-align: center;
+}
+
+.auth-checking p {
+  margin: 0.25rem;
+}
+
+.auth-card,
+.account-card {
+  width: min(28rem, 100%);
+  margin: 2rem auto;
+}
+
+.auth-product {
+  margin: 0;
+  color: #66717f;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.auth-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin: 1.5rem 0;
+  border-bottom: 1px solid #d9dee5;
+}
+
+.auth-tabs button {
+  padding: 0.65rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #66717f;
+  cursor: pointer;
+}
+
+.auth-tabs button[aria-selected="true"] {
+  border-bottom-color: #2457a7;
+  color: #111827;
+  font-weight: 650;
+}
+
+.auth-form {
+  display: grid;
+  gap: 1rem;
+}
+
+.auth-form label {
+  display: grid;
+  gap: 0.35rem;
+  font-weight: 650;
+}
+
+.auth-form input {
+  width: 100%;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid #b8c0ca;
+  border-radius: 0.35rem;
+  background: #fff;
+  color: #111827;
+}
+
+.auth-form input:focus {
+  border-color: #2457a7;
+  outline: 3px solid rgb(36 87 167 / 18%);
+}
+
+.primary-button,
+.danger-button {
+  width: fit-content;
+  padding: 0.6rem 0.85rem;
+  border: 1px solid transparent;
+  border-radius: 0.35rem;
+  cursor: pointer;
+}
+
+.primary-button {
+  background: #2457a7;
+  color: #fff;
+}
+
+.danger-button {
+  border-color: #b42318;
+  background: #fff;
+  color: #b42318;
+}
+
+.primary-button:disabled,
+.danger-button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.field-help {
+  margin: -0.4rem 0 0;
+  color: #66717f;
+  font-size: 0.9rem;
+}
+
+.form-error {
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+  border-left: 3px solid #b42318;
+  background: #fff1f0;
+  color: #7a271a;
+}
+
+.account-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 1.5rem 0;
 }
 
 @media (max-width: 36rem) {
