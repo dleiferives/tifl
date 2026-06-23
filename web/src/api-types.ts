@@ -215,7 +215,7 @@ export interface paths {
         put?: never;
         /**
          * Start generating a session (story + tasks)
-         * @description Creates a session and kicks off the staged generation pipeline asynchronously, returning immediately. If language or level is omitted, the current profile's active_language or level is used. Poll progress via /sessions/{id}/events. Returns 503 if no LLM gateway is configured.
+         * @description Creates a session and kicks off the staged generation pipeline asynchronously, returning immediately. If language is omitted, the current profile's active_language is used. If level is omitted, the server derives it from verified skill tiers when the language provides deterministic level rules; otherwise the current profile level is used. Poll progress via /sessions/{id}/events. Returns 503 if no LLM gateway is configured.
          */
         post: operations["generateSession"];
         delete?: never;
@@ -501,7 +501,7 @@ export interface components {
         GenerateRequest: {
             /** @description registered enabled language code, e.g. 'el'; defaults to profile.active_language */
             language?: string;
-            /** @description beginner|elementary|intermediate|upper-intermediate|advanced; defaults to profile.level */
+            /** @description beginner|elementary|intermediate|upper-intermediate|advanced; defaults to derived verified skill level when available, otherwise profile.level */
             level?: string;
             /** @enum {string} */
             session_type?: "system" | "topic_guided" | "expression_guided";
@@ -520,7 +520,7 @@ export interface components {
             /** @description enabled language code used when generation omits language */
             active_language: string;
             /**
-             * @description current generation default; product state that level-derivation can update
+             * @description stored level fallback; session generation may derive a fresher value from verified skill tiers
              * @enum {string}
              */
             level: "beginner" | "elementary" | "intermediate" | "upper-intermediate" | "advanced";
@@ -537,7 +537,7 @@ export interface components {
             /** @description must name an enabled language */
             active_language?: string;
             /**
-             * @description current generation default; clients should not treat this as arbitrary preference state
+             * @description stored level fallback; clients should not treat this as arbitrary preference state
              * @enum {string}
              */
             level?: "beginner" | "elementary" | "intermediate" | "upper-intermediate" | "advanced";

@@ -43,6 +43,20 @@ func (fakeLang) Tokenize(text string) []lang.Token {
 	return out
 }
 
+type levelFakeLang struct {
+	fakeLang
+}
+
+func (levelFakeLang) LevelRules() []lang.LevelRule {
+	return []lang.LevelRule{{
+		From: "beginner",
+		To:   "elementary",
+		Requirements: []lang.LevelRequirement{{
+			SkillIDs: []string{"xx-vocab", "xx-grammar"}, MinTier: 1, MinCount: 2,
+		}},
+	}}
+}
+
 type fixedSelector struct{ items domain.SelectedItems }
 
 func (s fixedSelector) Select(context.Context, selector.SelectRequest) (domain.SelectedItems, error) {
@@ -126,6 +140,51 @@ func newServer(t *testing.T, withBroker bool) (*httptest.Server, *db.FakeReposit
 	return srv, repo
 }
 
+func newLevelRuleServer(t *testing.T) (*httptest.Server, *db.FakeRepository) {
+	t.Helper()
+	ctx := context.Background()
+	repo := db.NewFake()
+	if err := repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "Testish", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.EnsureLocalUser(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, skill := range []domain.Skill{
+		{SkillID: "xx-vocab", Language: "xx", Name: "Vocabulary", Category: "Core", TierCount: 3, XPPerTier: 100},
+		{SkillID: "xx-grammar", Language: "xx", Name: "Grammar", Category: "Core", TierCount: 3, XPPerTier: 100},
+	} {
+		if err := repo.UpsertSkill(ctx, skill); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	langs := lang.NewRegistry()
+	langs.Register(levelFakeLang{})
+	taskRegistry := tasks.DefaultRegistry()
+	client := &llm.FakeClient{Func: func(_ context.Context, kind string, _ llm.LLMRequest) (llm.LLMResponse, error) {
+		switch kind {
+		case "story_generator":
+			return llm.LLMResponse{Text: `{"story":"a a a","estimated_coverage":0.9,"glossary":[]}`}, nil
+		}
+		return llm.LLMResponse{Text: `{"question":"q","options":["x","y"],"correct_index":1}`}, nil
+	}}
+	bg := domain.KnowledgeItem{ItemID: "bg", Key: "a"}
+	p := story.New(story.Deps{
+		Repo:     repo,
+		Selector: fixedSelector{domain.SelectedItems{Background: []domain.KnowledgeItem{bg}}},
+		Client:   client,
+		Langs:    langs,
+		Tasks:    taskRegistry,
+	}, story.Config{})
+
+	mux := http.NewServeMux()
+	handler.New(repo, story.NewBroker(p), client, taskRegistry, langs, "").Register(mux)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv, repo
+}
+
 func TestGenerateSession(t *testing.T) {
 	srv, repo := newServer(t, true)
 
@@ -150,6 +209,75 @@ func TestGenerateSession(t *testing.T) {
 	}
 	if _, err := repo.GetSession(context.Background(), out.SessionID); err != nil {
 		t.Fatalf("session row not created: %v", err)
+	}
+}
+
+func TestGenerateSessionDefaultsToDerivedLevel(t *testing.T) {
+	srv, repo := newLevelRuleServer(t)
+	ctx := context.Background()
+	for _, skillID := range []string{"xx-vocab", "xx-grammar"} {
+		if err := repo.UpsertUserSkillXP(ctx, domain.UserSkillXP{
+			UserID: domain.LocalUserID, SkillID: skillID, Tier: 1, XP: 100, UpdatedAt: 1000,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	resp, err := http.Post(srv.URL+"/api/v1/sessions/generate", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("generate = %d, want 202", resp.StatusCode)
+	}
+	var out struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := repo.GetSession(ctx, out.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.Level != "elementary" {
+		t.Fatalf("session level = %q, want derived elementary", sess.Level)
+	}
+}
+
+func TestGenerateSessionExplicitLevelWinsOverDerived(t *testing.T) {
+	srv, repo := newLevelRuleServer(t)
+	ctx := context.Background()
+	for _, skillID := range []string{"xx-vocab", "xx-grammar"} {
+		if err := repo.UpsertUserSkillXP(ctx, domain.UserSkillXP{
+			UserID: domain.LocalUserID, SkillID: skillID, Tier: 1, XP: 100, UpdatedAt: 1000,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	resp, err := http.Post(srv.URL+"/api/v1/sessions/generate", "application/json",
+		strings.NewReader(`{"level":"beginner"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("generate = %d, want 202", resp.StatusCode)
+	}
+	var out struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := repo.GetSession(ctx, out.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.Level != "beginner" {
+		t.Fatalf("session level = %q, want explicit beginner", sess.Level)
 	}
 }
 

@@ -22,6 +22,7 @@ import (
 // a mux. Handlers stay thin: parse, call a repository/domain function, serialize.
 type Handler struct {
 	repo         db.Repository
+	langs        *lang.Registry
 	broker       *story.Broker             // nil when generation is not configured (no LLM gateway)
 	reader       *reader.Service           // reader signal ingest + rating writes (#9/#10)
 	defs         *reader.DefinitionService // definition resolution + cached breakdowns (#10)
@@ -111,6 +112,7 @@ func New(repo db.Repository, broker *story.Broker, client llm.Client, taskTypes 
 	}))
 	h := &Handler{
 		repo:        repo,
+		langs:       langs,
 		broker:      broker,
 		reader:      reader.NewService(repo, engine, reader.WithSkillAssociator(associator)),
 		defs:        reader.NewDefinitionService(repo, client, nil),
