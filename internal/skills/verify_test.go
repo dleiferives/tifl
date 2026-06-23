@@ -16,7 +16,7 @@ func TestVerificationServiceAutoApproveWhenNoClient(t *testing.T) {
 	repo := setupVerifyRepo(t)
 
 	// Put a skill at tier 1 with pending_verify = true.
-	mustV(t,repo.UpsertUserSkillXP(ctx, domain.UserSkillXP{
+	mustV(t, repo.UpsertUserSkillXP(ctx, domain.UserSkillXP{
 		UserID: domain.LocalUserID, SkillID: "el-vocab-core", XP: 100, Tier: 1,
 		PendingVerify: true, UpdatedAt: 1000,
 	}))
@@ -27,7 +27,7 @@ func TestVerificationServiceAutoApproveWhenNoClient(t *testing.T) {
 	}
 
 	xp, err := repo.GetUserSkillXP(ctx, domain.LocalUserID, "el-vocab-core")
-	mustV(t,err)
+	mustV(t, err)
 	if xp.PendingVerify {
 		t.Error("pending_verify should be cleared after auto-approve")
 	}
@@ -43,7 +43,7 @@ func TestVerificationServiceNoPendingIsNoop(t *testing.T) {
 	ctx := context.Background()
 	repo := setupVerifyRepo(t)
 
-	mustV(t,repo.UpsertUserSkillXP(ctx, domain.UserSkillXP{
+	mustV(t, repo.UpsertUserSkillXP(ctx, domain.UserSkillXP{
 		UserID: domain.LocalUserID, SkillID: "el-vocab-core", XP: 100, Tier: 1,
 		PendingVerify: false, UpdatedAt: 1000,
 	}))
@@ -72,7 +72,7 @@ func TestVerificationServiceLLMPromoteConfirmsTier(t *testing.T) {
 	ctx := context.Background()
 	repo := setupVerifyRepo(t)
 
-	mustV(t,repo.UpsertUserSkillXP(ctx, domain.UserSkillXP{
+	mustV(t, repo.UpsertUserSkillXP(ctx, domain.UserSkillXP{
 		UserID: domain.LocalUserID, SkillID: "el-vocab-core", XP: 100, Tier: 1,
 		PendingVerify: true, UpdatedAt: 1000,
 	}))
@@ -86,7 +86,7 @@ func TestVerificationServiceLLMPromoteConfirmsTier(t *testing.T) {
 	}
 
 	xp, err := repo.GetUserSkillXP(ctx, domain.LocalUserID, "el-vocab-core")
-	mustV(t,err)
+	mustV(t, err)
 	if xp.PendingVerify {
 		t.Error("pending_verify should be cleared after promote")
 	}
@@ -106,7 +106,7 @@ func TestVerificationServiceLLMHoldStepsXPBack(t *testing.T) {
 	repo := setupVerifyRepo(t)
 
 	// Skill: xpPerTier=100, currently at tier 1 with exactly 100 XP (threshold).
-	mustV(t,repo.UpsertUserSkillXP(ctx, domain.UserSkillXP{
+	mustV(t, repo.UpsertUserSkillXP(ctx, domain.UserSkillXP{
 		UserID: domain.LocalUserID, SkillID: "el-vocab-core", XP: 100, Tier: 1,
 		PendingVerify: true, UpdatedAt: 1000,
 	}))
@@ -120,7 +120,7 @@ func TestVerificationServiceLLMHoldStepsXPBack(t *testing.T) {
 	}
 
 	xp, err := repo.GetUserSkillXP(ctx, domain.LocalUserID, "el-vocab-core")
-	mustV(t,err)
+	mustV(t, err)
 	if xp.PendingVerify {
 		t.Error("pending_verify should be cleared after hold")
 	}
@@ -144,34 +144,34 @@ func TestVerificationServiceGathersTaskEvidence(t *testing.T) {
 	story, err := repo.CreateStory(ctx, domain.Story{
 		UserID: domain.LocalUserID, Language: "el", Text: "test", Level: "beginner",
 	})
-	mustV(t,err)
+	mustV(t, err)
 	sess, err := repo.CreateSession(ctx, domain.Session{
 		UserID: domain.LocalUserID, Language: "el", Level: "beginner", StoryID: &story.StoryID,
 	})
-	mustV(t,err)
+	mustV(t, err)
 	item, err := repo.UpsertKnowledgeItem(ctx, domain.KnowledgeItem{Language: "el", ItemType: "word", Key: "λόγος"})
-	mustV(t,err)
+	mustV(t, err)
 	task, err := repo.CreateTask(ctx, domain.Task{
 		SessionID: sess.SessionID, UserID: domain.LocalUserID,
 		TaskType: tasks.TypeFillBlank, Language: "el",
 		Content: map[string]any{"sentence": "ο ___ μιλά"},
 	}, []string{item})
-	mustV(t,err)
+	mustV(t, err)
 	gradedAt := float64(time.Now().Unix())
-	mustV(t,repo.RecordTaskGrade(ctx, domain.LocalUserID, task.TaskID, domain.TaskGrade{
-		Response:    map[string]any{"answer": "λόγος"},
-		Grade:       map[string]any{"correct": true, "score": 1.0, "items_demonstrated": []any{item}},
-		GradedBy:    "rule",
-		GradedAt:    gradedAt,
+	mustV(t, repo.RecordTaskGrade(ctx, domain.LocalUserID, task.TaskID, domain.TaskGrade{
+		Response: map[string]any{"answer": "λόγος"},
+		Grade:    map[string]any{"correct": true, "score": 1.0, "items_demonstrated": []any{item}},
+		GradedBy: "rule",
+		GradedAt: gradedAt,
 	}))
 
 	// Log XP for this task+skill so gatherEvidence finds it.
-	mustV(t,repo.InsertTaskSkillXPLog(ctx, domain.TaskSkillXPLog{
+	mustV(t, repo.InsertTaskSkillXPLog(ctx, domain.TaskSkillXPLog{
 		UserID: domain.LocalUserID, TaskID: task.TaskID, SkillID: "el-vocab-core",
 		XPDelta: 10, XPAfter: 10, LoggedAt: gradedAt,
 	}))
 
-	mustV(t,repo.UpsertUserSkillXP(ctx, domain.UserSkillXP{
+	mustV(t, repo.UpsertUserSkillXP(ctx, domain.UserSkillXP{
 		UserID: domain.LocalUserID, SkillID: "el-vocab-core", XP: 100, Tier: 1,
 		PendingVerify: true, UpdatedAt: 1000,
 	}))
@@ -210,8 +210,8 @@ func setupVerifyRepo(t *testing.T) *db.FakeRepository {
 	t.Helper()
 	ctx := context.Background()
 	repo := db.NewFake()
-	mustV(t,repo.UpsertLanguage(ctx, domain.Language{Code: "el", Name: "Greek", KeyStrategy: "lemma", Enabled: true}))
-	mustV(t,repo.UpsertSkill(ctx, domain.Skill{
+	mustV(t, repo.UpsertLanguage(ctx, domain.Language{Code: "el", Name: "Greek", KeyStrategy: "lemma", Enabled: true}))
+	mustV(t, repo.UpsertSkill(ctx, domain.Skill{
 		SkillID: "el-vocab-core", Language: "el", Name: "Core Vocab",
 		Category: "Vocabulary", TierCount: 3, XPPerTier: 100,
 	}))

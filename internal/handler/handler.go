@@ -23,12 +23,12 @@ import (
 type Handler struct {
 	repo         db.Repository
 	langs        *lang.Registry
-	broker       *story.Broker             // nil when generation is not configured (no LLM gateway)
-	reader       *reader.Service           // reader signal ingest + rating writes (#9/#10)
-	defs         *reader.DefinitionService // definition resolution + cached breakdowns (#10)
-	taskTypes    *tasks.Registry           // task-type lookup for grading + presentation
-	grader       *tasks.Grader             // routes rule vs LLM grading
-	acquire      *acquire.Engine           // folds grades into user_knowledge signals
+	broker       *story.Broker                   // nil when generation is not configured (no LLM gateway)
+	reader       *reader.Service                 // reader signal ingest + rating writes (#9/#10)
+	defs         *reader.DefinitionService       // definition resolution + cached breakdowns (#10)
+	taskTypes    *tasks.Registry                 // task-type lookup for grading + presentation
+	grader       *tasks.Grader                   // routes rule vs LLM grading
+	acquire      *acquire.Engine                 // folds grades into user_knowledge signals
 	skillAssoc   *skillassoc.Associator          // lazy item -> skill association materializer (#68)
 	skillXP      *skillassoc.XPService           // task grade -> user_skill_xp + audit logs (#70/#71)
 	skillVerify  *skillassoc.VerificationService // background tier verification + auto-approve (#49)
