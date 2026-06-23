@@ -72,3 +72,18 @@ HTTP contract.
 Session generation uses this profile as a default source: explicit
 `language`/`level` values in `POST /api/v1/sessions/generate` take precedence;
 omitted values come from the current profile.
+
+## Web settings behavior
+
+The web settings route persists `theme`, `active_language`, and `ui_language`
+through `PATCH /api/v1/profile`. Controls save immediately.
+
+Theme selection is also cached under the local-storage key `tifl.theme`. A small
+script in `web/index.html` validates and applies that cached value before loading
+the stylesheet or SolidJS bundle, which prevents a default-theme flash during
+startup. Once a profile is loaded, its server-side theme is authoritative and
+refreshes the local cache.
+
+The shipped theme IDs are `default`, `paper`, and `high-contrast`. Shared tokens
+are defined in `web/src/style.css`, including the `--level-*` knowledge ramp and
+`--reader-cursor` used by the reader.
