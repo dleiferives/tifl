@@ -19,7 +19,7 @@ export async function initializeAuthentication() {
     await acceptAuthentication(await refresh());
     return;
   } catch (error) {
-    if (error instanceof APIError && error.status === 404) {
+    if (error instanceof APIError && (error.status === 404 || error.status === 405)) {
       try {
         const profile = await getProfile();
         appStore.setLocalMode(profile);

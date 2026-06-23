@@ -4,8 +4,18 @@ import { appStore } from "../store";
 
 export function LoginView() {
   return (
-    <Show when={appStore.authStatus() === "authenticated"} fallback={<AuthenticationForms />}>
-      <AccountPanel />
+    <Show
+      when={appStore.authStatus() !== "local"}
+      fallback={
+        <section>
+          <h1>Local mode</h1>
+          <p>This installation does not require an account.</p>
+        </section>
+      }
+    >
+      <Show when={appStore.authStatus() === "authenticated"} fallback={<AuthenticationForms />}>
+        <AccountPanel />
+      </Show>
     </Show>
   );
 }
