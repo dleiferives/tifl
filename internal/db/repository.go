@@ -128,6 +128,21 @@ type Repository interface {
 	GetTask(ctx context.Context, userID, taskID string) (domain.Task, error)
 	RecordTaskGrade(ctx context.Context, userID, taskID string, g domain.TaskGrade) error
 
+	// Skills — storage foundation for the competency/XP system. Skill definitions
+	// are language-provided data, but the repository owns idempotent persistence,
+	// item associations, user XP rows, and append-only XP logs.
+	UpsertSkill(ctx context.Context, skill domain.Skill) error
+	ListSkills(ctx context.Context, language string) ([]domain.Skill, error)
+	GetSkill(ctx context.Context, skillID string) (domain.Skill, error)
+	UpsertItemSkillAssociations(ctx context.Context, itemID string, skillIDs []string) error
+	ListItemSkillAssociations(ctx context.Context, itemIDs []string) ([]domain.ItemSkillAssociation, error)
+	ListSkillAssociations(ctx context.Context, skillID string) ([]domain.ItemSkillAssociation, error)
+	GetUserSkillXP(ctx context.Context, userID, skillID string) (domain.UserSkillXP, error)
+	ListUserSkillXP(ctx context.Context, userID string, skillIDs []string) ([]domain.UserSkillXP, error)
+	UpsertUserSkillXP(ctx context.Context, xp domain.UserSkillXP) error
+	InsertTaskSkillXPLog(ctx context.Context, row domain.TaskSkillXPLog) error
+	ListTaskSkillXPLog(ctx context.Context, userID string, limit int) ([]domain.TaskSkillXPLog, error)
+
 	// Definitions & breakdowns — the global, shared, cached reader resources (not
 	// user-scoped). ListDefinitions returns every source's entry for a (language,
 	// key); UpsertDefinition is keyed by (language, key, source) so Wiktionary and
