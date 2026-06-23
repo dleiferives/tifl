@@ -781,6 +781,18 @@ export interface components {
         SubmitTaskResponse: {
             task_id: string;
             grade: components["schemas"]["Grade"];
+            /** @description Skill XP deltas persisted for this accepted grade. */
+            skill_xp: components["schemas"]["SkillXPDelta"][];
+        };
+        SkillXPDelta: {
+            skill_id: string;
+            xp_delta: number;
+            xp_before: number;
+            xp_after: number;
+            tier_before: number;
+            tier_after: number;
+            /** @description True when the skill crossed a tier threshold and awaits verification. */
+            pending_verify: boolean;
         };
     };
     responses: {

@@ -645,12 +645,13 @@ paths:
       description: >
         Grades the submitted response, persists it, and folds the outcome into
         user_knowledge (task_total for every targeted item, task_correct for the
-        demonstrated ones). Rule-graded types (comprehension_mc, fill_blank) grade
-        in-process with no model call; LLM-graded types (production) route through
-        the gateway and return 503 when no gateway is configured. input_method is
-        a property of the response — only "typed" is supported today (scan/audio
-        later). A task that already carries a grade is rejected with 409;
-        re-submission to improve a grade is future work.
+        demonstrated ones), then applies skill XP changes for associated target
+        skills. Rule-graded types (comprehension_mc, fill_blank) grade in-process
+        with no model call; LLM-graded types (production) route through the gateway
+        and return 503 when no gateway is configured. input_method is a property
+        of the response — only "typed" is supported today (scan/audio later). A
+        task that already carries a grade is rejected with 409; re-submission to
+        improve a grade is future work.
       operationId: submitTask
       parameters:
         - name: id
@@ -1138,7 +1139,32 @@ components:
       properties:
         task_id: { type: string }
         grade: { $ref: "#/components/schemas/Grade" }
-      required: [task_id, grade]
+        skill_xp:
+          type: array
+          description: Skill XP deltas persisted for this accepted grade.
+          items:
+            $ref: "#/components/schemas/SkillXPDelta"
+      required: [task_id, grade, skill_xp]
+    SkillXPDelta:
+      type: object
+      properties:
+        skill_id: { type: string }
+        xp_delta: { type: integer }
+        xp_before: { type: integer, minimum: 0 }
+        xp_after: { type: integer, minimum: 0 }
+        tier_before: { type: integer, minimum: 0 }
+        tier_after: { type: integer, minimum: 0 }
+        pending_verify:
+          type: boolean
+          description: True when the skill crossed a tier threshold and awaits verification.
+      required:
+        - skill_id
+        - xp_delta
+        - xp_before
+        - xp_after
+        - tier_before
+        - tier_after
+        - pending_verify
   responses:
     BadRequest:
       description: Bad request

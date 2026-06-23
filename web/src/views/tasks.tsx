@@ -6,6 +6,7 @@ import { appStore } from "../store";
 
 type Task = APISchema<"Task">;
 type Grade = APISchema<"Grade">;
+type SkillXPDelta = APISchema<"SkillXPDelta">;
 type SubmitRequest = APIRequest<"submitTask">;
 type ResponseStore = Record<string, unknown>;
 
@@ -149,7 +150,7 @@ export function TasksView(props: { sessionId: string }) {
       const result = await submitTask(task.task_id, request);
       setTasks(index, "grade", result.grade);
       setTasks(index, "graded", true);
-      announceGrade(result.grade);
+      announceGrade(result.grade, result.skill_xp);
     } catch (error) {
       if (error instanceof APIError && error.status === 409) {
         const fresh = await getTask(task.task_id);
@@ -320,11 +321,15 @@ function GradeView(props: { grade?: Grade }) {
   );
 }
 
-// announceGrade is the seam for #99 (surface XP/skill changes after grading). The
-// submit response carries only the grade today — no XP or skill-tier deltas — so
-// we announce the grade result. When the API returns XP/tier changes, fold them
-// into this toast instead of re-deriving them here.
-function announceGrade(grade: Grade) {
+function announceGrade(grade: Grade, skillXP: SkillXPDelta[]) {
+  const xpDelta = skillXP.reduce((sum, change) => sum + change.xp_delta, 0);
+  const pending = skillXP.filter((change) => change.pending_verify).length;
+  if (xpDelta !== 0) {
+    const sign = xpDelta > 0 ? "+" : "";
+    const pendingText = pending > 0 ? ` ${pending} skill${pending === 1 ? "" : "s"} pending verification.` : "";
+    appStore.showToast(`${sign}${xpDelta} skill XP.${pendingText}`, "info");
+    return;
+  }
   if (grade.correct) {
     const items = grade.items_demonstrated?.length ?? 0;
     appStore.showToast(
