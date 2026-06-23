@@ -69,6 +69,12 @@ type SkillDefinitionProvider interface {
 	SkillDefinitions() []SkillDefinition
 }
 
+// LevelRuleProvider is optionally implemented by language plugins that define
+// deterministic learner-level promotion rules over their skill catalogue.
+type LevelRuleProvider interface {
+	LevelRules() []LevelRule
+}
+
 // SkillDefinition describes one language competency. Concept is the stable
 // grammatical/semantic handle prompt builders can later map to
 // SkillConstraints, while Associations is an explicit small key map for #68.
@@ -84,6 +90,24 @@ type SkillDefinition struct {
 type SkillAssociationDeclaration struct {
 	ItemType string
 	Keys     []string
+}
+
+// LevelRule promotes a learner from one level label to the next once every
+// requirement is satisfied.
+type LevelRule struct {
+	From         string
+	To           string
+	Requirements []LevelRequirement
+}
+
+// LevelRequirement selects skills by category and/or explicit id and requires a
+// minimum verified tier over either a count, a fraction, or both.
+type LevelRequirement struct {
+	Category    string
+	SkillIDs    []string
+	MinTier     int
+	MinCount    int
+	MinFraction float64
 }
 
 // DefaultNormalize is the script-generic answer normalization most languages

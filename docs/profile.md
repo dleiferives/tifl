@@ -7,7 +7,8 @@ preferences.
 
 - `active_language`: the enabled language used when session generation omits a
   language.
-- `level`: the current learner level used when session generation omits a level.
+- `level`: the stored learner level used as a fallback when deterministic level
+  derivation is unavailable.
 - `ui_language`: the language used for UI text and glosses.
 - `theme`: the selected theme id.
 - `preferences`: arbitrary client-owned settings that do not need server-side
@@ -17,11 +18,11 @@ preferences.
 typed top-level fields are validated by the server. Unknown top-level fields are
 rejected; client-specific values belong under `preferences`.
 
-`level` is product state, not an arbitrary visual preference. In v0.1 it is
-stored here as the current generation default so onboarding, tests, and the later
-level-promotion system have one stable write path. When deterministic level
-derivation lands, that system can update this same field while sessions continue
-to snapshot the level they used.
+`level` is product state, not an arbitrary visual preference. It is stored here
+so onboarding, tests, and languages without deterministic level rules have one
+stable write path. When a language provides level rules, session generation can
+derive the current level from verified skill tiers without mutating the stored
+profile value. Sessions continue to snapshot the level they used.
 
 `preferences` is shallow-merged. A key with a JSON `null` value deletes that
 preference.
@@ -69,9 +70,12 @@ future feature needs indexed or relational profile fields, a `user_profiles` tab
 can be added and backfilled from `users.settings.profile` without changing the
 HTTP contract.
 
-Session generation uses this profile as a default source: explicit
-`language`/`level` values in `POST /api/v1/sessions/generate` take precedence;
-omitted values come from the current profile.
+Session generation uses explicit `language`/`level` values in
+`POST /api/v1/sessions/generate` first. If `language` is omitted, the server uses
+the profile's `active_language`. If `level` is omitted and the active language
+provides deterministic level rules, the server derives the level from verified
+skill tiers; skill tiers pending verification do not count. If derivation is not
+available, the server falls back to the profile's stored `level`.
 
 ## Web settings behavior
 

@@ -127,8 +127,12 @@ Level: Elementary → Intermediate
             Any 3 skills in "intermediate constructions" category at tier 1+
 ```
 
-Level promotion is computed by the hard system (no LLM). The computation runs
-after each session completion and after each skill tier change.
+Level promotion is computed by the hard system (no LLM). Missing XP rows count as
+tier 0. Tiers pending verification do not count for derived level promotion until
+the verifier confirms them; this keeps session calibration based on demonstrated,
+confirmed knowledge. The pure derivation path does not mutate the stored profile
+level, though a later background promotion workflow may choose to persist a
+confirmed derived level.
 
 ---
 

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,8 @@ import (
 	authn "github.com/dleiferives/tifl/internal/auth"
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
+	"github.com/dleiferives/tifl/internal/lang"
+	skillcalc "github.com/dleiferives/tifl/internal/skills"
 	"github.com/dleiferives/tifl/internal/story"
 )
 
@@ -170,6 +173,7 @@ func (h *Handler) generateSession(w http.ResponseWriter, r *http.Request) {
 
 	language := strings.ToLower(strings.TrimSpace(req.Language))
 	level := strings.TrimSpace(req.Level)
+	explicitLevel := level != ""
 	if language == "" || level == "" {
 		profile, err := h.currentProfile(r)
 		if err != nil {
@@ -187,13 +191,23 @@ func (h *Handler) generateSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("language is required"))
 		return
 	}
-	if !domain.ValidLearnerLevel(level) {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("unsupported level %q", level))
-		return
-	}
 	languageRow, err := h.repo.GetLanguage(r.Context(), language)
 	if err != nil || !languageRow.Enabled {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("unknown language %q", language))
+		return
+	}
+	if !explicitLevel {
+		derived, ok, err := h.deriveLevel(r.Context(), h.currentUserID(r), language)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Errorf("deriving learner level: %w", err))
+			return
+		}
+		if ok {
+			level = derived
+		}
+	}
+	if !domain.ValidLearnerLevel(level) {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("unsupported level %q", level))
 		return
 	}
 
@@ -213,6 +227,38 @@ func (h *Handler) generateSession(w http.ResponseWriter, r *http.Request) {
 
 	h.broker.StartGenerate(sess.SessionID)
 	writeJSON(w, http.StatusAccepted, sessionResponse{SessionID: sess.SessionID, Status: string(domain.StatusGenerating)})
+}
+
+func (h *Handler) deriveLevel(ctx context.Context, userID, languageCode string) (string, bool, error) {
+	if h.langs == nil {
+		return "", false, nil
+	}
+	l, ok := h.langs.Get(languageCode)
+	if !ok {
+		return "", false, nil
+	}
+	provider, ok := l.(lang.LevelRuleProvider)
+	if !ok {
+		return "", false, nil
+	}
+	rules := provider.LevelRules()
+	if len(rules) == 0 {
+		return "", false, nil
+	}
+	skills, err := h.repo.ListSkills(ctx, languageCode)
+	if err != nil {
+		return "", false, err
+	}
+	skillIDs := make([]string, 0, len(skills))
+	for _, skill := range skills {
+		skillIDs = append(skillIDs, skill.SkillID)
+	}
+	xpRows, err := h.repo.ListUserSkillXP(ctx, userID, skillIDs)
+	if err != nil {
+		return "", false, err
+	}
+	result := skillcalc.DeriveLevel(skills, xpRows, rules)
+	return result.Level, true, nil
 }
 
 func (h *Handler) retrySession(w http.ResponseWriter, r *http.Request) {
