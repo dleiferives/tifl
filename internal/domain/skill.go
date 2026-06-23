@@ -31,6 +31,17 @@ type UserSkillXP struct {
 	UpdatedAt      float64
 }
 
+// SkillProgress combines a skill definition with the current user's progress.
+// Missing user rows are represented as tier 0 / 0 XP with nil timestamps.
+type SkillProgress struct {
+	Skill
+	XP             int
+	Tier           int
+	PendingVerify  bool
+	LastVerifiedAt *float64
+	UpdatedAt      *float64
+}
+
 // TaskSkillXPLog is an append-only audit row for XP changes caused by graded
 // tasks. Later XP logic owns the delta calculation; storage only records it.
 type TaskSkillXPLog struct {

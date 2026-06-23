@@ -18,14 +18,14 @@ func TestSkillsDefaultsToActiveLanguageAndShowsProgressStates(t *testing.T) {
 	if err := repo.UpsertSkill(ctx, domain.Skill{
 		SkillID: "xx-cases", Language: "xx", Name: "Subject Forms",
 		Description: "Recognize the form used for sentence subjects.", Category: "Cases",
-		TierCount: 3, XPPerTier: 100, SortOrder: 20,
+		TierCount: 3, XPPerTier: 100, SortOrder: testSkillOrder(20),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.UpsertSkill(ctx, domain.Skill{
 		SkillID: "xx-verbs", Language: "xx", Name: "Present Verbs",
 		Description: "Read simple present-tense verbs.", Category: "Verb Forms",
-		TierCount: 3, XPPerTier: 100, SortOrder: 10,
+		TierCount: 3, XPPerTier: 100, SortOrder: testSkillOrder(10),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestSkillsSupportsExplicitLanguageAndRecentPromotion(t *testing.T) {
 	if err := repo.UpsertSkill(ctx, domain.Skill{
 		SkillID: "yy-pragmatics", Language: "yy", Name: "Polite Requests",
 		Description: "Use softened request forms.", Category: "Pragmatics",
-		TierCount: 3, XPPerTier: 50, SortOrder: 1,
+		TierCount: 3, XPPerTier: 50, SortOrder: testSkillOrder(1),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -89,6 +89,10 @@ func TestSkillsSupportsExplicitLanguageAndRecentPromotion(t *testing.T) {
 	if skill.TierLabel != "Acquired" || skill.XPToNext != 0 || skill.ProgressRatio != 1 || !skill.RecentlyPromoted {
 		t.Fatalf("recent promotion mismatch: %+v", skill)
 	}
+}
+
+func testSkillOrder(order int) *int {
+	return &order
 }
 
 func getSkills(t *testing.T, url string) skillTreePayload {

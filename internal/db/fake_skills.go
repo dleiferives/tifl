@@ -132,6 +132,28 @@ func (r *FakeRepository) UpsertUserSkillXP(_ context.Context, xp domain.UserSkil
 	return nil
 }
 
+func (r *FakeRepository) ListSkillProgress(_ context.Context, userID, language string) ([]domain.SkillProgress, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []domain.SkillProgress
+	for _, skill := range r.skills {
+		if skill.Language != language {
+			continue
+		}
+		progress := domain.SkillProgress{Skill: cloneSkill(skill)}
+		if xp, ok := r.userSkills[userID+"\x00"+skill.SkillID]; ok {
+			progress.XP = xp.XP
+			progress.Tier = xp.Tier
+			progress.PendingVerify = xp.PendingVerify
+			progress.LastVerifiedAt = cloneFloat(xp.LastVerifiedAt)
+			progress.UpdatedAt = cloneFloat(&xp.UpdatedAt)
+		}
+		out = append(out, progress)
+	}
+	sortSkillProgress(out)
+	return out, nil
+}
+
 func (r *FakeRepository) InsertTaskSkillXPLog(_ context.Context, row domain.TaskSkillXPLog) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -193,20 +215,30 @@ func cloneUserSkillXP(xp domain.UserSkillXP) domain.UserSkillXP {
 
 func sortSkills(skills []domain.Skill) {
 	sort.Slice(skills, func(i, j int) bool {
-		if skills[i].Category != skills[j].Category {
-			return skills[i].Category < skills[j].Category
-		}
-		if (skills[i].SortOrder == nil) != (skills[j].SortOrder == nil) {
-			return skills[i].SortOrder != nil
-		}
-		if skills[i].SortOrder != nil && *skills[i].SortOrder != *skills[j].SortOrder {
-			return *skills[i].SortOrder < *skills[j].SortOrder
-		}
-		if skills[i].Name != skills[j].Name {
-			return skills[i].Name < skills[j].Name
-		}
-		return skills[i].SkillID < skills[j].SkillID
+		return skillLess(skills[i], skills[j])
 	})
+}
+
+func sortSkillProgress(rows []domain.SkillProgress) {
+	sort.Slice(rows, func(i, j int) bool {
+		return skillLess(rows[i].Skill, rows[j].Skill)
+	})
+}
+
+func skillLess(a, b domain.Skill) bool {
+	if a.Category != b.Category {
+		return a.Category < b.Category
+	}
+	if (a.SortOrder == nil) != (b.SortOrder == nil) {
+		return a.SortOrder != nil
+	}
+	if a.SortOrder != nil && *a.SortOrder != *b.SortOrder {
+		return *a.SortOrder < *b.SortOrder
+	}
+	if a.Name != b.Name {
+		return a.Name < b.Name
+	}
+	return a.SkillID < b.SkillID
 }
 
 func sortAssociations(rows []domain.ItemSkillAssociation) {

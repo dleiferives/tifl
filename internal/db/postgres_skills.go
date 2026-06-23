@@ -151,6 +151,41 @@ func (r *PostgresRepository) UpsertUserSkillXP(ctx context.Context, xp domain.Us
 	return err
 }
 
+func (r *PostgresRepository) ListSkillProgress(ctx context.Context, userID, language string) ([]domain.SkillProgress, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT s.skill_id, s.language, s.name, s.description, s.category,
+		        s.tier_count, s.xp_per_tier, s.sort_order,
+		        COALESCE(ux.xp, 0), COALESCE(ux.tier, 0), COALESCE(ux.pending_verify, 0),
+		        ux.last_verified_at, ux.updated_at
+		 FROM skills s
+		 LEFT JOIN user_skill_xp ux
+		   ON ux.skill_id = s.skill_id AND ux.user_id = $1
+		 WHERE s.language = $2
+		 ORDER BY s.category, s.sort_order IS NULL, s.sort_order, s.name, s.skill_id`, userID, language)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domain.SkillProgress
+	for rows.Next() {
+		var (
+			p           domain.SkillProgress
+			description *string
+			pending     int
+		)
+		if err := rows.Scan(&p.SkillID, &p.Language, &p.Name, &description, &p.Category,
+			&p.TierCount, &p.XPPerTier, &p.SortOrder,
+			&p.XP, &p.Tier, &pending, &p.LastVerifiedAt, &p.UpdatedAt); err != nil {
+			return nil, err
+		}
+		p.Description = derefStr(description)
+		p.PendingVerify = pending != 0
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 func (r *PostgresRepository) InsertTaskSkillXPLog(ctx context.Context, row domain.TaskSkillXPLog) error {
 	if row.LogID == "" {
 		row.LogID = id.New()
