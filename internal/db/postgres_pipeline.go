@@ -57,6 +57,58 @@ func (r *PostgresRepository) GetSession(ctx context.Context, sessionID string) (
 	return scanPgSession(row)
 }
 
+func (r *PostgresRepository) ListSessions(ctx context.Context, userID string, opts domain.ListSessionsOptions) ([]domain.SessionOverview, error) {
+	opts = normalizeListSessionsOptions(opts)
+	rows, err := r.pool.Query(ctx,
+		`SELECT session_id, user_id, story_id, language, level, selected_targets, selected_new,
+		        session_type, topic, user_expressions, expression_output, status,
+		        created_at, reading_started_at, completed_at,
+		        (SELECT COUNT(*) FROM tasks t WHERE t.session_id = s.session_id AND t.user_id = s.user_id),
+		        (SELECT COUNT(*) FROM tasks t
+		          WHERE t.session_id = s.session_id AND t.user_id = s.user_id
+		            AND (t.graded_at IS NOT NULL OR COALESCE(t.graded_by, '') <> ''))
+		 FROM sessions s
+		 WHERE s.user_id = $1
+		 ORDER BY s.created_at DESC, s.session_id DESC
+		 LIMIT $2 OFFSET $3`, userID, opts.Limit, opts.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domain.SessionOverview
+	for rows.Next() {
+		overview, err := scanPgSessionOverview(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, overview)
+	}
+	return out, rows.Err()
+}
+
+func (r *PostgresRepository) GetSessionDetail(ctx context.Context, userID, sessionID string) (domain.SessionDetail, error) {
+	row := r.pool.QueryRow(ctx,
+		`SELECT session_id, user_id, story_id, language, level, selected_targets, selected_new,
+		        session_type, topic, user_expressions, expression_output, status,
+		        created_at, reading_started_at, completed_at,
+		        (SELECT COUNT(*) FROM tasks t WHERE t.session_id = s.session_id AND t.user_id = s.user_id),
+		        (SELECT COUNT(*) FROM tasks t
+		          WHERE t.session_id = s.session_id AND t.user_id = s.user_id
+		            AND (t.graded_at IS NOT NULL OR COALESCE(t.graded_by, '') <> ''))
+		 FROM sessions s
+		 WHERE s.session_id = $1 AND s.user_id = $2`, sessionID, userID)
+	overview, err := scanPgSessionOverview(row)
+	if err != nil {
+		return domain.SessionDetail{}, err
+	}
+	stages, err := r.ListStages(ctx, sessionID)
+	if err != nil {
+		return domain.SessionDetail{}, err
+	}
+	return domain.SessionDetail{SessionOverview: overview, Stages: stages}, nil
+}
+
 func (r *PostgresRepository) UpdateSessionStatus(ctx context.Context, sessionID string, status domain.SessionStatus) error {
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE sessions SET status = $1 WHERE session_id = $2`, string(status), sessionID)
@@ -363,15 +415,37 @@ func (r *PostgresRepository) ListSessionTasks(ctx context.Context, sessionID str
 // --- scan + helpers --------------------------------------------------------
 
 func scanPgSession(row pgx.Row) (domain.Session, error) {
+	return scanPgSessionPrefix(row)
+}
+
+func scanPgSessionOverview(row rowScanner) (domain.SessionOverview, error) {
+	var total, completed int64
+	s, err := scanPgSessionPrefix(row, &total, &completed)
+	if err != nil {
+		return domain.SessionOverview{}, err
+	}
+	return domain.SessionOverview{
+		Session: s,
+		SelectedCounts: domain.SelectedItemCounts{
+			Targets: len(s.SelectedTargets),
+			New:     len(s.SelectedNew),
+		},
+		TaskProgress: domain.TaskProgress{Total: int(total), Completed: int(completed)},
+	}, nil
+}
+
+func scanPgSessionPrefix(row rowScanner, extra ...any) (domain.Session, error) {
 	var (
 		s                       domain.Session
 		sessType, status        string
 		storyID, topic, exprOut *string
 		targets, news, exprs    []byte
 	)
-	err := row.Scan(&s.SessionID, &s.UserID, &storyID, &s.Language, &s.Level,
+	dest := []any{&s.SessionID, &s.UserID, &storyID, &s.Language, &s.Level,
 		&targets, &news, &sessType, &topic, &exprs, &exprOut, &status,
-		&s.CreatedAt, &s.ReadingStartedAt, &s.CompletedAt)
+		&s.CreatedAt, &s.ReadingStartedAt, &s.CompletedAt}
+	dest = append(dest, extra...)
+	err := row.Scan(dest...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.Session{}, ErrNotFound
 	}

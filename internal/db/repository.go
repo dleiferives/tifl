@@ -89,6 +89,8 @@ type Repository interface {
 	// assigns a session_id (when blank), created_at, and a pending status.
 	CreateSession(ctx context.Context, s domain.Session) (domain.Session, error)
 	GetSession(ctx context.Context, sessionID string) (domain.Session, error)
+	ListSessions(ctx context.Context, userID string, opts domain.ListSessionsOptions) ([]domain.SessionOverview, error)
+	GetSessionDetail(ctx context.Context, userID, sessionID string) (domain.SessionDetail, error)
 	UpdateSessionStatus(ctx context.Context, sessionID string, status domain.SessionStatus) error
 	// SetSessionSelection records the selected target/new item ids and links the
 	// generated story to the session (story stage output).
@@ -130,4 +132,14 @@ type Repository interface {
 	UpsertDefinition(ctx context.Context, d domain.Definition) error
 	GetBreakdown(ctx context.Context, scope domain.BreakdownScope, language, cacheKey string) (domain.Breakdown, error)
 	UpsertBreakdown(ctx context.Context, b domain.Breakdown) error
+}
+
+func normalizeListSessionsOptions(opts domain.ListSessionsOptions) domain.ListSessionsOptions {
+	if opts.Limit <= 0 {
+		opts.Limit = 20
+	}
+	if opts.Offset < 0 {
+		opts.Offset = 0
+	}
+	return opts
 }

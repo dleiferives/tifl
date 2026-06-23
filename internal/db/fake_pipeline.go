@@ -49,6 +49,60 @@ func (r *FakeRepository) GetSession(_ context.Context, sessionID string) (domain
 	return cloneSession(s), nil
 }
 
+func (r *FakeRepository) ListSessions(_ context.Context, userID string, opts domain.ListSessionsOptions) ([]domain.SessionOverview, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var sessions []domain.Session
+	for _, s := range r.sessions {
+		if s.UserID == userID {
+			sessions = append(sessions, cloneSession(s))
+		}
+	}
+	sort.Slice(sessions, func(i, j int) bool {
+		if sessions[i].CreatedAt != sessions[j].CreatedAt {
+			return sessions[i].CreatedAt > sessions[j].CreatedAt
+		}
+		return sessions[i].SessionID > sessions[j].SessionID
+	})
+
+	start := opts.Offset
+	if start < 0 {
+		start = 0
+	}
+	if start > len(sessions) {
+		start = len(sessions)
+	}
+	end := start + opts.Limit
+	if opts.Limit <= 0 || end > len(sessions) {
+		end = len(sessions)
+	}
+
+	out := make([]domain.SessionOverview, 0, end-start)
+	for _, s := range sessions[start:end] {
+		out = append(out, r.sessionOverviewLocked(s))
+	}
+	return out, nil
+}
+
+func (r *FakeRepository) GetSessionDetail(_ context.Context, userID, sessionID string) (domain.SessionDetail, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	s, ok := r.sessions[sessionID]
+	if !ok || s.UserID != userID {
+		return domain.SessionDetail{}, ErrNotFound
+	}
+	overview := r.sessionOverviewLocked(cloneSession(s))
+	byStage := r.stages[sessionID]
+	stages := make([]domain.GenerationStage, 0, len(byStage))
+	for _, st := range byStage {
+		stages = append(stages, cloneStage(st))
+	}
+	sort.Slice(stages, func(i, j int) bool { return stages[i].Stage < stages[j].Stage })
+	return domain.SessionDetail{SessionOverview: overview, Stages: stages}, nil
+}
+
 func (r *FakeRepository) UpdateSessionStatus(_ context.Context, sessionID string, status domain.SessionStatus) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -75,6 +129,27 @@ func (r *FakeRepository) SetSessionSelection(_ context.Context, sessionID, story
 	s.SelectedNew = append([]string(nil), new...)
 	r.sessions[sessionID] = cloneSession(s)
 	return nil
+}
+
+func (r *FakeRepository) sessionOverviewLocked(s domain.Session) domain.SessionOverview {
+	progress := domain.TaskProgress{}
+	for _, t := range r.tasks {
+		if t.SessionID != s.SessionID || t.UserID != s.UserID {
+			continue
+		}
+		progress.Total++
+		if t.GradedAt != nil || t.GradedBy != "" {
+			progress.Completed++
+		}
+	}
+	return domain.SessionOverview{
+		Session: s,
+		SelectedCounts: domain.SelectedItemCounts{
+			Targets: len(s.SelectedTargets),
+			New:     len(s.SelectedNew),
+		},
+		TaskProgress: progress,
+	}
 }
 
 func (r *FakeRepository) UpsertStage(_ context.Context, st domain.GenerationStage) error {
