@@ -37,6 +37,7 @@ server:
   storage_mode: postgres
   database_url: postgres://x
   auth_mode: jwt
+  jwt_secret: 01234567890123456789012345678901
 `)
 	cfg, err := config.Load(path)
 	if err != nil {
@@ -51,6 +52,24 @@ server:
 	// Unset key falls back to default.
 	if cfg.DBPath != "data/tifl.db" {
 		t.Fatalf("unset key should default: %q", cfg.DBPath)
+	}
+}
+
+func TestLoad_JWTRequiresStrongSecret(t *testing.T) {
+	path := writeCfg(t, "server:\n  auth_mode: jwt\n  jwt_secret: short\n")
+	if _, err := config.Load(path); err == nil {
+		t.Fatal("expected short jwt_secret to fail")
+	}
+}
+
+func TestLoad_InsecureCookieEnv(t *testing.T) {
+	t.Setenv("ALLOW_INSECURE_AUTH_COOKIE", "true")
+	cfg, err := config.Load(filepath.Join(t.TempDir(), "absent.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.AllowInsecureAuthCookie {
+		t.Fatal("expected development cookie switch from env")
 	}
 }
 

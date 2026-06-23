@@ -108,15 +108,27 @@ reader signals, #9 consumes them).
   #42 structure/phrase caching, #43 per-inflection levels, #44 wire the
   knowledge_predictions cache (selector still scores on the fly — always fresh).
 
+## Done — auth & users (#12)
+
+- JWT cloud mode protects every application API route and injects the validated
+  user ID into request context; local mode injects the synthetic `local` user.
+- Registration/login, `/auth/me`, refresh rotation, per-device replay revocation,
+  logout, and logout-all are implemented.
+- Passwords use OWASP-baseline Argon2id. Refresh tokens are opaque 256-bit
+  credentials stored as SHA-256 digests in independent device/session families.
+- Secure, httpOnly, SameSite=Strict refresh cookies are the default; an explicit
+  development switch permits HTTP cookies locally.
+- Process-local auth throttling ships for v0.1; email identity hardening (#53)
+  and distributed abuse controls (#54) are scheduled for v0.2.0.
+
 ## Next (rough order)
 
 1. **Story pipeline** (`internal/story`) — staged, checkpointed generation with
    SSE progress (token-rate ticker); session types.
 2. **Task system** — first task types (comprehension MC, fill-blank) + grading.
 3. **Reader** — `story_tokens` API + signal logging (lookup/rate).
-4. **Auth** — JWT + argon2id (cloud); synthetic `local` user (desktop).
-5. **Web** — api/router/store + reader, home, tasks, settings views.
-6. **Shells** — Tauri desktop (Go sidecar), Capacitor mobile.
+4. **Web** — api/router/store + reader, home, tasks, settings views.
+5. **Shells** — Tauri desktop (Go sidecar), Capacitor mobile.
 
 ## Open decisions to revisit
 

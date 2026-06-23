@@ -38,6 +38,7 @@ server:   # cmd/server
   llm_model: ""
   auth_mode: none
   jwt_secret: ""
+  allow_insecure_auth_cookie: false
   frontend_dir: web/dist
 
 gateway:  # cmd/gateway
@@ -77,10 +78,15 @@ file counts as "unset" and falls through to the default.
 | `llm_model` | `LLM_MODEL` | — | model the server requests (blank ⇒ gateway default) |
 | `auth_mode` | `AUTH_MODE` | `none` | `none` (synthetic local user) or `jwt` (cloud) |
 | `jwt_secret` | `JWT_SECRET` | — | JWT signing key (required when `auth_mode: jwt`) |
+| `allow_insecure_auth_cookie` | `ALLOW_INSECURE_AUTH_COOKIE` | `false` | development-only: allow the refresh cookie over HTTP |
 | `frontend_dir` | `FRONTEND_DIR` | `web/dist` | compiled SolidJS assets to serve |
 
 The server never calls a model provider directly — only the gateway at
 `llm_base_url`. See [backend-server](../context/backend-server.md).
+
+In JWT mode, `jwt_secret` must contain at least 32 bytes or startup fails.
+Production deployments must leave `allow_insecure_auth_cookie` false and expose
+the server over HTTPS. See [Authentication](authentication.md).
 
 ## `gateway:` keys
 

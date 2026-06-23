@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"sync"
 	"time"
@@ -21,6 +22,7 @@ type FakeRepository struct {
 
 	users      map[string]domain.User // user_id -> user
 	emailIndex map[string]string      // email -> user_id (unique)
+	refresh    map[string]domain.RefreshToken
 	languages  map[string]domain.Language
 	items      map[string]domain.KnowledgeItem // item_id -> item
 	itemKeys   map[string]string               // language\x00type\x00key -> item_id
@@ -49,6 +51,7 @@ func NewFake() *FakeRepository {
 	return &FakeRepository{
 		users:      make(map[string]domain.User),
 		emailIndex: make(map[string]string),
+		refresh:    make(map[string]domain.RefreshToken),
 		languages:  make(map[string]domain.Language),
 		items:      make(map[string]domain.KnowledgeItem),
 		itemKeys:   make(map[string]string),
@@ -122,6 +125,99 @@ func (r *FakeRepository) EnsureLocalUser(ctx context.Context) (domain.User, erro
 		UserID: domain.LocalUserID,
 		Email:  "local@tifl.local",
 	})
+}
+
+func (r *FakeRepository) UpdateUserLastLogin(_ context.Context, userID string, at float64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	u, ok := r.users[userID]
+	if !ok {
+		return ErrNotFound
+	}
+	u.LastLogin = &at
+	r.users[userID] = u
+	return nil
+}
+
+func (r *FakeRepository) CreateRefreshToken(_ context.Context, token domain.RefreshToken) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.users[token.UserID]; !ok {
+		return errFakeFK("refresh_tokens.user_id")
+	}
+	if _, exists := r.refresh[token.TokenHash]; exists {
+		return errFakeUnique("refresh_tokens.token_hash")
+	}
+	r.refresh[token.TokenHash] = cloneRefreshToken(token)
+	return nil
+}
+
+func (r *FakeRepository) GetRefreshToken(_ context.Context, tokenHash string) (domain.RefreshToken, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	token, ok := r.refresh[tokenHash]
+	if !ok {
+		return domain.RefreshToken{}, ErrNotFound
+	}
+	return cloneRefreshToken(token), nil
+}
+
+func (r *FakeRepository) RotateRefreshToken(_ context.Context, oldHash string, next domain.RefreshToken, now float64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	old, ok := r.refresh[oldHash]
+	if !ok || old.ExpiresAt <= now {
+		return ErrNotFound
+	}
+	if old.ReplacedByHash != nil {
+		for hash, token := range r.refresh {
+			if token.FamilyID == old.FamilyID && token.RevokedAt == nil {
+				token.RevokedAt = cloneFloat(&now)
+				r.refresh[hash] = token
+			}
+		}
+		return ErrRefreshTokenReuse
+	}
+	if old.RevokedAt != nil {
+		return ErrNotFound
+	}
+	if next.FamilyID != old.FamilyID || next.UserID != old.UserID {
+		return errors.New("db: refresh rotation family/user mismatch")
+	}
+	if _, exists := r.refresh[next.TokenHash]; exists {
+		return errFakeUnique("refresh_tokens.token_hash")
+	}
+	old.RevokedAt = cloneFloat(&now)
+	old.ReplacedByHash = cloneStr(&next.TokenHash)
+	r.refresh[oldHash] = old
+	r.refresh[next.TokenHash] = cloneRefreshToken(next)
+	return nil
+}
+
+func (r *FakeRepository) RevokeRefreshToken(_ context.Context, tokenHash string, now float64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	token, ok := r.refresh[tokenHash]
+	if !ok {
+		return nil
+	}
+	if token.RevokedAt == nil {
+		token.RevokedAt = cloneFloat(&now)
+		r.refresh[tokenHash] = token
+	}
+	return nil
+}
+
+func (r *FakeRepository) RevokeAllRefreshTokens(_ context.Context, userID string, now float64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for hash, token := range r.refresh {
+		if token.UserID == userID && token.RevokedAt == nil {
+			token.RevokedAt = cloneFloat(&now)
+			r.refresh[hash] = token
+		}
+	}
+	return nil
 }
 
 // --- languages -------------------------------------------------------------
@@ -429,6 +525,12 @@ func cloneUser(u domain.User) domain.User {
 	u.Settings = cloneMeta(u.Settings)
 	u.LastLogin = cloneFloat(u.LastLogin)
 	return u
+}
+
+func cloneRefreshToken(token domain.RefreshToken) domain.RefreshToken {
+	token.RevokedAt = cloneFloat(token.RevokedAt)
+	token.ReplacedByHash = cloneStr(token.ReplacedByHash)
+	return token
 }
 
 func cloneItem(it domain.KnowledgeItem) domain.KnowledgeItem {

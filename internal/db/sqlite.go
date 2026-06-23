@@ -107,6 +107,126 @@ func (r *SQLiteRepository) EnsureLocalUser(ctx context.Context) (domain.User, er
 	})
 }
 
+func (r *SQLiteRepository) UpdateUserLastLogin(ctx context.Context, userID string, at float64) error {
+	res, err := r.db.ExecContext(ctx, `UPDATE users SET last_login = ? WHERE user_id = ?`, at, userID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *SQLiteRepository) CreateRefreshToken(ctx context.Context, token domain.RefreshToken) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO refresh_tokens(token_hash, family_id, user_id, issued_at, expires_at, revoked_at, replaced_by_hash)
+		 VALUES(?, ?, ?, ?, ?, ?, ?)`,
+		token.TokenHash, token.FamilyID, token.UserID, token.IssuedAt, token.ExpiresAt,
+		nullFloat(token.RevokedAt), nullString(token.ReplacedByHash))
+	return err
+}
+
+func (r *SQLiteRepository) GetRefreshToken(ctx context.Context, tokenHash string) (domain.RefreshToken, error) {
+	var (
+		token          domain.RefreshToken
+		revoked        sql.NullFloat64
+		replacedByHash sql.NullString
+	)
+	err := r.db.QueryRowContext(ctx,
+		`SELECT token_hash, family_id, user_id, issued_at, expires_at, revoked_at, replaced_by_hash
+		 FROM refresh_tokens WHERE token_hash = ?`, tokenHash).
+		Scan(&token.TokenHash, &token.FamilyID, &token.UserID, &token.IssuedAt, &token.ExpiresAt,
+			&revoked, &replacedByHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.RefreshToken{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.RefreshToken{}, err
+	}
+	if revoked.Valid {
+		token.RevokedAt = &revoked.Float64
+	}
+	if replacedByHash.Valid {
+		token.ReplacedByHash = &replacedByHash.String
+	}
+	return token, nil
+}
+
+func (r *SQLiteRepository) RotateRefreshToken(ctx context.Context, oldHash string, next domain.RefreshToken, now float64) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var (
+		old            domain.RefreshToken
+		revoked        sql.NullFloat64
+		replacedByHash sql.NullString
+	)
+	err = tx.QueryRowContext(ctx,
+		`SELECT token_hash, family_id, user_id, issued_at, expires_at, revoked_at, replaced_by_hash
+		 FROM refresh_tokens WHERE token_hash = ?`, oldHash).
+		Scan(&old.TokenHash, &old.FamilyID, &old.UserID, &old.IssuedAt, &old.ExpiresAt, &revoked, &replacedByHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if old.ExpiresAt <= now {
+		return ErrNotFound
+	}
+	if replacedByHash.Valid {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE refresh_tokens SET revoked_at = COALESCE(revoked_at, ?)
+			 WHERE family_id = ?`, now, old.FamilyID); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		return ErrRefreshTokenReuse
+	}
+	if revoked.Valid {
+		return ErrNotFound
+	}
+	if next.FamilyID != old.FamilyID || next.UserID != old.UserID {
+		return errors.New("db: refresh rotation family/user mismatch")
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE refresh_tokens SET revoked_at = ?, replaced_by_hash = ? WHERE token_hash = ?`,
+		now, next.TokenHash, oldHash); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO refresh_tokens(token_hash, family_id, user_id, issued_at, expires_at)
+		 VALUES(?, ?, ?, ?, ?)`,
+		next.TokenHash, next.FamilyID, next.UserID, next.IssuedAt, next.ExpiresAt); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (r *SQLiteRepository) RevokeRefreshToken(ctx context.Context, tokenHash string, now float64) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE refresh_tokens SET revoked_at = COALESCE(revoked_at, ?) WHERE token_hash = ?`,
+		now, tokenHash)
+	return err
+}
+
+func (r *SQLiteRepository) RevokeAllRefreshTokens(ctx context.Context, userID string, now float64) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE refresh_tokens SET revoked_at = COALESCE(revoked_at, ?) WHERE user_id = ?`,
+		now, userID)
+	return err
+}
+
 func scanUser(row *sql.Row) (domain.User, error) {
 	var (
 		u         domain.User

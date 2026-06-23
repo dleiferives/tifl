@@ -168,6 +168,106 @@ func (r *PostgresRepository) EnsureLocalUser(ctx context.Context) (domain.User, 
 	})
 }
 
+func (r *PostgresRepository) UpdateUserLastLogin(ctx context.Context, userID string, at float64) error {
+	tag, err := r.pool.Exec(ctx, `UPDATE users SET last_login = $1 WHERE user_id = $2`, at, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *PostgresRepository) CreateRefreshToken(ctx context.Context, token domain.RefreshToken) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO refresh_tokens(token_hash, family_id, user_id, issued_at, expires_at, revoked_at, replaced_by_hash)
+		 VALUES($1, $2, $3, $4, $5, $6, $7)`,
+		token.TokenHash, token.FamilyID, token.UserID, token.IssuedAt, token.ExpiresAt,
+		token.RevokedAt, token.ReplacedByHash)
+	return err
+}
+
+func (r *PostgresRepository) GetRefreshToken(ctx context.Context, tokenHash string) (domain.RefreshToken, error) {
+	var token domain.RefreshToken
+	err := r.pool.QueryRow(ctx,
+		`SELECT token_hash, family_id, user_id, issued_at, expires_at, revoked_at, replaced_by_hash
+		 FROM refresh_tokens WHERE token_hash = $1`, tokenHash).
+		Scan(&token.TokenHash, &token.FamilyID, &token.UserID, &token.IssuedAt, &token.ExpiresAt,
+			&token.RevokedAt, &token.ReplacedByHash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.RefreshToken{}, ErrNotFound
+	}
+	return token, err
+}
+
+func (r *PostgresRepository) RotateRefreshToken(ctx context.Context, oldHash string, next domain.RefreshToken, now float64) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var old domain.RefreshToken
+	err = tx.QueryRow(ctx,
+		`SELECT token_hash, family_id, user_id, issued_at, expires_at, revoked_at, replaced_by_hash
+		 FROM refresh_tokens WHERE token_hash = $1 FOR UPDATE`, oldHash).
+		Scan(&old.TokenHash, &old.FamilyID, &old.UserID, &old.IssuedAt, &old.ExpiresAt,
+			&old.RevokedAt, &old.ReplacedByHash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if old.ExpiresAt <= now {
+		return ErrNotFound
+	}
+	if old.ReplacedByHash != nil {
+		if _, err := tx.Exec(ctx,
+			`UPDATE refresh_tokens SET revoked_at = COALESCE(revoked_at, $1)
+			 WHERE family_id = $2`, now, old.FamilyID); err != nil {
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+		return ErrRefreshTokenReuse
+	}
+	if old.RevokedAt != nil {
+		return ErrNotFound
+	}
+	if next.FamilyID != old.FamilyID || next.UserID != old.UserID {
+		return errors.New("db: refresh rotation family/user mismatch")
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE refresh_tokens SET revoked_at = $1, replaced_by_hash = $2 WHERE token_hash = $3`,
+		now, next.TokenHash, oldHash); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO refresh_tokens(token_hash, family_id, user_id, issued_at, expires_at)
+		 VALUES($1, $2, $3, $4, $5)`,
+		next.TokenHash, next.FamilyID, next.UserID, next.IssuedAt, next.ExpiresAt); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *PostgresRepository) RevokeRefreshToken(ctx context.Context, tokenHash string, now float64) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE refresh_tokens SET revoked_at = COALESCE(revoked_at, $1) WHERE token_hash = $2`,
+		now, tokenHash)
+	return err
+}
+
+func (r *PostgresRepository) RevokeAllRefreshTokens(ctx context.Context, userID string, now float64) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE refresh_tokens SET revoked_at = COALESCE(revoked_at, $1) WHERE user_id = $2`,
+		now, userID)
+	return err
+}
+
 func scanPgUser(row pgx.Row) (domain.User, error) {
 	var (
 		u        domain.User

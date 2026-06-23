@@ -33,9 +33,9 @@ because it is memory-hard (resists GPU cracking) and is the current OWASP
 recommendation. Bcrypt is acceptable as a fallback but should not be the first
 choice for new systems.
 
-Parameters: time=1, memory=64MB, threads=4, key length=32 bytes. These are the
-current recommended defaults and should be stored alongside the hash so they can
-be increased without invalidating existing hashes.
+Parameters: time=2, memory=19 MiB, threads=1, key length=32 bytes. These match
+the current OWASP minimum recommendation and are stored alongside the hash so
+they can be increased without invalidating existing hashes.
 
 ### Token model
 
@@ -50,6 +50,8 @@ request by checking the signature and expiry. No database lookup required.
 the client. On expiry of the access token, the client presents the refresh token
 to get a new access token. The refresh token is rotated on each use (old one
 invalidated, new one issued) — this limits the window of stolen token abuse.
+Each login/device has an independent token family. Reuse of a rotated token
+revokes that family; logout-all revokes every family for the user.
 
 httpOnly cookies are non-negotiable for the refresh token. JavaScript cannot
 read httpOnly cookies, which eliminates the XSS attack surface for the
@@ -62,6 +64,7 @@ POST /api/v1/auth/register     { email, password } → { access_token, user }
 POST /api/v1/auth/login        { email, password } → { access_token, user }
 POST /api/v1/auth/refresh      (cookie) → { access_token }
 POST /api/v1/auth/logout       (cookie) → invalidates refresh token
+POST /api/v1/auth/logout-all   (access token) → invalidates all refresh tokens
 GET  /api/v1/auth/me           (access token) → { user }
 ```
 
@@ -103,11 +106,13 @@ users
     last_login   REAL
 
 refresh_tokens
-    token_hash   TEXT PRIMARY KEY   -- argon2id hash of the opaque token
+    token_hash   TEXT PRIMARY KEY   -- SHA-256 digest of 256-bit random token
+    family_id    TEXT NOT NULL      -- one login/device rotation family
     user_id      TEXT NOT NULL
     issued_at    REAL NOT NULL
     expires_at   REAL NOT NULL
-    revoked      INTEGER NOT NULL DEFAULT 0
+    revoked_at   REAL
+    replaced_by_hash TEXT
 ```
 
 All other tables (`stories`, `sessions`, `tasks`, `user_knowledge`, etc.) carry

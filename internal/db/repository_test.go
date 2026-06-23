@@ -24,6 +24,7 @@ func must(t *testing.T, err error) {
 // behaviour is guaranteed regardless of which backend a deployment selects.
 func testRepository(t *testing.T, newRepo repoFactory) {
 	t.Run("Users", func(t *testing.T) { testUsers(t, newRepo(t)) })
+	t.Run("RefreshTokens", func(t *testing.T) { testRefreshTokens(t, newRepo(t)) })
 	t.Run("Languages", func(t *testing.T) { testLanguages(t, newRepo(t)) })
 	t.Run("KnowledgeItems", func(t *testing.T) { testKnowledgeItems(t, newRepo(t)) })
 	t.Run("UserKnowledge", func(t *testing.T) { testUserKnowledge(t, newRepo(t)) })
@@ -32,6 +33,45 @@ func testRepository(t *testing.T, newRepo repoFactory) {
 	t.Run("ReaderEvents", func(t *testing.T) { testReaderEvents(t, newRepo(t)) })
 	t.Run("DefinitionsBreakdowns", func(t *testing.T) { testDefinitionsBreakdowns(t, newRepo(t)) })
 	t.Run("Pipeline", func(t *testing.T) { testPipeline(t, newRepo(t)) })
+}
+
+func testRefreshTokens(t *testing.T, repo db.Repository) {
+	ctx := context.Background()
+	user, err := repo.CreateUser(ctx, domain.User{Email: "refresh@example.com"})
+	must(t, err)
+	must(t, repo.UpdateUserLastLogin(ctx, user.UserID, 1700))
+	user, err = repo.GetUser(ctx, user.UserID)
+	must(t, err)
+	if user.LastLogin == nil || *user.LastLogin != 1700 {
+		t.Fatalf("last_login not updated: %+v", user.LastLogin)
+	}
+
+	first := domain.RefreshToken{
+		TokenHash: "hash-1", FamilyID: "family-1", UserID: user.UserID,
+		IssuedAt: 1700, ExpiresAt: 2700,
+	}
+	must(t, repo.CreateRefreshToken(ctx, first))
+	got, err := repo.GetRefreshToken(ctx, first.TokenHash)
+	must(t, err)
+	if got.FamilyID != first.FamilyID || got.UserID != user.UserID {
+		t.Fatalf("refresh round-trip: %+v", got)
+	}
+	next := domain.RefreshToken{
+		TokenHash: "hash-2", FamilyID: first.FamilyID, UserID: user.UserID,
+		IssuedAt: 1800, ExpiresAt: first.ExpiresAt,
+	}
+	must(t, repo.RotateRefreshToken(ctx, first.TokenHash, next, 1800))
+	if err := repo.RotateRefreshToken(ctx, first.TokenHash, domain.RefreshToken{
+		TokenHash: "hash-3", FamilyID: first.FamilyID, UserID: user.UserID,
+		IssuedAt: 1801, ExpiresAt: first.ExpiresAt,
+	}, 1801); !errors.Is(err, db.ErrRefreshTokenReuse) {
+		t.Fatalf("reuse error = %v", err)
+	}
+	revoked, err := repo.GetRefreshToken(ctx, next.TokenHash)
+	must(t, err)
+	if revoked.RevokedAt == nil {
+		t.Fatal("token family was not revoked after replay")
+	}
 }
 
 // testPipeline exercises the generation-pipeline surface end-to-end against
