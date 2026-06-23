@@ -134,8 +134,9 @@ func (b GraderBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
 	sys.WriteString("Judge whether the response demonstrates understanding of the targeted items, ")
 	sys.WriteString("distinguishing a demonstrated concept from a merely surface-correct answer.\n")
 	sys.WriteString("Respond with a JSON object: ")
-	sys.WriteString(`{"correct": bool, "score": number (0..1), "feedback": string, "items_demonstrated": [string]}.`)
+	sys.WriteString(`{"correct": bool, "score": number (0..1), "feedback": string, "items_demonstrated": [string], "demonstrated_concept": bool, "surface_correct": bool}.`)
 	sys.WriteString("\nitems_demonstrated lists the knowledge-item keys the response shows real understanding of.")
+	sys.WriteString("\nA demonstrated concept with a wrong surface form should list the construction key, not the surface vocabulary key.")
 	sys.WriteString("\nReturn JSON only — no prose, no markdown.")
 
 	var usr strings.Builder

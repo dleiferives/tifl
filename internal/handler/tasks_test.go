@@ -249,9 +249,88 @@ func TestSubmitProductionLLMGraded(t *testing.T) {
 	}
 }
 
+func TestSubmitProductionPartialCredit(t *testing.T) {
+	srv, repo := newGraderServerWithResponse(t, `{"correct":false,"score":0.6,"feedback":"concept right, form wrong","items_demonstrated":["genabs"],"demonstrated_concept":true,"surface_correct":false}`)
+	seedItem(t, repo, "word1", "χαίρε")
+	seedItem(t, repo, "con1", "genabs")
+	content := map[string]any{
+		"prompt_l1":              "say hello with the target construction",
+		"target_item_ids":        []any{"word1"},
+		"target_construction_id": "con1",
+	}
+	_, taskID := seedTask(t, repo, tasks.TypeProduction, content, []string{"word1", "con1"})
+
+	resp := submit(t, srv, taskID, `{"response":{"text":"almost"}}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var out struct {
+		Grade gradeBody `json:"grade"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Grade.Correct || out.Grade.Score != 0.6 {
+		t.Fatalf("overall grade not returned: %+v", out.Grade)
+	}
+	if len(out.Grade.ItemsDemonstrated) != 1 || out.Grade.ItemsDemonstrated[0] != "con1" {
+		t.Fatalf("partial demonstrated items wrong: %+v", out.Grade.ItemsDemonstrated)
+	}
+
+	con, err := repo.GetUserKnowledgeItem(context.Background(), domain.LocalUserID, "con1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if con.TaskTotal != 1 || con.TaskCorrect != 1 {
+		t.Fatalf("construction signal = %d/%d, want 1/1", con.TaskCorrect, con.TaskTotal)
+	}
+	word, err := repo.GetUserKnowledgeItem(context.Background(), domain.LocalUserID, "word1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if word.TaskTotal != 1 || word.TaskCorrect != 0 {
+		t.Fatalf("surface word signal = %d/%d, want 0/1", word.TaskCorrect, word.TaskTotal)
+	}
+}
+
+func TestSubmitProductionScoreOnlyCreditsNoItems(t *testing.T) {
+	srv, repo := newGraderServerWithResponse(t, `{"correct":true,"score":0.7,"feedback":"some progress","items_demonstrated":[]}`)
+	seedItem(t, repo, "word1", "χαίρε")
+	content := map[string]any{"prompt_l1": "say hello", "target_item_ids": []any{"word1"}}
+	_, taskID := seedTask(t, repo, tasks.TypeProduction, content, []string{"word1"})
+
+	resp := submit(t, srv, taskID, `{"response":{"text":"maybe"}}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var out struct {
+		Grade gradeBody `json:"grade"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.Grade.Correct || out.Grade.Score != 0.7 || len(out.Grade.ItemsDemonstrated) != 0 {
+		t.Fatalf("score-only grade wrong: %+v", out.Grade)
+	}
+
+	uk, err := repo.GetUserKnowledgeItem(context.Background(), domain.LocalUserID, "word1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uk.TaskTotal != 1 || uk.TaskCorrect != 0 {
+		t.Fatalf("score-only signal = %d/%d, want 0/1", uk.TaskCorrect, uk.TaskTotal)
+	}
+}
+
 // newGraderServer builds a handler whose LLM client returns a fixed valid grade,
 // for exercising the LLM-graded submit path deterministically.
 func newGraderServer(t *testing.T) (*httptest.Server, *db.FakeRepository) {
+	return newGraderServerWithResponse(t, `{"correct":true,"score":1,"feedback":"good","items_demonstrated":["genabs"]}`)
+}
+
+func newGraderServerWithResponse(t *testing.T, gradeJSON string) (*httptest.Server, *db.FakeRepository) {
 	t.Helper()
 	ctx := context.Background()
 	repo := db.NewFake()
@@ -262,7 +341,7 @@ func newGraderServer(t *testing.T) (*httptest.Server, *db.FakeRepository) {
 		t.Fatal(err)
 	}
 	client := &llm.FakeClient{Func: func(context.Context, string, llm.LLMRequest) (llm.LLMResponse, error) {
-		return llm.LLMResponse{Text: `{"correct":true,"score":1,"feedback":"good","items_demonstrated":["genabs"]}`}, nil
+		return llm.LLMResponse{Text: gradeJSON}, nil
 	}}
 	langs := lang.NewRegistry()
 	langs.Register(fakeLang{})

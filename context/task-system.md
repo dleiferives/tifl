@@ -186,6 +186,29 @@ demonstrated understanding of the underlying concept. The grade JSON captures
 this — `demonstrated_concept: true, surface_correct: false` — and the signal
 aggregation can be nuanced accordingly.
 
+### Partial-credit signal formula
+
+Acquisition counters stay integer-only in v0. A task submission produces one
+deterministic item-level learning signal:
+
+- Every item the task targets receives `task_total += 1` for each accepted grade.
+- Only target item IDs present in `Grade.ItemsDemonstrated` receive
+  `task_correct += 1`.
+- `Grade.Correct` is the whole-task judgment. It is returned to the UI and useful
+  for coarse reporting, but it does not blanket-credit every target item.
+- `Grade.Score` is preserved for user-facing feedback and future XP weighting,
+  but it does not add fractional `task_correct`.
+- LLM graders may return `demonstrated_concept=true` with
+  `surface_correct=false`. In that case the grader should list only the
+  demonstrated construction or concept item in `items_demonstrated`, not the
+  surface vocabulary item whose form was wrong.
+
+Rule-graded tasks keep their binary behavior: a correct multiple-choice or
+fill-blank answer demonstrates all of that task's target items; a wrong answer
+demonstrates none. Production-like LLM grades can demonstrate any subset of
+target items. During grading, demonstrated keys from the model are mapped back to
+the task's target item IDs, and non-target or hallucinated items are ignored.
+
 ---
 
 ## Language-Specific Task Types
@@ -293,9 +316,6 @@ attached to a session.
 
 ## Open Questions
 
-- Partial credit: the grade JSON supports `demonstrated_concept` but the signal
-  aggregation needs a defined formula for how partial credit maps to
-  `task_correct` / confidence updates
 - Task ordering within a session: is there a pedagogically motivated order
   (e.g. comprehension before production)? Currently unordered.
 - Adaptive task generation mid-session: if a user aces the first two tasks, does
