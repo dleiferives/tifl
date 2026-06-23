@@ -197,6 +197,82 @@ func (b AssessorBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
 	}
 }
 
+// SkillTierEvidence is one recent task-grade sample the skill verifier can use
+// when deciding whether a threshold-crossed skill tier should be confirmed.
+type SkillTierEvidence struct {
+	TaskType          string
+	PromptSummary     string
+	ResponseSummary   string
+	Correct           bool
+	Score             float64
+	ItemsDemonstrated []string
+	OccurredAt        *float64
+}
+
+// SkillTierVerifierBuilder asks for a binary promotion judgment for one skill
+// tier. It is separate from the acquisition assessor: this evaluates a broader
+// language competency against recent task evidence, not a single knowledge item.
+type SkillTierVerifierBuilder struct {
+	Skill       domain.Skill
+	Concept     string
+	CurrentTier int
+	TargetTier  int
+	TierMeaning string
+	Evidence    []SkillTierEvidence
+}
+
+func (SkillTierVerifierBuilder) Kind() string    { return "skill_tier_verifier" }
+func (SkillTierVerifierBuilder) Version() string { return "skill_tier_verifier/v1" }
+
+func (b SkillTierVerifierBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
+	var sys strings.Builder
+	fmt.Fprintf(&sys, "You verify whether a %s learner has earned a skill-tier promotion.\n", ctx.Language)
+	sys.WriteString("You are not grading one task. You are judging whether recent evidence supports the target skill tier.\n")
+	sys.WriteString("XP threshold crossing alone is insufficient; evaluate evidence quality and consistency.\n")
+	sys.WriteString("Be conservative when evidence is thin, narrow, or contradictory.\n")
+	sys.WriteString("Respond with a JSON object: ")
+	sys.WriteString(`{"decision": "promote"|"hold", "confidence": number (0..1), "rationale": string}.`)
+	sys.WriteString("\nReturn JSON only — no prose, no markdown.")
+
+	var usr strings.Builder
+	if ctx.UserID != "" {
+		fmt.Fprintf(&usr, "User ID: %s\n", ctx.UserID)
+	}
+	fmt.Fprintf(&usr, "Learner level: %s\n", levelOrDefault(ctx.Level))
+	fmt.Fprintf(&usr, "Skill: %s (%s)\n", b.Skill.Name, b.Skill.SkillID)
+	fmt.Fprintf(&usr, "Language: %s\n", b.Skill.Language)
+	if b.Skill.Category != "" {
+		fmt.Fprintf(&usr, "Category: %s\n", b.Skill.Category)
+	}
+	if b.Skill.Description != "" {
+		fmt.Fprintf(&usr, "Description: %s\n", b.Skill.Description)
+	}
+	if b.Concept != "" {
+		fmt.Fprintf(&usr, "Generation concept: %s\n", b.Concept)
+	}
+	fmt.Fprintf(&usr, "Current tier: %d\n", b.CurrentTier)
+	fmt.Fprintf(&usr, "Target tier: %d of %d\n", b.TargetTier, maxInt(b.Skill.TierCount, 1))
+	if b.TierMeaning != "" {
+		fmt.Fprintf(&usr, "Target tier meaning: %s\n", b.TierMeaning)
+	}
+	usr.WriteString("\nRecent task evidence:\n")
+	if len(b.Evidence) == 0 {
+		usr.WriteString("- none provided\n")
+	} else {
+		for _, ev := range b.Evidence {
+			fmt.Fprintf(&usr, "- %s\n", compactJSON(ev))
+		}
+	}
+
+	return LLMRequest{
+		System:         sys.String(),
+		User:           usr.String(),
+		Temperature:    gradeTemperature,
+		MaxTokens:      500,
+		ResponseFormat: "json",
+	}
+}
+
 // DefinitionBuilder asks for a single word's definition — the live fallback when
 // neither the story glossary, the item metadata, nor the shared cache has it. The
 // result is cached globally (source=llm). The reader popup wants a short gloss

@@ -80,6 +80,35 @@ func TestAssessmentResultValidate(t *testing.T) {
 	}
 }
 
+func TestSkillTierVerificationResultValidate(t *testing.T) {
+	confidence := 0.76
+	if err := (SkillTierVerificationResult{
+		Decision: SkillTierDecisionHold, Confidence: &confidence, Rationale: "Evidence is too thin.",
+	}).Validate(); err != nil {
+		t.Errorf("valid hold result rejected: %v", err)
+	}
+	if err := (SkillTierVerificationResult{
+		Decision: SkillTierDecisionPromote, Rationale: "Consistent production evidence.",
+	}).Validate(); err != nil {
+		t.Errorf("valid promote result without confidence rejected: %v", err)
+	}
+	if err := (SkillTierVerificationResult{Decision: "", Rationale: "x"}).Validate(); err == nil {
+		t.Error("missing decision accepted")
+	}
+	if err := (SkillTierVerificationResult{Decision: "reject", Rationale: "x"}).Validate(); err == nil {
+		t.Error("invalid decision accepted")
+	}
+	if err := (SkillTierVerificationResult{Decision: SkillTierDecisionHold}).Validate(); err == nil {
+		t.Error("empty rationale accepted")
+	}
+	badConfidence := 1.2
+	if err := (SkillTierVerificationResult{
+		Decision: SkillTierDecisionHold, Confidence: &badConfidence, Rationale: "x",
+	}).Validate(); err == nil {
+		t.Error("out-of-range confidence accepted")
+	}
+}
+
 func TestFormatItemHierarchy(t *testing.T) {
 	it := domain.KnowledgeItem{
 		Key:      "λόγος",
