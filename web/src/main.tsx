@@ -1,5 +1,6 @@
-import { Match, Show, Switch, type JSX } from "solid-js";
+import { createEffect, Match, Show, Switch, type JSX } from "solid-js";
 import { render } from "solid-js/web";
+import { initializeAuthentication } from "./auth";
 import { createHashRouter, routeHref, type Route } from "./router";
 import { appStore } from "./store";
 import { GenerationView } from "./views/generation";
@@ -14,24 +15,36 @@ import "./style.css";
 function App() {
   const route = createHashRouter();
 
+  createEffect(() => {
+    if (appStore.authStatus() !== "anonymous" || route().name === "login") {
+      return;
+    }
+    appStore.rememberReturnPath(route().path);
+    window.location.hash = routeHref("/login");
+  });
+
   return (
-    <AppLayout route={route()}>
-      <Switch fallback={<NotFoundView path={route().path} />}>
-        <Match when={route().name === "home"}><HomeView /></Match>
-        <Match when={route().name === "login"}><LoginView /></Match>
-        <Match when={route().name === "settings"}><SettingsView /></Match>
-        <Match when={route().name === "skills"}><SkillsView /></Match>
-        <Match when={route().name === "generation"}>
-          <GenerationView sessionId={(route() as Extract<Route, { name: "generation" }>).sessionId} />
-        </Match>
-        <Match when={route().name === "reader"}>
-          <ReaderView storyId={(route() as Extract<Route, { name: "reader" }>).storyId} />
-        </Match>
-        <Match when={route().name === "tasks"}>
-          <TasksView sessionId={(route() as Extract<Route, { name: "tasks" }>).sessionId} />
-        </Match>
-      </Switch>
-    </AppLayout>
+    <Show when={appStore.authStatus() !== "checking"} fallback={<AuthCheckingView />}>
+      <Show when={appStore.authStatus() !== "anonymous" || route().name === "login"}>
+        <AppLayout route={route()}>
+          <Switch fallback={<NotFoundView path={route().path} />}>
+            <Match when={route().name === "home"}><HomeView /></Match>
+            <Match when={route().name === "login"}><LoginView /></Match>
+            <Match when={route().name === "settings"}><SettingsView /></Match>
+            <Match when={route().name === "skills"}><SkillsView /></Match>
+            <Match when={route().name === "generation"}>
+              <GenerationView sessionId={(route() as Extract<Route, { name: "generation" }>).sessionId} />
+            </Match>
+            <Match when={route().name === "reader"}>
+              <ReaderView storyId={(route() as Extract<Route, { name: "reader" }>).storyId} />
+            </Match>
+            <Match when={route().name === "tasks"}>
+              <TasksView sessionId={(route() as Extract<Route, { name: "tasks" }>).sessionId} />
+            </Match>
+          </Switch>
+        </AppLayout>
+      </Show>
+    </Show>
   );
 }
 
@@ -47,9 +60,14 @@ function AppLayout(props: { route: Route; children: JSX.Element }) {
           <a href={routeHref("/skills")} aria-current={isCurrent("skills")}>Skills</a>
           <a href={routeHref("/settings")} aria-current={isCurrent("settings")}>Settings</a>
         </nav>
-        <a class="auth-link" href={routeHref("/login")} aria-current={isCurrent("login")}>
-          {appStore.user()?.email || "Login"}
-        </a>
+        <Show
+          when={appStore.authStatus() !== "local"}
+          fallback={<span class="auth-state">Local mode</span>}
+        >
+          <a class="auth-link" href={routeHref("/login")} aria-current={isCurrent("login")}>
+            {appStore.user()?.email || "Login"}
+          </a>
+        </Show>
       </header>
       <main class="app-main" aria-busy={appStore.isBusy()}>
         {props.children}
@@ -63,6 +81,15 @@ function AppLayout(props: { route: Route; children: JSX.Element }) {
         )}
       </Show>
     </>
+  );
+}
+
+function AuthCheckingView() {
+  return (
+    <main class="auth-checking" aria-busy="true">
+      <p class="brand">tifl</p>
+      <p>Checking your session…</p>
+    </main>
   );
 }
 
@@ -81,3 +108,4 @@ if (!root) {
   throw new Error("missing #root app mount");
 }
 render(() => <App />, root);
+void initializeAuthentication();

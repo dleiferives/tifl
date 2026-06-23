@@ -32,6 +32,13 @@ export type GenerationEvent = APISchema<"GenerationEvent">;
 
 let apiBaseURL = defaultAPIBaseURL();
 let accessToken: string | null = null;
+let refreshPromise: Promise<boolean> | null = null;
+let authCallbacks: AuthCallbacks = {};
+
+interface AuthCallbacks {
+  onRefresh?: (response: APIResponse<"refresh", 200>) => void;
+  onAuthenticationLost?: () => void;
+}
 
 export function configureAPIBaseURL(url: string) {
   apiBaseURL = trimTrailingSlash(url);
@@ -47,6 +54,10 @@ export function setAccessToken(token: string | null) {
 
 export function getAccessToken(): string | null {
   return accessToken;
+}
+
+export function configureAuthCallbacks(callbacks: AuthCallbacks) {
+  authCallbacks = callbacks;
 }
 
 export class APIError extends Error {
@@ -70,19 +81,19 @@ export async function listLanguages(): Promise<APIResponse<"listLanguages", 200>
 }
 
 export async function register(request: APIRequest<"register">): Promise<APIResponse<"register", 201>> {
-  return apiFetch<APIResponse<"register", 201>>("/auth/register", jsonRequest("POST", request));
+  return apiFetch<APIResponse<"register", 201>>("/auth/register", jsonRequest("POST", request), false);
 }
 
 export async function login(request: APIRequest<"login">): Promise<APIResponse<"login", 200>> {
-  return apiFetch<APIResponse<"login", 200>>("/auth/login", jsonRequest("POST", request));
+  return apiFetch<APIResponse<"login", 200>>("/auth/login", jsonRequest("POST", request), false);
 }
 
 export async function refresh(): Promise<APIResponse<"refresh", 200>> {
-  return apiFetch<APIResponse<"refresh", 200>>("/auth/refresh", { method: "POST" });
+  return apiFetch<APIResponse<"refresh", 200>>("/auth/refresh", { method: "POST" }, false);
 }
 
 export async function logout(): Promise<void> {
-  return apiFetch<void>("/auth/logout", { method: "POST" });
+  return apiFetch<void>("/auth/logout", { method: "POST" }, false);
 }
 
 export async function logoutAll(): Promise<void> {
@@ -206,19 +217,35 @@ function queryString(params: object): string {
   return encoded ? `?${encoded}` : "";
 }
 
-async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function apiFetch<T>(path: string, init: RequestInit = {}, retryUnauthorized = true): Promise<T> {
+  let response = await sendRequest(path, init);
+  if (response.status === 401 && retryUnauthorized) {
+    if (await refreshAccessToken()) {
+      response = await sendRequest(path, init);
+    }
+    if (response.status === 401) {
+      setAccessToken(null);
+      authCallbacks.onAuthenticationLost?.();
+    }
+  }
+  return decodeResponse<T>(response);
+}
+
+async function sendRequest(path: string, init: RequestInit, includeAccessToken = true): Promise<Response> {
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
-  if (accessToken) {
+  if (includeAccessToken && accessToken) {
     headers.set("Authorization", `Bearer ${accessToken}`);
   }
 
-  const response = await fetch(apiURL(path), {
+  return fetch(apiURL(path), {
     ...init,
     credentials: "include",
     headers,
   });
+}
 
+async function decodeResponse<T>(response: Response): Promise<T> {
   if (response.status === 204) {
     if (!response.ok) {
       throw new APIError(response, null);
@@ -232,6 +259,25 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new APIError(response, isErrorBody(body) ? body : null);
   }
   return body as T;
+}
+
+async function refreshAccessToken(): Promise<boolean> {
+  if (refreshPromise) {
+    return refreshPromise;
+  }
+  refreshPromise = (async () => {
+    const response = await sendRequest("/auth/refresh", { method: "POST" }, false);
+    if (!response.ok) {
+      return false;
+    }
+    const body = await decodeResponse<APIResponse<"refresh", 200>>(response);
+    setAccessToken(body.access_token);
+    authCallbacks.onRefresh?.(body);
+    return true;
+  })().catch(() => false).finally(() => {
+    refreshPromise = null;
+  });
+  return refreshPromise;
 }
 
 function apiURL(path: string): string {
