@@ -13,6 +13,7 @@ import (
 	"github.com/dleiferives/tifl/internal/llm"
 	"github.com/dleiferives/tifl/internal/predictor"
 	"github.com/dleiferives/tifl/internal/reader"
+	skillassoc "github.com/dleiferives/tifl/internal/skills"
 	"github.com/dleiferives/tifl/internal/story"
 	"github.com/dleiferives/tifl/internal/tasks"
 )
@@ -27,6 +28,7 @@ type Handler struct {
 	taskTypes    *tasks.Registry           // task-type lookup for grading + presentation
 	grader       *tasks.Grader             // routes rule vs LLM grading
 	acquire      *acquire.Engine           // folds grades into user_knowledge signals
+	skillAssoc   *skillassoc.Associator    // lazy item -> skill association materializer (#68)
 	llmEnabled   bool                      // false when no LLM client: LLM-graded tasks return 503
 	frontendDir  string
 	auth         *authn.Service
@@ -97,6 +99,7 @@ func WithAuth(service *authn.Service, secureCookie bool) Option {
 // grading.
 func New(repo db.Repository, broker *story.Broker, client llm.Client, taskTypes *tasks.Registry, langs *lang.Registry, frontendDir string, opts ...Option) *Handler {
 	engine := acquire.NewEngine(repo, predictor.DefaultConfig(), acquire.Config{})
+	associator := skillassoc.NewAssociator(repo, langs)
 	grader := tasks.NewGrader(client, tasks.WithNormalizers(func(code string) tasks.Normalizer {
 		l, ok := langs.Get(code)
 		if !ok {
@@ -107,11 +110,12 @@ func New(repo db.Repository, broker *story.Broker, client llm.Client, taskTypes 
 	h := &Handler{
 		repo:        repo,
 		broker:      broker,
-		reader:      reader.NewService(repo, engine),
+		reader:      reader.NewService(repo, engine, reader.WithSkillAssociator(associator)),
 		defs:        reader.NewDefinitionService(repo, client, nil),
 		taskTypes:   taskTypes,
 		grader:      grader,
 		acquire:     engine,
+		skillAssoc:  associator,
 		llmEnabled:  client != nil,
 		frontendDir: frontendDir,
 	}

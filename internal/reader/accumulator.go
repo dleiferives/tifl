@@ -7,6 +7,7 @@ import (
 	"github.com/dleiferives/tifl/internal/acquire"
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
+	"github.com/dleiferives/tifl/internal/skills"
 )
 
 // accumulator batches user_knowledge mutations across one Ingest so each touched
@@ -15,20 +16,22 @@ import (
 // keys to knowledge-item ids, creating the item if it does not yet exist (most
 // reader words are not selection targets and so have no row until now).
 type accumulator struct {
-	repo   db.Repository
-	userID string
-	now    float64
-	rows   map[string]*domain.UserKnowledge // itemID -> mutable row
-	items  map[string]string                // language\x00key -> itemID (resolve cache)
+	repo       db.Repository
+	associator *skills.Associator
+	userID     string
+	now        float64
+	rows       map[string]*domain.UserKnowledge // itemID -> mutable row
+	items      map[string]string                // language\x00key -> itemID (resolve cache)
 }
 
-func newAccumulator(repo db.Repository, userID string, now float64) *accumulator {
+func newAccumulator(repo db.Repository, associator *skills.Associator, userID string, now float64) *accumulator {
 	return &accumulator{
-		repo:   repo,
-		userID: userID,
-		now:    now,
-		rows:   map[string]*domain.UserKnowledge{},
-		items:  map[string]string{},
+		repo:       repo,
+		associator: associator,
+		userID:     userID,
+		now:        now,
+		rows:       map[string]*domain.UserKnowledge{},
+		items:      map[string]string{},
 	}
 }
 
@@ -39,10 +42,16 @@ func (a *accumulator) get(ctx context.Context, language, key string) (*domain.Us
 	ck := language + "\x00" + key
 	itemID, ok := a.items[ck]
 	if !ok {
-		id, err := a.repo.UpsertKnowledgeItem(ctx,
-			domain.KnowledgeItem{Language: language, ItemType: wordItemType, Key: key})
+		item := domain.KnowledgeItem{Language: language, ItemType: wordItemType, Key: key}
+		id, err := a.repo.UpsertKnowledgeItem(ctx, item)
 		if err != nil {
 			return nil, err
+		}
+		if a.associator != nil {
+			item.ItemID = id
+			if err := a.associator.AssociateItem(ctx, item); err != nil {
+				return nil, err
+			}
 		}
 		itemID = id
 		a.items[ck] = id

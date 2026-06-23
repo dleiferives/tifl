@@ -7,8 +7,10 @@ import (
 	"github.com/dleiferives/tifl/internal/acquire"
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
+	"github.com/dleiferives/tifl/internal/lang"
 	"github.com/dleiferives/tifl/internal/predictor"
 	"github.com/dleiferives/tifl/internal/reader"
+	"github.com/dleiferives/tifl/internal/skills"
 )
 
 func must(t *testing.T, err error) {
@@ -142,6 +144,33 @@ func TestSetLevel(t *testing.T) {
 	}
 }
 
+func TestSetLevelAssociatesCreatedKnowledgeItem(t *testing.T) {
+	ctx, _, repo, userID, _ := fixture(t)
+	must(t, repo.UpsertSkill(ctx, domain.Skill{
+		SkillID: "xx-basic-words", Language: "xx", Name: "Basic Words",
+		Category: "Vocabulary", TierCount: 3, XPPerTier: 100,
+	}))
+	registry := lang.NewRegistry()
+	registry.Register(testSkillLanguage{defs: []lang.SkillDefinition{{
+		Skill: domain.Skill{
+			SkillID: "xx-basic-words", Language: "xx", Name: "Basic Words",
+			Category: "Vocabulary", TierCount: 3, XPPerTier: 100,
+		},
+		Associations: []lang.SkillAssociationDeclaration{{ItemType: "word", Keys: []string{"a"}}},
+	}}})
+	associator := skills.NewAssociator(repo, registry)
+	svc := reader.NewService(repo, acquire.NewEngine(repo, predictor.DefaultConfig(), acquire.Config{}), reader.WithSkillAssociator(associator))
+
+	must(t, svc.SetLevel(ctx, userID, "xx", "a", domain.Level4))
+	itemID, err := repo.UpsertKnowledgeItem(ctx, domain.KnowledgeItem{Language: "xx", ItemType: "word", Key: "a"})
+	must(t, err)
+	rows, err := repo.ListItemSkillAssociations(ctx, []string{itemID})
+	must(t, err)
+	if len(rows) != 1 || rows[0].SkillID != "xx-basic-words" {
+		t.Fatalf("reader-created item associations = %+v, want xx-basic-words", rows)
+	}
+}
+
 func TestIngestRejectsOtherUsersStory(t *testing.T) {
 	ctx, svc, repo, _, storyID := fixture(t)
 	intruder, err := repo.CreateUser(ctx, domain.User{Email: "x@x.com"})
@@ -153,4 +182,23 @@ func TestIngestRejectsOtherUsersStory(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected ownership rejection for another user's story")
 	}
+}
+
+type testSkillLanguage struct {
+	defs []lang.SkillDefinition
+}
+
+func (testSkillLanguage) Code() string                        { return "xx" }
+func (testSkillLanguage) Name() string                        { return "X" }
+func (testSkillLanguage) RTL() bool                           { return false }
+func (testSkillLanguage) KeyStrategy() lang.KeyStrategy       { return lang.KeySurface }
+func (testSkillLanguage) Tokenize(string) []lang.Token        { return nil }
+func (testSkillLanguage) ResolveKey(s string) (string, error) { return s, nil }
+func (testSkillLanguage) SupportedTaskTypes() []string        { return nil }
+func (testSkillLanguage) Frequency() []string                 { return nil }
+func (testSkillLanguage) Normalize(s string) string           { return lang.DefaultNormalize(s) }
+func (l testSkillLanguage) SkillDefinitions() []lang.SkillDefinition {
+	out := make([]lang.SkillDefinition, len(l.defs))
+	copy(out, l.defs)
+	return out
 }
