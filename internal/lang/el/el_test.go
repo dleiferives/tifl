@@ -277,6 +277,97 @@ func TestFrequencyNotEmpty(t *testing.T) {
 			t.Errorf("expected %q in top 20 of frequency list", mustHave)
 		}
 	}
+	if !contains(freq, "θα") {
+		t.Error("frequency list should include θα for the future skill")
+	}
+}
+
+func TestSkillDefinitionsShape(t *testing.T) {
+	g := New()
+	defs := g.SkillDefinitions()
+	if len(defs) < 15 || len(defs) > 25 {
+		t.Fatalf("expected representative 15-25 skill set, got %d", len(defs))
+	}
+
+	wantIDs := map[string]bool{
+		"el-case-nominative":           true,
+		"el-case-accusative":           true,
+		"el-case-genitive":             true,
+		"el-agreement-articles-gender": true,
+		"el-verb-present":              true,
+		"el-verb-perfective":           true,
+		"el-verb-future-tha":           true,
+		"el-construction-negation":     true,
+		"el-construction-questions":    true,
+		"el-construction-na":           true,
+		"el-vocab-core-verbs":          true,
+		"el-vocab-everyday-nouns":      true,
+		"el-vocab-food-market":         true,
+		"el-vocab-time-expressions":    true,
+		"el-pragmatics-greetings":      true,
+	}
+	seen := make(map[string]bool)
+	categories := make(map[string]bool)
+	associationCount := 0
+	for _, def := range defs {
+		skill := def.Skill
+		if skill.SkillID == "" || seen[skill.SkillID] {
+			t.Fatalf("skill ids must be non-empty and unique, got %q", skill.SkillID)
+		}
+		seen[skill.SkillID] = true
+		if skill.Language != "el" {
+			t.Fatalf("skill %s language = %q, want el", skill.SkillID, skill.Language)
+		}
+		if skill.Name == "" || skill.Description == "" || skill.Category == "" {
+			t.Fatalf("skill %s missing display metadata: %+v", skill.SkillID, skill)
+		}
+		if skill.TierCount <= 0 || skill.XPPerTier <= 0 || skill.SortOrder == nil {
+			t.Fatalf("skill %s missing tier/sort metadata: %+v", skill.SkillID, skill)
+		}
+		if def.Concept == "" {
+			t.Fatalf("skill %s missing generation concept", skill.SkillID)
+		}
+		if len(def.Associations) == 0 {
+			t.Fatalf("skill %s should declare at least one explicit association group", skill.SkillID)
+		}
+		for _, assoc := range def.Associations {
+			if assoc.ItemType == "" || len(assoc.Keys) == 0 {
+				t.Fatalf("skill %s has incomplete association declaration: %+v", skill.SkillID, assoc)
+			}
+			associationCount += len(assoc.Keys)
+		}
+		categories[skill.Category] = true
+	}
+	for id := range wantIDs {
+		if !seen[id] {
+			t.Errorf("expected Greek skill id %s in v0 catalogue", id)
+		}
+	}
+	for _, category := range []string{"Cases", "Verb Forms", "Constructions", "Vocabulary"} {
+		if !categories[category] {
+			t.Errorf("expected category %q in Greek skill set", category)
+		}
+	}
+	if associationCount < 50 {
+		t.Fatalf("expected useful explicit association coverage, got %d keys", associationCount)
+	}
+
+	// Returned data should be copy-safe: callers must not be able to mutate the
+	// plugin's canonical catalogue through a previous return value.
+	defs[0].Skill.Name = "mutated"
+	defs[0].Associations[0].Keys[0] = "mutated"
+	again := g.SkillDefinitions()
+	if again[0].Skill.Name == "mutated" || again[0].Associations[0].Keys[0] == "mutated" {
+		t.Fatal("SkillDefinitions should return defensive copies")
+	}
+
+	rows := g.Skills()
+	if len(rows) != len(defs) {
+		t.Fatalf("Skills row view length = %d, want %d", len(rows), len(defs))
+	}
+	if rows[0].SkillID != again[0].Skill.SkillID {
+		t.Fatalf("Skills row view should preserve definition order")
+	}
 }
 
 func min(a, b int) int {
@@ -284,4 +375,13 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func contains(values []string, want string) bool {
+	for _, v := range values {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }

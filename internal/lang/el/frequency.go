@@ -15,6 +15,7 @@ var frequency = []string{
 	// ── Conjunctions & particles ──────────────────────────────────────────────
 	"και",    // and, also
 	"να",     // να + subjunctive (to, that, should)
+	"θα",     // future/conditional particle
 	"δεν",    // not
 	"δε",     // not (variant), but (literary)
 	"με",     // with; me (acc.)

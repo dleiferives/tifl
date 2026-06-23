@@ -185,6 +185,14 @@ func seedLanguages(ctx context.Context, repo db.Repository, registry *lang.Regis
 // their skill system lands.
 func seedSkills(ctx context.Context, repo db.Repository, registry *lang.Registry) error {
 	for _, l := range registry.All() {
+		if provider, ok := l.(lang.SkillDefinitionProvider); ok {
+			for _, def := range provider.SkillDefinitions() {
+				if err := repo.UpsertSkill(ctx, def.Skill); err != nil {
+					return err
+				}
+			}
+			continue
+		}
 		provider, ok := l.(lang.SkillProvider)
 		if !ok {
 			continue
