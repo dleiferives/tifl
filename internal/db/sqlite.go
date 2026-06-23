@@ -566,6 +566,80 @@ func (r *SQLiteRepository) LoadReaderKnowledge(ctx context.Context, userID, lang
 	return out, rows.Err()
 }
 
+// --- skills ----------------------------------------------------------------
+
+func (r *SQLiteRepository) UpsertSkill(ctx context.Context, skill domain.Skill) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO skills(skill_id, language, name, description, category, tier_count, xp_per_tier, sort_order)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(skill_id) DO UPDATE SET
+		   language = excluded.language,
+		   name = excluded.name,
+		   description = excluded.description,
+		   category = excluded.category,
+		   tier_count = excluded.tier_count,
+		   xp_per_tier = excluded.xp_per_tier,
+		   sort_order = excluded.sort_order`,
+		skill.SkillID, skill.Language, skill.Name, emptyToNull(skill.Description), skill.Category,
+		skill.TierCount, skill.XPPerTier, skill.SortOrder)
+	return err
+}
+
+func (r *SQLiteRepository) UpsertUserSkillXP(ctx context.Context, xp domain.UserSkillXP) error {
+	if xp.UpdatedAt == 0 {
+		xp.UpdatedAt = float64(time.Now().Unix())
+	}
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO user_skill_xp(user_id, skill_id, xp, tier, pending_verify, last_verified_at, updated_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(user_id, skill_id) DO UPDATE SET
+		   xp = excluded.xp,
+		   tier = excluded.tier,
+		   pending_verify = excluded.pending_verify,
+		   last_verified_at = excluded.last_verified_at,
+		   updated_at = excluded.updated_at`,
+		xp.UserID, xp.SkillID, xp.XP, xp.Tier, boolToInt(xp.PendingVerify), nullFloat(xp.LastVerifiedAt), xp.UpdatedAt)
+	return err
+}
+
+func (r *SQLiteRepository) ListSkillProgress(ctx context.Context, userID, language string) ([]domain.SkillProgress, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT s.skill_id, s.language, s.name, s.description, s.category,
+		        s.tier_count, s.xp_per_tier, s.sort_order,
+		        COALESCE(ux.xp, 0), COALESCE(ux.tier, 0), COALESCE(ux.pending_verify, 0),
+		        ux.last_verified_at, ux.updated_at
+		 FROM skills s
+		 LEFT JOIN user_skill_xp ux
+		   ON ux.skill_id = s.skill_id AND ux.user_id = ?
+		 WHERE s.language = ?
+		 ORDER BY s.category, s.sort_order, s.name`, userID, language)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domain.SkillProgress
+	for rows.Next() {
+		var (
+			p                         domain.SkillProgress
+			description               sql.NullString
+			pending                   int
+			lastVerifiedAt, updatedAt sql.NullFloat64
+		)
+		if err := rows.Scan(&p.SkillID, &p.Language, &p.Name, &description, &p.Category,
+			&p.TierCount, &p.XPPerTier, &p.SortOrder,
+			&p.XP, &p.Tier, &pending, &lastVerifiedAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		p.Description = description.String
+		p.PendingVerify = pending != 0
+		p.LastVerifiedAt = floatPtr(lastVerifiedAt)
+		p.UpdatedAt = floatPtr(updatedAt)
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // --- llm calls -------------------------------------------------------------
 
 func (r *SQLiteRepository) InsertLLMCall(ctx context.Context, c domain.LLMCall) error {

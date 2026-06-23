@@ -29,6 +29,7 @@ func testRepository(t *testing.T, newRepo repoFactory) {
 	t.Run("Languages", func(t *testing.T) { testLanguages(t, newRepo(t)) })
 	t.Run("KnowledgeItems", func(t *testing.T) { testKnowledgeItems(t, newRepo(t)) })
 	t.Run("UserKnowledge", func(t *testing.T) { testUserKnowledge(t, newRepo(t)) })
+	t.Run("Skills", func(t *testing.T) { testSkills(t, newRepo(t)) })
 	t.Run("TenantIsolation", func(t *testing.T) { testTenantIsolation(t, newRepo(t)) })
 	t.Run("LLMCalls", func(t *testing.T) { testLLMCalls(t, newRepo(t)) })
 	t.Run("ReaderEvents", func(t *testing.T) { testReaderEvents(t, newRepo(t)) })
@@ -685,6 +686,55 @@ func testUserKnowledge(t *testing.T, repo db.Repository) {
 	// Foreign-key enforcement: an unknown item must be rejected.
 	if err := repo.UpsertUserKnowledge(ctx, domain.UserKnowledge{UserID: user.UserID, ItemID: "missing"}); err == nil {
 		t.Fatal("expected FK violation for unknown item")
+	}
+}
+
+func testSkills(t *testing.T, repo db.Repository) {
+	ctx := context.Background()
+	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "grc", Name: "Ancient Greek", KeyStrategy: "lemma", Enabled: true}))
+	alice, err := repo.CreateUser(ctx, domain.User{Email: "skill-alice@example.com"})
+	must(t, err)
+	bob, err := repo.CreateUser(ctx, domain.User{Email: "skill-bob@example.com"})
+	must(t, err)
+
+	must(t, repo.UpsertSkill(ctx, domain.Skill{
+		SkillID: "case-nominative", Language: "grc", Name: "Nominative Case",
+		Description: "Recognize subjects and predicate nouns.", Category: "Cases",
+		TierCount: 3, XPPerTier: 100, SortOrder: 20,
+	}))
+	must(t, repo.UpsertSkill(ctx, domain.Skill{
+		SkillID: "verb-present", Language: "grc", Name: "Present Tense",
+		Description: "Read simple present-tense verbs.", Category: "Verb Forms",
+		TierCount: 3, XPPerTier: 120, SortOrder: 10,
+	}))
+	verifiedAt := 1800.0
+	must(t, repo.UpsertUserSkillXP(ctx, domain.UserSkillXP{
+		UserID: alice.UserID, SkillID: "verb-present", XP: 145, Tier: 1,
+		PendingVerify: true, LastVerifiedAt: &verifiedAt, UpdatedAt: 1900,
+	}))
+	must(t, repo.UpsertUserSkillXP(ctx, domain.UserSkillXP{
+		UserID: bob.UserID, SkillID: "verb-present", XP: 300, Tier: 2, UpdatedAt: 2000,
+	}))
+
+	rows, err := repo.ListSkillProgress(ctx, alice.UserID, "grc")
+	must(t, err)
+	if len(rows) != 2 {
+		t.Fatalf("want all skills including untouched, got %d", len(rows))
+	}
+	if rows[0].SkillID != "case-nominative" || rows[0].XP != 0 || rows[0].Tier != 0 {
+		t.Fatalf("untouched skill should be visible first by category/order: %+v", rows[0])
+	}
+	if rows[1].SkillID != "verb-present" || rows[1].XP != 145 || rows[1].Tier != 1 || !rows[1].PendingVerify {
+		t.Fatalf("progress row mismatch: %+v", rows[1])
+	}
+	if rows[1].LastVerifiedAt == nil || *rows[1].LastVerifiedAt != verifiedAt || rows[1].UpdatedAt == nil || *rows[1].UpdatedAt != 1900 {
+		t.Fatalf("skill timestamps did not round-trip: %+v", rows[1])
+	}
+
+	bobRows, err := repo.ListSkillProgress(ctx, bob.UserID, "grc")
+	must(t, err)
+	if len(bobRows) != 2 || bobRows[1].XP != 300 || bobRows[1].Tier != 2 {
+		t.Fatalf("tenant progress leaked or missing: %+v", bobRows)
 	}
 }
 

@@ -79,3 +79,39 @@ type UserKnowledge struct {
 	ConfidenceScore  *float64 // 0..1, computed by the predictor
 	NextTargetAfter  *float64 // internal SRS-like scheduling; not user-visible
 }
+
+// Skill is a language-defined competency shown in the read-only skill tree.
+// Skills are seeded from language/plugin definitions and grouped by category for
+// display; user progress lives separately in user_skill_xp.
+type Skill struct {
+	SkillID     string
+	Language    string
+	Name        string
+	Description string
+	Category    string
+	TierCount   int
+	XPPerTier   int
+	SortOrder   int
+}
+
+// UserSkillXP is the user's current XP/tier row for a skill. Missing rows mean
+// tier 0 with 0 XP, so the skill tree can show untouched skills.
+type UserSkillXP struct {
+	UserID         string
+	SkillID        string
+	XP             int
+	Tier           int
+	PendingVerify  bool
+	LastVerifiedAt *float64
+	UpdatedAt      float64
+}
+
+// SkillProgress combines a skill definition with the current user's progress.
+type SkillProgress struct {
+	Skill
+	XP             int
+	Tier           int
+	PendingVerify  bool
+	LastVerifiedAt *float64
+	UpdatedAt      *float64
+}

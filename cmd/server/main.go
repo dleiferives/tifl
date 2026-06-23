@@ -58,6 +58,9 @@ func main() {
 	if err := seedLanguages(ctx, repo, langRegistry); err != nil {
 		log.Fatalf("seed languages: %v", err)
 	}
+	if err := seedSkills(ctx, repo, langRegistry); err != nil {
+		log.Fatalf("seed skills: %v", err)
+	}
 
 	// Register the built-in task types and verify every language only advertises
 	// task types that actually resolve — a missing type would fail at generation
@@ -172,6 +175,24 @@ func seedLanguages(ctx context.Context, repo db.Repository, registry *lang.Regis
 			Enabled:     true,
 		}); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// seedSkills upserts any language-owned competency catalogue. Plugins that do
+// not expose skills are still valid; they simply render an empty skill tree until
+// their skill system lands.
+func seedSkills(ctx context.Context, repo db.Repository, registry *lang.Registry) error {
+	for _, l := range registry.All() {
+		provider, ok := l.(lang.SkillProvider)
+		if !ok {
+			continue
+		}
+		for _, skill := range provider.Skills() {
+			if err := repo.UpsertSkill(ctx, skill); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

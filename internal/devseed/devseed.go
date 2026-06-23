@@ -183,6 +183,9 @@ func seedTx(ctx context.Context, tx *sql.Tx) error {
 	if err := upsertUserKnowledge(ctx, tx, items); err != nil {
 		return err
 	}
+	if err := upsertSkills(ctx, tx, g.Skills()); err != nil {
+		return err
+	}
 	if err := upsertStages(ctx, tx); err != nil {
 		return err
 	}
@@ -416,6 +419,51 @@ func upsertUserKnowledge(ctx context.Context, tx *sql.Tx, items map[string]strin
 			domain.LocalUserID, id, string(row.stage), string(row.level), row.exposure, row.variety,
 			row.lookups, row.correct, row.total, demoCreatedAt+90, demoCreatedAt+10, row.confidence, demoCreatedAt-3600); err != nil {
 			return fmt.Errorf("seed user knowledge %q: %w", row.key, err)
+		}
+	}
+	return nil
+}
+
+func upsertSkills(ctx context.Context, tx *sql.Tx, skills []domain.Skill) error {
+	for _, skill := range skills {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO skills(skill_id, language, name, description, category, tier_count, xp_per_tier, sort_order)
+			 VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT(skill_id) DO UPDATE SET
+			   language = excluded.language,
+			   name = excluded.name,
+			   description = excluded.description,
+			   category = excluded.category,
+			   tier_count = excluded.tier_count,
+			   xp_per_tier = excluded.xp_per_tier,
+			   sort_order = excluded.sort_order`,
+			skill.SkillID, skill.Language, skill.Name, skill.Description, skill.Category,
+			skill.TierCount, skill.XPPerTier, skill.SortOrder); err != nil {
+			return fmt.Errorf("seed skill %q: %w", skill.SkillID, err)
+		}
+	}
+
+	lastVerified := demoCreatedAt + 300
+	rows := []domain.UserSkillXP{
+		{UserID: domain.LocalUserID, SkillID: "el-case-nominative", XP: 260, Tier: 2, LastVerifiedAt: &lastVerified, UpdatedAt: demoCreatedAt + 320},
+		{UserID: domain.LocalUserID, SkillID: "el-case-accusative", XP: 145, Tier: 1, UpdatedAt: demoCreatedAt + 240},
+		{UserID: domain.LocalUserID, SkillID: "el-verb-present", XP: 110, Tier: 1, PendingVerify: true, UpdatedAt: demoCreatedAt + 330},
+		{UserID: domain.LocalUserID, SkillID: "el-construction-se-ton", XP: 70, Tier: 0, UpdatedAt: demoCreatedAt + 210},
+		{UserID: domain.LocalUserID, SkillID: "el-vocab-everyday-nouns", XP: 190, Tier: 1, UpdatedAt: demoCreatedAt + 260},
+		{UserID: domain.LocalUserID, SkillID: "el-pragmatics-greetings", XP: 80, Tier: 1, LastVerifiedAt: &lastVerified, UpdatedAt: demoCreatedAt + 340},
+	}
+	for _, row := range rows {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO user_skill_xp(user_id, skill_id, xp, tier, pending_verify, last_verified_at, updated_at)
+			 VALUES(?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT(user_id, skill_id) DO UPDATE SET
+			   xp = excluded.xp,
+			   tier = excluded.tier,
+			   pending_verify = excluded.pending_verify,
+			   last_verified_at = excluded.last_verified_at,
+			   updated_at = excluded.updated_at`,
+			row.UserID, row.SkillID, row.XP, row.Tier, boolInt(row.PendingVerify), row.LastVerifiedAt, row.UpdatedAt); err != nil {
+			return fmt.Errorf("seed skill progress %q: %w", row.SkillID, err)
 		}
 	}
 	return nil
