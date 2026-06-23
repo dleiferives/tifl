@@ -18,8 +18,8 @@ import (
 	"testing"
 
 	"github.com/dleiferives/tifl/internal/db"
-	handler "github.com/dleiferives/tifl/internal/handler"
 	"github.com/dleiferives/tifl/internal/domain"
+	handler "github.com/dleiferives/tifl/internal/handler"
 	"github.com/dleiferives/tifl/internal/lang"
 	"github.com/dleiferives/tifl/internal/tasks"
 )
