@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Auto-format staged .go files with gofmt and re-stage them.
+set -euo pipefail
+
+go_files=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' || true)
+[ -z "$go_files" ] && exit 0
+
+gofmt -w $go_files
+git add $go_files

@@ -57,5 +57,8 @@ fmt: ## gofmt the tree in place
 tidy: ## sync go.mod / go.sum
 	go mod tidy
 
+install-hooks: ## install git hooks (run once after cloning)
+	git config core.hooksPath .githooks
+
 clean: ## remove build artifacts
 	rm -rf bin web/dist
