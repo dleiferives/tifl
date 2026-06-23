@@ -55,6 +55,58 @@ func (r *SQLiteRepository) GetSession(ctx context.Context, sessionID string) (do
 	return scanSession(row)
 }
 
+func (r *SQLiteRepository) ListSessions(ctx context.Context, userID string, opts domain.ListSessionsOptions) ([]domain.SessionOverview, error) {
+	opts = normalizeListSessionsOptions(opts)
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT session_id, user_id, story_id, language, level, selected_targets, selected_new,
+		        session_type, topic, user_expressions, expression_output, status,
+		        created_at, reading_started_at, completed_at,
+		        (SELECT COUNT(*) FROM tasks t WHERE t.session_id = s.session_id AND t.user_id = s.user_id),
+		        (SELECT COUNT(*) FROM tasks t
+		          WHERE t.session_id = s.session_id AND t.user_id = s.user_id
+		            AND (t.graded_at IS NOT NULL OR COALESCE(t.graded_by, '') <> ''))
+		 FROM sessions s
+		 WHERE s.user_id = ?
+		 ORDER BY s.created_at DESC, s.session_id DESC
+		 LIMIT ? OFFSET ?`, userID, opts.Limit, opts.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domain.SessionOverview
+	for rows.Next() {
+		overview, err := scanSessionOverview(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, overview)
+	}
+	return out, rows.Err()
+}
+
+func (r *SQLiteRepository) GetSessionDetail(ctx context.Context, userID, sessionID string) (domain.SessionDetail, error) {
+	row := r.db.QueryRowContext(ctx,
+		`SELECT session_id, user_id, story_id, language, level, selected_targets, selected_new,
+		        session_type, topic, user_expressions, expression_output, status,
+		        created_at, reading_started_at, completed_at,
+		        (SELECT COUNT(*) FROM tasks t WHERE t.session_id = s.session_id AND t.user_id = s.user_id),
+		        (SELECT COUNT(*) FROM tasks t
+		          WHERE t.session_id = s.session_id AND t.user_id = s.user_id
+		            AND (t.graded_at IS NOT NULL OR COALESCE(t.graded_by, '') <> ''))
+		 FROM sessions s
+		 WHERE s.session_id = ? AND s.user_id = ?`, sessionID, userID)
+	overview, err := scanSessionOverview(row)
+	if err != nil {
+		return domain.SessionDetail{}, err
+	}
+	stages, err := r.ListStages(ctx, sessionID)
+	if err != nil {
+		return domain.SessionDetail{}, err
+	}
+	return domain.SessionDetail{SessionOverview: overview, Stages: stages}, nil
+}
+
 func (r *SQLiteRepository) UpdateSessionStatus(ctx context.Context, sessionID string, status domain.SessionStatus) error {
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE sessions SET status = ? WHERE session_id = ?`, string(status), sessionID)
@@ -361,6 +413,28 @@ type rowScanner interface {
 }
 
 func scanSession(row rowScanner) (domain.Session, error) {
+	return scanSessionPrefix(row)
+}
+
+func scanSessionOverview(row rowScanner) (domain.SessionOverview, error) {
+	var (
+		total, completed int
+	)
+	s, err := scanSessionPrefix(row, &total, &completed)
+	if err != nil {
+		return domain.SessionOverview{}, err
+	}
+	return domain.SessionOverview{
+		Session: s,
+		SelectedCounts: domain.SelectedItemCounts{
+			Targets: len(s.SelectedTargets),
+			New:     len(s.SelectedNew),
+		},
+		TaskProgress: domain.TaskProgress{Total: total, Completed: completed},
+	}, nil
+}
+
+func scanSessionPrefix(row rowScanner, extra ...any) (domain.Session, error) {
 	var (
 		s                         domain.Session
 		sessType, status          string
@@ -369,9 +443,11 @@ func scanSession(row rowScanner) (domain.Session, error) {
 		targets, news, exprs      sql.NullString
 		readingStarted, completed sql.NullFloat64
 	)
-	err := row.Scan(&s.SessionID, &s.UserID, &storyIDNull, &s.Language, &s.Level,
+	dest := []any{&s.SessionID, &s.UserID, &storyIDNull, &s.Language, &s.Level,
 		&targets, &news, &sessType, &topic, &exprs, &exprOut, &status,
-		&s.CreatedAt, &readingStarted, &completed)
+		&s.CreatedAt, &readingStarted, &completed}
+	dest = append(dest, extra...)
+	err := row.Scan(dest...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Session{}, ErrNotFound
 	}

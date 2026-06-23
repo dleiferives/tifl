@@ -329,6 +329,52 @@ func testPipeline(t *testing.T, repo db.Repository) {
 		t.Fatalf("task content JSON not round-tripped: %+v", tasks[0].Content)
 	}
 
+	// --- session list/detail read models ------------------------------------
+	later, err := repo.CreateSession(ctx, domain.Session{
+		UserID: user.UserID, Language: "grc", Level: "beginner",
+		Status: domain.StatusFailed, CreatedAt: sess.CreatedAt + 100,
+	})
+	must(t, err)
+	otherUser, err := repo.CreateUser(ctx, domain.User{Email: "other-session@example.com"})
+	must(t, err)
+	_, err = repo.CreateSession(ctx, domain.Session{
+		UserID: otherUser.UserID, Language: "grc", Level: "beginner",
+		Status: domain.StatusReady, CreatedAt: sess.CreatedAt + 200,
+	})
+	must(t, err)
+
+	page, err := repo.ListSessions(ctx, user.UserID, domain.ListSessionsOptions{Limit: 1})
+	must(t, err)
+	if len(page) != 1 || page[0].Session.SessionID != later.SessionID {
+		t.Fatalf("newest-first list page mismatch: %+v", page)
+	}
+	page, err = repo.ListSessions(ctx, user.UserID, domain.ListSessionsOptions{Limit: 1, Offset: 1})
+	must(t, err)
+	if len(page) != 1 || page[0].Session.SessionID != sess.SessionID {
+		t.Fatalf("offset page should return original session, got %+v", page)
+	}
+	if page[0].SelectedCounts.Targets != 1 || page[0].SelectedCounts.New != 0 {
+		t.Fatalf("selected counts wrong: %+v", page[0].SelectedCounts)
+	}
+	if page[0].TaskProgress.Total != 1 || page[0].TaskProgress.Completed != 1 {
+		t.Fatalf("task progress wrong: %+v", page[0].TaskProgress)
+	}
+
+	detail, err := repo.GetSessionDetail(ctx, user.UserID, sess.SessionID)
+	must(t, err)
+	if detail.Session.SessionID != sess.SessionID || detail.Session.StoryID == nil || *detail.Session.StoryID != story.StoryID {
+		t.Fatalf("session detail core fields wrong: %+v", detail.Session)
+	}
+	if detail.SelectedCounts.Targets != 1 || detail.TaskProgress.Total != 1 || detail.TaskProgress.Completed != 1 {
+		t.Fatalf("session detail counts wrong: selected=%+v tasks=%+v", detail.SelectedCounts, detail.TaskProgress)
+	}
+	if len(detail.Stages) != 2 {
+		t.Fatalf("session detail should include 2 stages, got %+v", detail.Stages)
+	}
+	if _, err := repo.GetSessionDetail(ctx, otherUser.UserID, sess.SessionID); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("cross-tenant session detail: want ErrNotFound, got %v", err)
+	}
+
 	// GetTask is user-scoped: the owner sees the task; another user gets
 	// ErrNotFound, as does an unknown id.
 	gotTask, err := repo.GetTask(ctx, user.UserID, task.TaskID)

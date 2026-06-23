@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
+	"strconv"
 	"time"
 
 	authn "github.com/dleiferives/tifl/internal/auth"
@@ -34,6 +36,112 @@ type generateRequest struct {
 type sessionResponse struct {
 	SessionID string `json:"session_id"`
 	Status    string `json:"status"`
+}
+
+type selectedCountsDTO struct {
+	Targets int `json:"targets"`
+	New     int `json:"new"`
+}
+
+type taskProgressDTO struct {
+	Total     int `json:"total"`
+	Completed int `json:"completed"`
+	Pending   int `json:"pending"`
+}
+
+type stageSummaryDTO struct {
+	Total       int     `json:"total"`
+	Pending     int     `json:"pending"`
+	InProgress  int     `json:"in_progress"`
+	Complete    int     `json:"complete"`
+	Failed      int     `json:"failed"`
+	ActiveStage *string `json:"active_stage,omitempty"`
+	FailedStage *string `json:"failed_stage,omitempty"`
+}
+
+type generationStageDTO struct {
+	Stage       string   `json:"stage"`
+	Status      string   `json:"status"`
+	StartedAt   *float64 `json:"started_at,omitempty"`
+	CompletedAt *float64 `json:"completed_at,omitempty"`
+	ErrorCode   *string  `json:"error_code,omitempty"`
+	ErrorDetail *string  `json:"error_detail,omitempty"`
+	RetryCount  int      `json:"retry_count"`
+}
+
+type sessionOverviewDTO struct {
+	SessionID        string            `json:"session_id"`
+	StoryID          *string           `json:"story_id,omitempty"`
+	Language         string            `json:"language"`
+	Level            string            `json:"level"`
+	SessionType      string            `json:"session_type"`
+	Topic            string            `json:"topic,omitempty"`
+	UserExpressions  []string          `json:"user_expressions,omitempty"`
+	ExpressionOutput string            `json:"expression_output,omitempty"`
+	Status           string            `json:"status"`
+	CreatedAt        float64           `json:"created_at"`
+	ReadingStartedAt *float64          `json:"reading_started_at,omitempty"`
+	CompletedAt      *float64          `json:"completed_at,omitempty"`
+	SelectedCounts   selectedCountsDTO `json:"selected_counts"`
+	Tasks            taskProgressDTO   `json:"tasks"`
+}
+
+type sessionDetailDTO struct {
+	sessionOverviewDTO
+	StageSummary stageSummaryDTO      `json:"stage_summary"`
+	Stages       []generationStageDTO `json:"stages"`
+}
+
+type sessionListResponse struct {
+	Sessions []sessionOverviewDTO `json:"sessions"`
+	Limit    int                  `json:"limit"`
+	Offset   int                  `json:"offset"`
+	HasMore  bool                 `json:"has_more"`
+}
+
+const (
+	defaultSessionListLimit = 20
+	maxSessionListLimit     = 100
+)
+
+func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
+	opts, err := parseSessionListOptions(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	queryOpts := opts
+	queryOpts.Limit++
+	overviews, err := h.repo.ListSessions(r.Context(), h.currentUserID(r), queryOpts)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	hasMore := len(overviews) > opts.Limit
+	if hasMore {
+		overviews = overviews[:opts.Limit]
+	}
+	out := sessionListResponse{
+		Sessions: make([]sessionOverviewDTO, 0, len(overviews)),
+		Limit:    opts.Limit,
+		Offset:   opts.Offset,
+		HasMore:  hasMore,
+	}
+	for _, overview := range overviews {
+		out.Sessions = append(out.Sessions, toSessionOverviewDTO(overview))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (h *Handler) getSessionDetail(w http.ResponseWriter, r *http.Request) {
+	detail, err := h.repo.GetSessionDetail(r.Context(), h.currentUserID(r), r.PathValue("id"))
+	if err != nil {
+		h.writeSessionLookupError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toSessionDetailDTO(detail))
 }
 
 func (h *Handler) generateSession(w http.ResponseWriter, r *http.Request) {
@@ -89,6 +197,131 @@ func (h *Handler) retrySession(w http.ResponseWriter, r *http.Request) {
 	}
 	h.broker.StartRetry(id)
 	writeJSON(w, http.StatusAccepted, sessionResponse{SessionID: id, Status: string(domain.StatusGenerating)})
+}
+
+func parseSessionListOptions(r *http.Request) (domain.ListSessionsOptions, error) {
+	limit, err := parseBoundedQueryInt(r, "limit", defaultSessionListLimit, 1, maxSessionListLimit)
+	if err != nil {
+		return domain.ListSessionsOptions{}, err
+	}
+	offset, err := parseBoundedQueryInt(r, "offset", 0, 0, int(^uint(0)>>1))
+	if err != nil {
+		return domain.ListSessionsOptions{}, err
+	}
+	return domain.ListSessionsOptions{Limit: limit, Offset: offset}, nil
+}
+
+func parseBoundedQueryInt(r *http.Request, name string, def, min, max int) (int, error) {
+	raw := r.URL.Query().Get(name)
+	if raw == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be an integer", name)
+	}
+	if n < min || n > max {
+		return 0, fmt.Errorf("%s must be between %d and %d", name, min, max)
+	}
+	return n, nil
+}
+
+func toSessionOverviewDTO(overview domain.SessionOverview) sessionOverviewDTO {
+	s := overview.Session
+	return sessionOverviewDTO{
+		SessionID:        s.SessionID,
+		StoryID:          s.StoryID,
+		Language:         s.Language,
+		Level:            s.Level,
+		SessionType:      string(s.SessionType),
+		Topic:            s.Topic,
+		UserExpressions:  s.UserExpressions,
+		ExpressionOutput: s.ExpressionOutput,
+		Status:           string(s.Status),
+		CreatedAt:        s.CreatedAt,
+		ReadingStartedAt: s.ReadingStartedAt,
+		CompletedAt:      s.CompletedAt,
+		SelectedCounts: selectedCountsDTO{
+			Targets: overview.SelectedCounts.Targets,
+			New:     overview.SelectedCounts.New,
+		},
+		Tasks: taskProgressDTO{
+			Total:     overview.TaskProgress.Total,
+			Completed: overview.TaskProgress.Completed,
+			Pending:   overview.TaskProgress.Pending(),
+		},
+	}
+}
+
+func toSessionDetailDTO(detail domain.SessionDetail) sessionDetailDTO {
+	ordered := append([]domain.GenerationStage(nil), detail.Stages...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		ri, rj := stageOrder(ordered[i].Stage), stageOrder(ordered[j].Stage)
+		if ri != rj {
+			return ri < rj
+		}
+		return ordered[i].Stage < ordered[j].Stage
+	})
+
+	stages := make([]generationStageDTO, 0, len(ordered))
+	for _, st := range ordered {
+		stages = append(stages, generationStageDTO{
+			Stage:       st.Stage,
+			Status:      string(st.Status),
+			StartedAt:   st.StartedAt,
+			CompletedAt: st.CompletedAt,
+			ErrorCode:   st.ErrorCode,
+			ErrorDetail: st.ErrorDetail,
+			RetryCount:  st.RetryCount,
+		})
+	}
+	return sessionDetailDTO{
+		sessionOverviewDTO: toSessionOverviewDTO(detail.SessionOverview),
+		StageSummary:       summarizeStages(ordered),
+		Stages:             stages,
+	}
+}
+
+func summarizeStages(stages []domain.GenerationStage) stageSummaryDTO {
+	var out stageSummaryDTO
+	for _, st := range stages {
+		out.Total++
+		switch st.Status {
+		case domain.StagePending:
+			out.Pending++
+		case domain.StageInProgress:
+			out.InProgress++
+			if out.ActiveStage == nil {
+				stage := st.Stage
+				out.ActiveStage = &stage
+			}
+		case domain.StageComplete:
+			out.Complete++
+		case domain.StageFailed:
+			out.Failed++
+			if out.FailedStage == nil {
+				stage := st.Stage
+				out.FailedStage = &stage
+			}
+		}
+	}
+	return out
+}
+
+func stageOrder(stage string) int {
+	switch stage {
+	case domain.StageScopeCheck:
+		return 10
+	case domain.StageStoryGeneration:
+		return 20
+	case domain.StageTokenization:
+		return 30
+	default:
+		if len(stage) >= len(domain.StageTaskPrefix) && stage[:len(domain.StageTaskPrefix)] == domain.StageTaskPrefix {
+			return 40
+		}
+		return 50
+	}
 }
 
 // sessionEvents streams generation progress as Server-Sent Events. On connect it

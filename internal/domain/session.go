@@ -50,6 +50,52 @@ type Session struct {
 	CompletedAt      *float64
 }
 
+// ListSessionsOptions controls the basic newest-first session list page.
+// Offset pagination is sufficient for the first home/resume surface and keeps
+// the storage contract portable across SQLite and Postgres.
+type ListSessionsOptions struct {
+	Limit  int
+	Offset int
+}
+
+// SelectedItemCounts is the persisted selection summary for a session. The
+// current schema stores only targets and new items; background items remain a
+// prompt-time pool and are not reported here until they are persisted.
+type SelectedItemCounts struct {
+	Targets int
+	New     int
+}
+
+// TaskProgress is the compact progress view client surfaces need before they
+// fetch full task presentation data.
+type TaskProgress struct {
+	Total     int
+	Completed int
+}
+
+func (p TaskProgress) Pending() int {
+	if p.Completed >= p.Total {
+		return 0
+	}
+	return p.Total - p.Completed
+}
+
+// SessionOverview is one row in the user's session list: core metadata plus the
+// counts needed by home/resume screens.
+type SessionOverview struct {
+	Session        Session
+	SelectedCounts SelectedItemCounts
+	TaskProgress   TaskProgress
+}
+
+// SessionDetail extends the overview with persisted generation-stage state for
+// retry/progress screens. The story text and task bodies remain behind their own
+// endpoints.
+type SessionDetail struct {
+	SessionOverview
+	Stages []GenerationStage
+}
+
 // StageStatus is the per-stage state in session_generation_stages.
 type StageStatus string
 

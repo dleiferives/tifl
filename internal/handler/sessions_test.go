@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	authn "github.com/dleiferives/tifl/internal/auth"
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/handler"
@@ -124,6 +125,205 @@ func TestGenerateSession(t *testing.T) {
 	}
 	if _, err := repo.GetSession(context.Background(), out.SessionID); err != nil {
 		t.Fatalf("session row not created: %v", err)
+	}
+}
+
+func TestListSessionsIncludesNewlyGeneratedSession(t *testing.T) {
+	srv, _ := newServer(t, true)
+
+	resp, err := http.Post(srv.URL+"/api/v1/sessions/generate", "application/json",
+		strings.NewReader(`{"language":"xx","level":"beginner"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gen struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&gen); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if gen.SessionID == "" {
+		t.Fatal("generate returned no session_id")
+	}
+
+	resp, err = http.Get(srv.URL + "/api/v1/sessions?limit=5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("list sessions = %d", resp.StatusCode)
+	}
+	var out struct {
+		Sessions []struct {
+			SessionID string `json:"session_id"`
+			Status    string `json:"status"`
+		} `json:"sessions"`
+		Limit   int  `json:"limit"`
+		Offset  int  `json:"offset"`
+		HasMore bool `json:"has_more"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Limit != 5 || out.Offset != 0 {
+		t.Fatalf("pagination echo mismatch: %+v", out)
+	}
+	for _, s := range out.Sessions {
+		if s.SessionID == gen.SessionID {
+			if s.Status == "" {
+				t.Fatal("generated session listed without status")
+			}
+			return
+		}
+	}
+	t.Fatalf("generated session %q not found in list: %+v", gen.SessionID, out.Sessions)
+}
+
+func TestGetSessionDetailLocalMode(t *testing.T) {
+	srv, repo := newServer(t, false)
+	ctx := context.Background()
+
+	sess, err := repo.CreateSession(ctx, domain.Session{
+		UserID: domain.LocalUserID, Language: "xx", Level: "beginner",
+		Status: domain.StatusFailed, CreatedAt: 100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	story, err := repo.CreateStory(ctx, domain.Story{
+		UserID: domain.LocalUserID, Language: "xx", Text: "a b", Level: "beginner",
+		SessionID: &sess.SessionID, GeneratedAt: 101,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetSessionSelection(ctx, sess.SessionID, story.StoryID, []string{"target-1", "target-2"}, []string{"new-1"}); err != nil {
+		t.Fatal(err)
+	}
+	code := "GEN_FAIL"
+	if err := repo.UpsertStage(ctx, domain.GenerationStage{SessionID: sess.SessionID, Stage: domain.StageStoryGeneration, Status: domain.StageFailed, ErrorCode: &code, RetryCount: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpsertStage(ctx, domain.GenerationStage{SessionID: sess.SessionID, Stage: domain.StageTokenization, Status: domain.StagePending}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateTask(ctx, domain.Task{
+		SessionID: sess.SessionID, UserID: domain.LocalUserID, TaskType: tasks.TypeComprehensionMC,
+		Language: "xx", Content: map[string]any{"question": "q"}, GradedBy: "rule",
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(srv.URL + "/api/v1/sessions/" + sess.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("detail = %d", resp.StatusCode)
+	}
+	var out struct {
+		SessionID      string  `json:"session_id"`
+		StoryID        *string `json:"story_id"`
+		Status         string  `json:"status"`
+		SelectedCounts struct {
+			Targets int `json:"targets"`
+			New     int `json:"new"`
+		} `json:"selected_counts"`
+		Tasks struct {
+			Total     int `json:"total"`
+			Completed int `json:"completed"`
+			Pending   int `json:"pending"`
+		} `json:"tasks"`
+		StageSummary struct {
+			Total       int     `json:"total"`
+			Failed      int     `json:"failed"`
+			FailedStage *string `json:"failed_stage"`
+		} `json:"stage_summary"`
+		Stages []struct {
+			Stage      string  `json:"stage"`
+			Status     string  `json:"status"`
+			ErrorCode  *string `json:"error_code"`
+			RetryCount int     `json:"retry_count"`
+		} `json:"stages"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.SessionID != sess.SessionID || out.StoryID == nil || *out.StoryID != story.StoryID || out.Status != string(domain.StatusFailed) {
+		t.Fatalf("detail core fields mismatch: %+v", out)
+	}
+	if out.SelectedCounts.Targets != 2 || out.SelectedCounts.New != 1 {
+		t.Fatalf("selected counts mismatch: %+v", out.SelectedCounts)
+	}
+	if out.Tasks.Total != 1 || out.Tasks.Completed != 1 || out.Tasks.Pending != 0 {
+		t.Fatalf("task progress mismatch: %+v", out.Tasks)
+	}
+	if out.StageSummary.Total != 2 || out.StageSummary.Failed != 1 || out.StageSummary.FailedStage == nil || *out.StageSummary.FailedStage != domain.StageStoryGeneration {
+		t.Fatalf("stage summary mismatch: %+v", out.StageSummary)
+	}
+	if len(out.Stages) != 2 || out.Stages[0].Stage != domain.StageStoryGeneration || out.Stages[0].ErrorCode == nil || *out.Stages[0].ErrorCode != "GEN_FAIL" || out.Stages[0].RetryCount != 1 {
+		t.Fatalf("stage rows mismatch: %+v", out.Stages)
+	}
+}
+
+func TestSessionReadAPITenantIsolation(t *testing.T) {
+	srv, repo := newAuthServer(t)
+	service, err := authn.NewService(repo, authTestSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := service.Register(context.Background(), "session-owner@example.com", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := service.Register(context.Background(), "session-other@example.com", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := repo.CreateSession(context.Background(), domain.Session{
+		UserID: owner.User.UserID, Language: "xx", Level: "beginner",
+		Status: domain.StatusReady,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/sessions/"+sess.SessionID, nil)
+	req.Header.Set("Authorization", "Bearer "+other.AccessToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("cross-tenant detail = %d", resp.StatusCode)
+	}
+
+	req, _ = http.NewRequest(http.MethodGet, srv.URL+"/api/v1/sessions", nil)
+	req.Header.Set("Authorization", "Bearer "+other.AccessToken)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("other user's list = %d", resp.StatusCode)
+	}
+	var out struct {
+		Sessions []struct {
+			SessionID string `json:"session_id"`
+		} `json:"sessions"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range out.Sessions {
+		if s.SessionID == sess.SessionID {
+			t.Fatalf("other user's list leaked session %q", sess.SessionID)
+		}
 	}
 }
 

@@ -117,6 +117,39 @@ paths:
               schema:
                 $ref: "#/components/schemas/User"
         "401": { description: Missing or invalid access token }
+  /sessions:
+    get:
+      summary: List sessions for the current user
+      description: >
+        Newest-first session overview page for home/resume screens. Includes
+        generation status, story_id when available, selected target/new counts,
+        and compact task progress counts without opening the SSE stream or
+        fetching task bodies.
+      operationId: listSessions
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: Session overview page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionList"
+        "400": { description: Invalid pagination query }
   /sessions/generate:
     post:
       summary: Start generating a session (story + tasks)
@@ -140,6 +173,24 @@ paths:
                 $ref: "#/components/schemas/SessionRef"
         "400": { description: Missing or unknown language }
         "503": { description: Generation not configured }
+  /sessions/{id}:
+    get:
+      summary: Get session detail and persisted generation progress
+      description: >
+        Returns one tenant-scoped session with the metadata needed to navigate to
+        reader/tasks, retry failed generation, or render a progress screen without
+        subscribing to SSE. Another user's session returns 404.
+      operationId: getSessionDetail
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      responses:
+        "200":
+          description: Session detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionDetail"
+        "404": { description: Session not found }
   /sessions/{id}/events:
     get:
       summary: Stream generation progress (SSE)
@@ -486,6 +537,104 @@ components:
         session_id: { type: string }
         status: { type: string }
       required: [session_id, status]
+    SelectedItemCounts:
+      type: object
+      description: Persisted SelectedItems counts; background items are not currently stored.
+      properties:
+        targets: { type: integer }
+        new: { type: integer }
+      required: [targets, new]
+    TaskProgress:
+      type: object
+      properties:
+        total: { type: integer }
+        completed: { type: integer, description: number of tasks already graded }
+        pending: { type: integer }
+      required: [total, completed, pending]
+    SessionOverview:
+      type: object
+      description: One home/resume row for the current user.
+      properties:
+        session_id: { type: string }
+        story_id: { type: string, description: "present once story generation has persisted a story" }
+        language: { type: string }
+        level: { type: string }
+        session_type:
+          type: string
+          enum: [system, topic_guided, expression_guided]
+        topic: { type: string }
+        user_expressions:
+          type: array
+          items: { type: string }
+        expression_output:
+          type: string
+          enum: [phrases, story]
+        status:
+          type: string
+          enum: [pending, generating, ready, reading, complete, failed]
+        created_at: { type: number }
+        reading_started_at: { type: number }
+        completed_at: { type: number }
+        selected_counts:
+          $ref: "#/components/schemas/SelectedItemCounts"
+        tasks:
+          $ref: "#/components/schemas/TaskProgress"
+      required:
+        - session_id
+        - language
+        - level
+        - session_type
+        - status
+        - created_at
+        - selected_counts
+        - tasks
+    SessionList:
+      type: object
+      properties:
+        sessions:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionOverview"
+        limit: { type: integer }
+        offset: { type: integer }
+        has_more: { type: boolean }
+      required: [sessions, limit, offset, has_more]
+    StageSummary:
+      type: object
+      properties:
+        total: { type: integer }
+        pending: { type: integer }
+        in_progress: { type: integer }
+        complete: { type: integer }
+        failed: { type: integer }
+        active_stage: { type: string }
+        failed_stage: { type: string }
+      required: [total, pending, in_progress, complete, failed]
+    GenerationStageRecord:
+      type: object
+      properties:
+        stage: { type: string }
+        status:
+          type: string
+          enum: [pending, in_progress, complete, failed]
+        started_at: { type: number }
+        completed_at: { type: number }
+        error_code: { type: string }
+        error_detail: { type: string }
+        retry_count: { type: integer }
+      required: [stage, status, retry_count]
+    SessionDetail:
+      allOf:
+        - $ref: "#/components/schemas/SessionOverview"
+        - type: object
+          properties:
+            stage_summary:
+              $ref: "#/components/schemas/StageSummary"
+            stages:
+              type: array
+              items:
+                $ref: "#/components/schemas/GenerationStageRecord"
+          required: [stage_summary, stages]
     GenerationEvent:
       type: object
       description: One SSE progress message (the JSON in each data line).
