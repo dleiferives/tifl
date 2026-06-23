@@ -4,6 +4,18 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>tifl — Thinking In Foreign Languages</title>
+    <script>
+      (() => {
+        const key = "tifl.theme";
+        const themes = new Set(["default", "paper", "high-contrast"]);
+        let theme = "default";
+        try {
+          const saved = localStorage.getItem(key);
+          if (saved && themes.has(saved)) theme = saved;
+        } catch {}
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
     <link rel="stylesheet" href="/main.css" />
   </head>
   <body>

@@ -46,7 +46,8 @@ src/
   api-types.ts generated from spec/openapi.yaml; do not edit directly
   router.ts    hash-based client router
   store.ts     global app signals (auth, profile, language, level, toast)
-  style.css    minimal shell styles; themes are owned by issue #63
+  style.css    shared theme tokens, shell styles, and knowledge-level colors
+  theme.ts     supported theme ids and local theme application/cache helpers
   views/       route-owned views and placeholders
 ```
 
@@ -66,3 +67,15 @@ The API base is resolved once when `api.ts` loads:
   `http://127.0.0.1:{port}/api/v1`
 - Capacitor/cloud builds: inject `window.__API_BASE_URL__` before `main.js`
   loads; issue #21 owns the native-shell configuration
+
+## Themes and settings
+
+The root element uses `data-theme="default|paper|high-contrast"`. Theme colors
+and the reader knowledge ramp are CSS custom properties in `src/style.css`.
+`index.html` applies the cached `tifl.theme` value before CSS and JavaScript load;
+the profile returned by the API becomes authoritative once authentication
+initialization completes.
+
+Settings changes save immediately through `PATCH /profile`. Theme is additionally
+written to localStorage so reload and native WebView startup use the selected
+theme on the first frame.

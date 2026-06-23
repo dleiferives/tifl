@@ -1,5 +1,6 @@
 import { createMemo, createSignal } from "solid-js";
 import { configureAuthCallbacks, setAccessToken, type APISchema } from "./api";
+import { applyTheme } from "./theme";
 
 export type AuthStatus = "checking" | "anonymous" | "authenticated" | "local";
 export type ToastKind = "error" | "info";
@@ -55,6 +56,7 @@ function setProfile(next: Profile | null) {
   if (next) {
     setActiveLanguage(next.active_language);
     setCurrentLevel(next.level);
+    applyTheme(next.theme);
   }
 }
 
