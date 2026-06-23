@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -221,6 +222,19 @@ func (h *Handler) submitTask(w http.ResponseWriter, r *http.Request) {
 		Grade:   gradeDTO{grade.Correct, grade.Score, grade.Feedback, grade.ItemsDemonstrated, string(gradedBy)},
 		SkillXP: skillXPDTOs(skillChanges),
 	})
+
+	// Off the critical path: resolve any pending tier verifications that this grade
+	// triggered. Auto-approves when no LLM gateway is configured.
+	if h.skillVerify != nil {
+		for _, change := range skillChanges {
+			if change.PendingVerify {
+				skillID := change.SkillID
+				go func() {
+					_ = h.skillVerify.VerifySkill(context.Background(), userID, skillID)
+				}()
+			}
+		}
+	}
 }
 
 // fillLLMGradeContext loads the story text and target knowledge items the LLM
