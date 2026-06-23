@@ -141,9 +141,12 @@ export function HomeView() {
           <h1>Home</h1>
           <p>{homeSubtitle()}</p>
         </div>
-        <button class="primary-button" type="button" disabled={starting()} onClick={startSystemSession}>
-          {starting() ? "Starting..." : "Start session"}
-        </button>
+        <div class="home-start-actions">
+          <button class="primary-button" type="button" disabled={starting()} onClick={startSystemSession}>
+            {starting() ? "Starting..." : "Start session"}
+          </button>
+          <a class="button-link secondary-link" href={routeHref("/start")}>Guided session…</a>
+        </div>
       </header>
 
       <Show when={actionError()}>

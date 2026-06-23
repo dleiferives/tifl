@@ -3,6 +3,7 @@ import { createSignal, onCleanup, onMount, type Accessor } from "solid-js";
 export type Route =
   | { name: "home"; path: "/" }
   | { name: "login"; path: "/login" }
+  | { name: "start"; path: "/start" }
   | { name: "settings"; path: "/settings" }
   | { name: "generation"; path: string; sessionId: string }
   | { name: "reader"; path: string; storyId: string }
@@ -30,6 +31,9 @@ export function parseHash(hash: string): Route {
   }
   if (segments.length === 1 && segments[0] === "login") {
     return { name: "login", path: "/login" };
+  }
+  if (segments.length === 1 && segments[0] === "start") {
+    return { name: "start", path: "/start" };
   }
   if (segments.length === 1 && segments[0] === "settings") {
     return { name: "settings", path: "/settings" };

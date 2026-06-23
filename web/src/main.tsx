@@ -9,6 +9,7 @@ import { LoginView } from "./views/login";
 import { ReaderView } from "./views/reader";
 import { SettingsView } from "./views/settings";
 import { SkillsView } from "./views/skills";
+import { StartView } from "./views/start";
 import { TasksView } from "./views/tasks";
 import "./style.css";
 
@@ -30,6 +31,7 @@ function App() {
           <Switch fallback={<NotFoundView path={route().path} />}>
             <Match when={route().name === "home"}><HomeView /></Match>
             <Match when={route().name === "login"}><LoginView /></Match>
+            <Match when={route().name === "start"}><StartView /></Match>
             <Match when={route().name === "settings"}><SettingsView /></Match>
             <Match when={route().name === "skills"}><SkillsView /></Match>
             <Match when={route().name === "generation"}>

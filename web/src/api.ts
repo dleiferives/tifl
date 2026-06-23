@@ -134,12 +134,117 @@ export async function retrySession(sessionID: string): Promise<APIResponse<"retr
   );
 }
 
-export function sessionEventsURL(sessionID: string): string {
-  return apiURL(`/sessions/${encodeURIComponent(sessionID)}/events`);
+export interface GenerationStreamHandlers {
+  /** Called for each parsed SSE generation event, including the terminal stage="done". */
+  onEvent: (event: GenerationEvent) => void;
+  /** Called when the stream cannot be opened or fails mid-flight (not on clean close). */
+  onError?: (error: unknown) => void;
+  /** Called when the server closes the stream (generation finished). */
+  onClose?: () => void;
 }
 
-export function parseGenerationEvent(data: string): GenerationEvent {
-  return JSON.parse(data) as GenerationEvent;
+// streamGenerationEvents consumes GET /sessions/{id}/events as Server-Sent
+// Events. The native EventSource API cannot attach the Authorization header, so
+// generation progress is read from a streamed fetch response instead — which also
+// lets a 401 trigger a single refresh-and-reconnect. Returns a cleanup function
+// that aborts the in-flight request; callers invoke it from onCleanup.
+export function streamGenerationEvents(sessionID: string, handlers: GenerationStreamHandlers): () => void {
+  const controller = new AbortController();
+  void consumeGenerationStream(sessionID, handlers, controller.signal, true);
+  return () => controller.abort();
+}
+
+async function consumeGenerationStream(
+  sessionID: string,
+  handlers: GenerationStreamHandlers,
+  signal: AbortSignal,
+  allowRefresh: boolean,
+): Promise<void> {
+  const path = `/sessions/${encodeURIComponent(sessionID)}/events`;
+  let response: Response;
+  try {
+    response = await sendEventStreamRequest(path, signal);
+  } catch (error) {
+    if (!signal.aborted) {
+      handlers.onError?.(error);
+    }
+    return;
+  }
+
+  if (response.status === 401 && allowRefresh) {
+    if (await refreshAccessToken()) {
+      return consumeGenerationStream(sessionID, handlers, signal, false);
+    }
+    setAccessToken(null);
+    authCallbacks.onAuthenticationLost?.();
+    handlers.onError?.(new APIError(response, null));
+    return;
+  }
+  if (!response.ok || !response.body) {
+    handlers.onError?.(new APIError(response, null));
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      let separator = buffer.indexOf("\n\n");
+      while (separator !== -1) {
+        const frame = buffer.slice(0, separator);
+        buffer = buffer.slice(separator + 2);
+        const event = parseSSEFrame(frame);
+        if (event) {
+          handlers.onEvent(event);
+        }
+        separator = buffer.indexOf("\n\n");
+      }
+    }
+  } catch (error) {
+    if (!signal.aborted) {
+      handlers.onError?.(error);
+    }
+    return;
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (!signal.aborted) {
+    handlers.onClose?.();
+  }
+}
+
+function sendEventStreamRequest(path: string, signal: AbortSignal): Promise<Response> {
+  const headers = new Headers({ Accept: "text/event-stream" });
+  if (accessToken) {
+    headers.set("Authorization", `Bearer ${accessToken}`);
+  }
+  return fetch(apiURL(path), { method: "GET", credentials: "include", headers, signal });
+}
+
+// parseSSEFrame extracts the JSON payload from one SSE frame. Comment keepalive
+// frames (": keepalive") carry no data line and are skipped.
+function parseSSEFrame(frame: string): GenerationEvent | null {
+  const dataLines: string[] = [];
+  for (const line of frame.split("\n")) {
+    if (line.startsWith("data:")) {
+      dataLines.push(line.slice(5).replace(/^ /, ""));
+    }
+  }
+  if (dataLines.length === 0) {
+    return null;
+  }
+  try {
+    return JSON.parse(dataLines.join("\n")) as GenerationEvent;
+  } catch {
+    return null;
+  }
 }
 
 export async function getStory(storyID: string): Promise<APIResponse<"getStory", 200>> {

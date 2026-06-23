@@ -1232,3 +1232,336 @@ select {
   color: var(--text-muted);
   font-size: 0.9rem;
 }
+
+/* Home: start actions cluster */
+.home-start-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+/* Session start screen (mode select + inputs) */
+.start-form {
+  display: grid;
+  gap: 1.5rem;
+}
+
+.start-modes,
+.start-inputs {
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 1rem 1.1rem 1.2rem;
+  background: var(--surface);
+  display: grid;
+  gap: 0.85rem;
+}
+
+.start-modes legend,
+.start-inputs legend {
+  font-weight: 700;
+  padding: 0 0.4rem;
+}
+
+.start-inputs .field input,
+.start-inputs .field textarea {
+  width: 100%;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.start-inputs .field input:focus,
+.start-inputs .field textarea:focus {
+  border-color: var(--accent);
+  outline: 3px solid var(--focus-ring);
+}
+
+.start-inputs .field textarea {
+  resize: vertical;
+  min-height: 4.5rem;
+}
+
+.mode-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.75rem;
+}
+
+.mode-card {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.mode-card[data-selected="true"] {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.mode-card:focus-within {
+  outline: 3px solid var(--focus-ring);
+}
+
+/* The radio drives selection but the card is the visible control. */
+.mode-card input,
+.output-option input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.mode-card-title,
+.output-option-title {
+  font-weight: 700;
+}
+
+.mode-card-desc,
+.output-option-desc {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  font-weight: 400;
+}
+
+.output-toggle {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.6rem;
+}
+
+.output-option {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  background: var(--surface);
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.output-option[data-selected="true"] {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.output-option:focus-within {
+  outline: 3px solid var(--focus-ring);
+}
+
+.start-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+/* Generation progress screen */
+.generation-view {
+  display: grid;
+  gap: 1.5rem;
+}
+
+.stage-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.stage-row {
+  display: grid;
+  grid-template-columns: 1.5rem 1fr auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  background: var(--surface);
+}
+
+.stage-row[data-status="complete"] {
+  border-color: color-mix(in srgb, var(--success), var(--border) 55%);
+}
+
+.stage-row[data-status="failed"] {
+  border-color: color-mix(in srgb, var(--danger), var(--border) 45%);
+  background: var(--danger-subtle);
+}
+
+.stage-icon {
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.stage-row[data-status="complete"] .stage-icon {
+  border-color: var(--success);
+  background: var(--success);
+  color: var(--accent-contrast);
+}
+
+.stage-row[data-status="failed"] .stage-icon {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: var(--accent-contrast);
+}
+
+/* Active step: spinning ring around the icon. */
+.stage-row[data-status="in_progress"] .stage-icon {
+  border-color: var(--border);
+  border-top-color: var(--accent);
+  animation: stage-spin 0.9s linear infinite;
+}
+
+@keyframes stage-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.stage-label {
+  font-weight: 650;
+}
+
+.stage-status {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-weight: 650;
+}
+
+.stage-row[data-status="in_progress"] .stage-status {
+  color: var(--accent);
+}
+
+/* Token-rate ticker: a throughput gauge, never a preview of the story text. */
+.token-ticker {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.15rem;
+}
+
+.token-ticker-bar {
+  position: relative;
+  flex: 1;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: var(--surface-subtle);
+  overflow: hidden;
+}
+
+.token-ticker-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.6s ease;
+}
+
+/* Shimmer keeps the gauge alive between rate updates. */
+.token-ticker-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--accent-contrast), transparent 55%),
+    transparent
+  );
+  transform: translateX(-100%);
+  animation: token-shimmer 1.2s ease-in-out infinite;
+}
+
+@keyframes token-shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+.token-ticker-rate {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--accent);
+  min-width: 5rem;
+  text-align: right;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-row[data-status="in_progress"] .stage-icon {
+    animation: none;
+  }
+
+  .token-ticker-fill::after {
+    animation: none;
+  }
+}
+
+.generation-panel {
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: 0.5rem;
+  padding: 1rem 1.1rem;
+  background: var(--surface);
+  display: grid;
+  gap: 0.6rem;
+}
+
+.generation-panel h2 {
+  margin: 0;
+}
+
+.generation-panel p {
+  margin: 0;
+}
+
+.generation-panel[data-tone="success"] {
+  border-left-color: var(--success);
+}
+
+.generation-panel[data-tone="warning"] {
+  border-left-color: var(--level-2);
+}
+
+.generation-panel[data-tone="error"] {
+  border-left-color: var(--danger);
+}
+
+.panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.25rem;
+}
+
+.panel-hint {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.panel-code {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
