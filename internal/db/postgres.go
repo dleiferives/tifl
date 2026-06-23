@@ -179,6 +179,52 @@ func (r *PostgresRepository) UpdateUserLastLogin(ctx context.Context, userID str
 	return nil
 }
 
+func (r *PostgresRepository) GetUserProfile(ctx context.Context, userID string) (domain.UserProfile, error) {
+	user, err := r.GetUser(ctx, userID)
+	if err != nil {
+		return domain.UserProfile{}, err
+	}
+	languages, err := r.ListLanguages(ctx)
+	if err != nil {
+		return domain.UserProfile{}, err
+	}
+	return profileFromSettings(user.UserID, user.Settings, firstEnabledLanguage(languages)), nil
+}
+
+func (r *PostgresRepository) UpdateUserProfile(ctx context.Context, userID string, patch domain.UserProfilePatch) (domain.UserProfile, error) {
+	if patch.ActiveLanguage != nil {
+		language, err := r.GetLanguage(ctx, *patch.ActiveLanguage)
+		if errors.Is(err, ErrNotFound) || (err == nil && !language.Enabled) {
+			return domain.UserProfile{}, invalidProfile("active_language %q is not enabled", *patch.ActiveLanguage)
+		}
+		if err != nil {
+			return domain.UserProfile{}, err
+		}
+	}
+
+	user, err := r.GetUser(ctx, userID)
+	if err != nil {
+		return domain.UserProfile{}, err
+	}
+	languages, err := r.ListLanguages(ctx)
+	if err != nil {
+		return domain.UserProfile{}, err
+	}
+	profile := applyProfilePatch(profileFromSettings(user.UserID, user.Settings, firstEnabledLanguage(languages)), patch)
+	settings, err := marshalJSONB(settingsWithProfile(user.Settings, profile))
+	if err != nil {
+		return domain.UserProfile{}, err
+	}
+	tag, err := r.pool.Exec(ctx, `UPDATE users SET settings = $1 WHERE user_id = $2`, settings, userID)
+	if err != nil {
+		return domain.UserProfile{}, err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.UserProfile{}, ErrNotFound
+	}
+	return profile, nil
+}
+
 func (r *PostgresRepository) CreateRefreshToken(ctx context.Context, token domain.RefreshToken) error {
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO refresh_tokens(token_hash, family_id, user_id, issued_at, expires_at, revoked_at, replaced_by_hash)
