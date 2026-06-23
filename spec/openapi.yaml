@@ -10,6 +10,8 @@ info:
     See context/backend-server.md and context/architecture-overview.md.
 servers:
   - url: /api/v1
+security:
+  - bearerAuth: []
 paths:
   /ping:
     get:
@@ -26,6 +28,95 @@ paths:
                   message:
                     type: string
                 required: [message]
+  /auth/register:
+    post:
+      security: []
+      summary: Register and immediately authenticate a user
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Credentials"
+      responses:
+        "201":
+          description: Account created; rotated refresh credential set as an HttpOnly cookie
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400": { description: Invalid email or password policy failure }
+        "409": { description: Unable to create an account with that email }
+        "429": { description: Too many authentication attempts }
+  /auth/login:
+    post:
+      security: []
+      summary: Authenticate with email and password
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Credentials"
+      responses:
+        "200":
+          description: Authenticated; refresh credential set as an HttpOnly cookie
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401": { description: Invalid email or password }
+        "429": { description: Too many authentication attempts }
+  /auth/refresh:
+    post:
+      security: []
+      summary: Rotate the refresh cookie and issue a new access token
+      operationId: refresh
+      responses:
+        "200":
+          description: Refreshed
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401": { description: Missing, expired, revoked, or replayed refresh token }
+  /auth/logout:
+    post:
+      security: []
+      summary: Revoke the current refresh cookie
+      operationId: logout
+      responses:
+        "204": { description: Logged out }
+  /auth/logout-all:
+    post:
+      summary: Revoke every refresh session for the current user
+      operationId: logoutAll
+      responses:
+        "204": { description: All refresh sessions revoked }
+        "401": { description: Missing or invalid access token }
+  /auth/me:
+    get:
+      summary: Return the authenticated user
+      operationId: me
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401": { description: Missing or invalid access token }
   /sessions/generate:
     post:
       summary: Start generating a session (story + tasks)
@@ -333,6 +424,11 @@ paths:
         "503": { description: LLM grading not configured }
 # Planned surfaces (see context/): /auth/*, /skills.
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
   parameters:
     SessionID:
       name: id
@@ -340,6 +436,32 @@ components:
       required: true
       schema: { type: string }
   schemas:
+    Credentials:
+      type: object
+      properties:
+        email: { type: string, format: email }
+        password:
+          type: string
+          minLength: 15
+          maxLength: 128
+      required: [email, password]
+    User:
+      type: object
+      properties:
+        user_id: { type: string }
+        email: { type: string, format: email }
+        created_at: { type: number }
+        last_login: { type: number }
+      required: [user_id, email, created_at]
+    AuthResponse:
+      type: object
+      properties:
+        access_token: { type: string }
+        token_type: { type: string, const: Bearer }
+        expires_in: { type: integer, const: 900 }
+        user:
+          $ref: "#/components/schemas/User"
+      required: [access_token, token_type, expires_in, user]
     GenerateRequest:
       type: object
       properties:

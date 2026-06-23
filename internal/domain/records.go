@@ -15,6 +15,20 @@ type User struct {
 	Settings     map[string]any // theme / UI prefs; nil when unset
 }
 
+// RefreshToken is one server-side refresh credential. The raw token is only
+// returned to the client cookie; storage keeps its SHA-256 digest. FamilyID
+// groups one login/device's rotated tokens so replay revokes that session
+// without terminating the user's other concurrent sessions.
+type RefreshToken struct {
+	TokenHash      string
+	FamilyID       string
+	UserID         string
+	IssuedAt       float64
+	ExpiresAt      float64
+	RevokedAt      *float64
+	ReplacedByHash *string
+}
+
 // Language is a catalogue row for a registered language plugin. Populated at
 // startup from whatever plugins are compiled in. See
 // context/database-schema.md ("languages").

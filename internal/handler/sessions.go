@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	authn "github.com/dleiferives/tifl/internal/auth"
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/story"
@@ -16,11 +17,10 @@ import (
 // off the async pipeline; GET /{id}/events streams stage progress over SSE; POST
 // /{id}/retry resumes a failed generation from its failed stage. See
 // context/session-types.md ("Generation Pipeline" / "Generation UX").
-//
-// Auth is not yet wired (#12); until then every session belongs to the local
-// user. currentUserID is the single place that assumption lives, so swapping in
-// real auth is a one-line change.
-func (h *Handler) currentUserID(_ *http.Request) string { return domain.LocalUserID }
+func (h *Handler) currentUserID(r *http.Request) string {
+	userID, _ := authn.UserID(r.Context())
+	return userID
+}
 
 type generateRequest struct {
 	Language         string   `json:"language"`
@@ -79,7 +79,11 @@ func (h *Handler) retrySession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	if _, err := h.repo.GetSession(r.Context(), id); err != nil {
+	sess, err := h.repo.GetSession(r.Context(), id)
+	if err != nil || sess.UserID != h.currentUserID(r) {
+		if err == nil {
+			err = db.ErrNotFound
+		}
 		h.writeSessionLookupError(w, err)
 		return
 	}
@@ -94,7 +98,11 @@ func (h *Handler) retrySession(w http.ResponseWriter, r *http.Request) {
 // keepalives hold the connection open through proxies.
 func (h *Handler) sessionEvents(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if _, err := h.repo.GetSession(r.Context(), id); err != nil {
+	owner, err := h.repo.GetSession(r.Context(), id)
+	if err != nil || owner.UserID != h.currentUserID(r) {
+		if err == nil {
+			err = db.ErrNotFound
+		}
 		h.writeSessionLookupError(w, err)
 		return
 	}

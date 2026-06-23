@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/dleiferives/tifl/internal/acquire"
+	authn "github.com/dleiferives/tifl/internal/auth"
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/lang"
 	"github.com/dleiferives/tifl/internal/llm"
@@ -18,15 +20,30 @@ import (
 // Handler holds the dependencies the HTTP layer needs and registers routes onto
 // a mux. Handlers stay thin: parse, call a repository/domain function, serialize.
 type Handler struct {
-	repo        db.Repository
-	broker      *story.Broker             // nil when generation is not configured (no LLM gateway)
-	reader      *reader.Service           // reader signal ingest + rating writes (#9/#10)
-	defs        *reader.DefinitionService // definition resolution + cached breakdowns (#10)
-	taskTypes   *tasks.Registry           // task-type lookup for grading + presentation
-	grader      *tasks.Grader             // routes rule vs LLM grading
-	acquire     *acquire.Engine           // folds grades into user_knowledge signals
-	llmEnabled  bool                      // false when no LLM client: LLM-graded tasks return 503
-	frontendDir string
+	repo         db.Repository
+	broker       *story.Broker             // nil when generation is not configured (no LLM gateway)
+	reader       *reader.Service           // reader signal ingest + rating writes (#9/#10)
+	defs         *reader.DefinitionService // definition resolution + cached breakdowns (#10)
+	taskTypes    *tasks.Registry           // task-type lookup for grading + presentation
+	grader       *tasks.Grader             // routes rule vs LLM grading
+	acquire      *acquire.Engine           // folds grades into user_knowledge signals
+	llmEnabled   bool                      // false when no LLM client: LLM-graded tasks return 503
+	frontendDir  string
+	auth         *authn.Service
+	cookieSecure bool
+	authLimiter  *authn.Limiter
+}
+
+type Option func(*Handler)
+
+// WithAuth enables JWT mode. Without it, the handler runs in desktop-local mode
+// and injects domain.LocalUserID into every application API request.
+func WithAuth(service *authn.Service, secureCookie bool) Option {
+	return func(h *Handler) {
+		h.auth = service
+		h.cookieSecure = secureCookie
+		h.authLimiter = authn.NewLimiter(10, time.Minute)
+	}
 }
 
 // New builds a Handler over the given repository, generation broker (may be nil),
@@ -36,7 +53,7 @@ type Handler struct {
 // acquisition services are built from the repository with default tuning; the
 // acquisition engine is shared between the reader's signal ingest and task
 // grading.
-func New(repo db.Repository, broker *story.Broker, client llm.Client, taskTypes *tasks.Registry, langs *lang.Registry, frontendDir string) *Handler {
+func New(repo db.Repository, broker *story.Broker, client llm.Client, taskTypes *tasks.Registry, langs *lang.Registry, frontendDir string, opts ...Option) *Handler {
 	engine := acquire.NewEngine(repo, predictor.DefaultConfig(), acquire.Config{})
 	grader := tasks.NewGrader(client, tasks.WithNormalizers(func(code string) tasks.Normalizer {
 		l, ok := langs.Get(code)
@@ -45,7 +62,7 @@ func New(repo db.Repository, broker *story.Broker, client llm.Client, taskTypes 
 		}
 		return l.Normalize
 	}))
-	return &Handler{
+	h := &Handler{
 		repo:        repo,
 		broker:      broker,
 		reader:      reader.NewService(repo, engine),
@@ -56,25 +73,37 @@ func New(repo db.Repository, broker *story.Broker, client llm.Client, taskTypes 
 		llmEnabled:  client != nil,
 		frontendDir: frontendDir,
 	}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
 }
 
 // Register wires every route onto mux.
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /healthz", h.health)
-	mux.HandleFunc("GET /api/v1/ping", h.ping)
-	mux.HandleFunc("GET /api/v1/languages", h.listLanguages)
-	mux.HandleFunc("GET /api/v1/stories/{id}", h.getStory)
-	mux.HandleFunc("GET /api/v1/stories/{id}/definition", h.getDefinition)
-	mux.HandleFunc("POST /api/v1/stories/{id}/sentence", h.postSentenceBreakdown)
-	mux.HandleFunc("POST /api/v1/stories/{id}/word", h.postWordBreakdown)
-	mux.HandleFunc("POST /api/v1/reader/events", h.postReaderEvents)
-	mux.HandleFunc("PUT /api/v1/word_knowledge/{token}", h.putWordKnowledge)
-	mux.HandleFunc("POST /api/v1/sessions/generate", h.generateSession)
-	mux.HandleFunc("GET /api/v1/sessions/{id}/events", h.sessionEvents)
-	mux.HandleFunc("POST /api/v1/sessions/{id}/retry", h.retrySession)
-	mux.HandleFunc("GET /api/v1/sessions/{id}/tasks", h.getSessionTasks)
-	mux.HandleFunc("GET /api/v1/tasks/{id}", h.getTask)
-	mux.HandleFunc("POST /api/v1/tasks/{id}/submit", h.submitTask)
+	h.registerAPI(mux, "GET /api/v1/ping", h.ping)
+	h.registerAPI(mux, "GET /api/v1/languages", h.listLanguages)
+	h.registerAPI(mux, "GET /api/v1/stories/{id}", h.getStory)
+	h.registerAPI(mux, "GET /api/v1/stories/{id}/definition", h.getDefinition)
+	h.registerAPI(mux, "POST /api/v1/stories/{id}/sentence", h.postSentenceBreakdown)
+	h.registerAPI(mux, "POST /api/v1/stories/{id}/word", h.postWordBreakdown)
+	h.registerAPI(mux, "POST /api/v1/reader/events", h.postReaderEvents)
+	h.registerAPI(mux, "PUT /api/v1/word_knowledge/{token}", h.putWordKnowledge)
+	h.registerAPI(mux, "POST /api/v1/sessions/generate", h.generateSession)
+	h.registerAPI(mux, "GET /api/v1/sessions/{id}/events", h.sessionEvents)
+	h.registerAPI(mux, "POST /api/v1/sessions/{id}/retry", h.retrySession)
+	h.registerAPI(mux, "GET /api/v1/sessions/{id}/tasks", h.getSessionTasks)
+	h.registerAPI(mux, "GET /api/v1/tasks/{id}", h.getTask)
+	h.registerAPI(mux, "POST /api/v1/tasks/{id}/submit", h.submitTask)
+	if h.auth != nil {
+		mux.HandleFunc("POST /api/v1/auth/register", h.register)
+		mux.HandleFunc("POST /api/v1/auth/login", h.login)
+		mux.HandleFunc("POST /api/v1/auth/refresh", h.refresh)
+		mux.HandleFunc("POST /api/v1/auth/logout", h.logout)
+		h.registerAPI(mux, "POST /api/v1/auth/logout-all", h.logoutAll)
+		h.registerAPI(mux, "GET /api/v1/auth/me", h.me)
+	}
 	h.registerStatic(mux)
 }
 

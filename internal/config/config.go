@@ -11,6 +11,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
 )
@@ -34,16 +35,17 @@ const (
 
 // Config is the fully-resolved API-server configuration.
 type Config struct {
-	Addr        string      // listen address for the API server
-	StorageMode StorageMode // which Repository implementation to use
-	DBPath      string      // SQLite file path (sqlite mode)
-	DatabaseURL string      // Postgres DSN (postgres mode)
-	LLMBaseURL  string      // where the LLM gateway is listening
-	LLMAPIKey   string      // optional gateway auth
-	LLMModel    string      // model name sent to the gateway (blank = gateway default)
-	AuthMode    AuthMode    // jwt (cloud) or none (desktop-local)
-	JWTSecret   string      // signing key when AuthMode == jwt
-	FrontendDir string      // compiled SolidJS assets (web/dist)
+	Addr                    string      // listen address for the API server
+	StorageMode             StorageMode // which Repository implementation to use
+	DBPath                  string      // SQLite file path (sqlite mode)
+	DatabaseURL             string      // Postgres DSN (postgres mode)
+	LLMBaseURL              string      // where the LLM gateway is listening
+	LLMAPIKey               string      // optional gateway auth
+	LLMModel                string      // model name sent to the gateway (blank = gateway default)
+	AuthMode                AuthMode    // jwt (cloud) or none (desktop-local)
+	JWTSecret               string      // signing key when AuthMode == jwt
+	AllowInsecureAuthCookie bool        // development-only: permit refresh cookie over HTTP
+	FrontendDir             string      // compiled SolidJS assets (web/dist)
 }
 
 // GatewayConfig is the fully-resolved LLM-gateway configuration.
@@ -60,16 +62,17 @@ type GatewayConfig struct {
 // the one it needs.
 type file struct {
 	Server struct {
-		Addr        string `yaml:"addr"`
-		StorageMode string `yaml:"storage_mode"`
-		DBPath      string `yaml:"db_path"`
-		DatabaseURL string `yaml:"database_url"`
-		LLMBaseURL  string `yaml:"llm_base_url"`
-		LLMAPIKey   string `yaml:"llm_api_key"`
-		LLMModel    string `yaml:"llm_model"`
-		AuthMode    string `yaml:"auth_mode"`
-		JWTSecret   string `yaml:"jwt_secret"`
-		FrontendDir string `yaml:"frontend_dir"`
+		Addr                    string `yaml:"addr"`
+		StorageMode             string `yaml:"storage_mode"`
+		DBPath                  string `yaml:"db_path"`
+		DatabaseURL             string `yaml:"database_url"`
+		LLMBaseURL              string `yaml:"llm_base_url"`
+		LLMAPIKey               string `yaml:"llm_api_key"`
+		LLMModel                string `yaml:"llm_model"`
+		AuthMode                string `yaml:"auth_mode"`
+		JWTSecret               string `yaml:"jwt_secret"`
+		AllowInsecureAuthCookie bool   `yaml:"allow_insecure_auth_cookie"`
+		FrontendDir             string `yaml:"frontend_dir"`
 	} `yaml:"server"`
 	Gateway struct {
 		Addr        string `yaml:"addr"`
@@ -90,18 +93,30 @@ func Load(path string) (Config, error) {
 		return Config{}, err
 	}
 	s := f.Server
-	return Config{
-		Addr:        pick("TIFL_ADDR", s.Addr, "127.0.0.1:8000"),
-		StorageMode: StorageMode(pick("STORAGE_MODE", s.StorageMode, string(StorageSQLite))),
-		DBPath:      pick("DB_PATH", s.DBPath, "data/tifl.db"),
-		DatabaseURL: pick("DATABASE_URL", s.DatabaseURL, ""),
-		LLMBaseURL:  pick("LLM_BASE_URL", s.LLMBaseURL, "http://127.0.0.1:8001"),
-		LLMAPIKey:   pick("LLM_API_KEY", s.LLMAPIKey, ""),
-		LLMModel:    pick("LLM_MODEL", s.LLMModel, ""),
-		AuthMode:    AuthMode(pick("AUTH_MODE", s.AuthMode, string(AuthNone))),
-		JWTSecret:   pick("JWT_SECRET", s.JWTSecret, ""),
-		FrontendDir: pick("FRONTEND_DIR", s.FrontendDir, "web/dist"),
-	}, nil
+	allowInsecureCookie, err := pickBool("ALLOW_INSECURE_AUTH_COOKIE", s.AllowInsecureAuthCookie)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg := Config{
+		Addr:                    pick("TIFL_ADDR", s.Addr, "127.0.0.1:8000"),
+		StorageMode:             StorageMode(pick("STORAGE_MODE", s.StorageMode, string(StorageSQLite))),
+		DBPath:                  pick("DB_PATH", s.DBPath, "data/tifl.db"),
+		DatabaseURL:             pick("DATABASE_URL", s.DatabaseURL, ""),
+		LLMBaseURL:              pick("LLM_BASE_URL", s.LLMBaseURL, "http://127.0.0.1:8001"),
+		LLMAPIKey:               pick("LLM_API_KEY", s.LLMAPIKey, ""),
+		LLMModel:                pick("LLM_MODEL", s.LLMModel, ""),
+		AuthMode:                AuthMode(pick("AUTH_MODE", s.AuthMode, string(AuthNone))),
+		JWTSecret:               pick("JWT_SECRET", s.JWTSecret, ""),
+		AllowInsecureAuthCookie: allowInsecureCookie,
+		FrontendDir:             pick("FRONTEND_DIR", s.FrontendDir, "web/dist"),
+	}
+	if cfg.AuthMode != AuthNone && cfg.AuthMode != AuthJWT {
+		return Config{}, fmt.Errorf("config: unknown auth_mode %q", cfg.AuthMode)
+	}
+	if cfg.AuthMode == AuthJWT && len([]byte(cfg.JWTSecret)) < 32 {
+		return Config{}, fmt.Errorf("config: jwt_secret must be at least 32 bytes when auth_mode is jwt")
+	}
+	return cfg, nil
 }
 
 // LoadGateway resolves the gateway configuration from the YAML file at path (if
@@ -152,4 +167,15 @@ func pick(envKey, fileVal, def string) string {
 		return fileVal
 	}
 	return def
+}
+
+func pickBool(envKey string, fileVal bool) (bool, error) {
+	if raw, ok := os.LookupEnv(envKey); ok && raw != "" {
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			return false, fmt.Errorf("config: %s must be true or false", envKey)
+		}
+		return value, nil
+	}
+	return fileVal, nil
 }

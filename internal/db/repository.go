@@ -21,6 +21,10 @@ import (
 // ErrNotFound is returned by Get* methods when no row matches.
 var ErrNotFound = errors.New("db: not found")
 
+// ErrRefreshTokenReuse means a previously rotated refresh token was presented
+// again. The backend atomically revokes that token family before returning it.
+var ErrRefreshTokenReuse = errors.New("db: refresh token reuse detected")
+
 // Repository is the storage boundary. The surface grows method-by-method as each
 // subsystem is implemented; both backends satisfy it identically.
 type Repository interface {
@@ -33,6 +37,17 @@ type Repository interface {
 	GetUser(ctx context.Context, userID string) (domain.User, error)
 	GetUserByEmail(ctx context.Context, email string) (domain.User, error)
 	EnsureLocalUser(ctx context.Context) (domain.User, error)
+	UpdateUserLastLogin(ctx context.Context, userID string, at float64) error
+
+	// Refresh tokens. Rotation is atomic: the old token is invalidated and the
+	// replacement inserted in one transaction. Reuse of an already-rotated
+	// token revokes only its family (one login/device) and returns
+	// ErrRefreshTokenReuse. RevokeAllRefreshTokens powers "logout all devices".
+	CreateRefreshToken(ctx context.Context, token domain.RefreshToken) error
+	GetRefreshToken(ctx context.Context, tokenHash string) (domain.RefreshToken, error)
+	RotateRefreshToken(ctx context.Context, oldHash string, next domain.RefreshToken, now float64) error
+	RevokeRefreshToken(ctx context.Context, tokenHash string, now float64) error
+	RevokeAllRefreshTokens(ctx context.Context, userID string, now float64) error
 
 	// Languages — the catalogue, populated at startup from compiled-in plugins.
 	UpsertLanguage(ctx context.Context, l domain.Language) error

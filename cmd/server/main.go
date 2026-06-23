@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	authn "github.com/dleiferives/tifl/internal/auth"
 	"github.com/dleiferives/tifl/internal/config"
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
@@ -98,7 +99,15 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	handler.New(repo, broker, client, taskRegistry, langRegistry, cfg.FrontendDir).Register(mux)
+	var handlerOpts []handler.Option
+	if cfg.AuthMode == config.AuthJWT {
+		authService, err := authn.NewService(repo, cfg.JWTSecret)
+		if err != nil {
+			log.Fatalf("auth: %v", err)
+		}
+		handlerOpts = append(handlerOpts, handler.WithAuth(authService, !cfg.AllowInsecureAuthCookie))
+	}
+	handler.New(repo, broker, client, taskRegistry, langRegistry, cfg.FrontendDir, handlerOpts...).Register(mux)
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,

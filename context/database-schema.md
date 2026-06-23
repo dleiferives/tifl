@@ -38,6 +38,26 @@ users
 `settings` is a catch-all for user preferences that don't need to be queried —
 display themes, notification prefs, UI density. Queried rarely, stored cheaply.
 
+### `refresh_tokens`
+
+Server-side records for opaque refresh credentials. The raw 256-bit token exists
+only in the client's httpOnly cookie; storage keeps its SHA-256 digest.
+
+```
+refresh_tokens
+  token_hash       TEXT  PK
+  family_id        TEXT  NOT NULL    one login/device rotation family
+  user_id          TEXT  NOT NULL    FK → users.user_id
+  issued_at        REAL  NOT NULL
+  expires_at       REAL  NOT NULL
+  revoked_at       REAL
+  replaced_by_hash TEXT              next digest in the rotation family
+```
+
+Reuse of a row with `replaced_by_hash` revokes the active rows in that family.
+Independent families allow multiple concurrent devices; logout-all revokes every
+family for a user.
+
 ---
 
 ### `languages`

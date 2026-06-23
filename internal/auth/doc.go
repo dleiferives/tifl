@@ -1,6 +1,5 @@
-// Package auth owns authentication and identity: JWT access tokens, argon2id
-// password hashing, and refresh-token management. In desktop-local mode auth is
-// disabled and a synthetic user_id ("local") is injected by middleware; the
-// repository code is identical in both cases. See context/auth-users.md and
-// context/backend-server.md ("Auth Middleware").
+// Package auth owns password hashing, access-token signing/validation, refresh
+// session rotation, and request identity context. Cloud mode uses these
+// primitives; desktop-local mode bypasses credentials and injects the synthetic
+// domain.LocalUserID through the same request context seam.
 package auth

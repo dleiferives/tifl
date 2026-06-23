@@ -21,6 +21,7 @@ server:
   llm_model: ""                   # model the server requests (blank = gateway default)
   auth_mode: none                 # none (desktop-local) | jwt (cloud)    (default none)
   jwt_secret: ""                  # signing key when auth_mode: jwt
+  allow_insecure_auth_cookie: false # DEVELOPMENT ONLY: permit refresh cookie over HTTP
   frontend_dir: web/dist          # compiled SolidJS assets               (default web/dist)
 
 # The LLM gateway (cmd/gateway). The example targets a local OpenCode server —
