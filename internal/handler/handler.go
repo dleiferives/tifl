@@ -23,15 +23,16 @@ import (
 type Handler struct {
 	repo         db.Repository
 	langs        *lang.Registry
-	broker       *story.Broker             // nil when generation is not configured (no LLM gateway)
-	reader       *reader.Service           // reader signal ingest + rating writes (#9/#10)
-	defs         *reader.DefinitionService // definition resolution + cached breakdowns (#10)
-	taskTypes    *tasks.Registry           // task-type lookup for grading + presentation
-	grader       *tasks.Grader             // routes rule vs LLM grading
-	acquire      *acquire.Engine           // folds grades into user_knowledge signals
-	skillAssoc   *skillassoc.Associator    // lazy item -> skill association materializer (#68)
-	skillXP      *skillassoc.XPService     // task grade -> user_skill_xp + audit logs (#70/#71)
-	llmEnabled   bool                      // false when no LLM client: LLM-graded tasks return 503
+	broker       *story.Broker                   // nil when generation is not configured (no LLM gateway)
+	reader       *reader.Service                 // reader signal ingest + rating writes (#9/#10)
+	defs         *reader.DefinitionService       // definition resolution + cached breakdowns (#10)
+	taskTypes    *tasks.Registry                 // task-type lookup for grading + presentation
+	grader       *tasks.Grader                   // routes rule vs LLM grading
+	acquire      *acquire.Engine                 // folds grades into user_knowledge signals
+	skillAssoc   *skillassoc.Associator          // lazy item -> skill association materializer (#68)
+	skillXP      *skillassoc.XPService           // task grade -> user_skill_xp + audit logs (#70/#71)
+	skillVerify  *skillassoc.VerificationService // background tier verification + auto-approve (#49)
+	llmEnabled   bool                            // false when no LLM client: LLM-graded tasks return 503
 	frontendDir  string
 	auth         *authn.Service
 	cookieSecure bool
@@ -121,6 +122,7 @@ func New(repo db.Repository, broker *story.Broker, client llm.Client, taskTypes 
 		acquire:     engine,
 		skillAssoc:  associator,
 		skillXP:     skillXP,
+		skillVerify: skillassoc.NewVerificationService(repo, client),
 		llmEnabled:  client != nil,
 		frontendDir: frontendDir,
 	}
