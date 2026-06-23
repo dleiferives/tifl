@@ -232,10 +232,10 @@ func testPipeline(t *testing.T, repo db.Repository) {
 		SessionID: sess.SessionID, Stage: domain.StageStoryGeneration,
 		Status: domain.StageInProgress, StartedAt: &at,
 	}))
-	code, detail := "GEN_COVERAGE", "coverage 0.71 below 0.90"
+	code, errDetail := "GEN_COVERAGE", "coverage 0.71 below 0.90"
 	must(t, repo.UpsertStage(ctx, domain.GenerationStage{
 		SessionID: sess.SessionID, Stage: domain.StageStoryGeneration,
-		Status: domain.StageFailed, StartedAt: &at, ErrorCode: &code, ErrorDetail: &detail, RetryCount: 1,
+		Status: domain.StageFailed, StartedAt: &at, ErrorCode: &code, ErrorDetail: &errDetail, RetryCount: 1,
 	}))
 	must(t, repo.UpsertStage(ctx, domain.GenerationStage{
 		SessionID: sess.SessionID, Stage: domain.StageScopeCheck, Status: domain.StageComplete,
