@@ -177,34 +177,6 @@ Before moving from one issue branch to the next, audit closure metadata:
 - If `closingIssuesReferences` is empty or missing an expected issue, fix the body before continuing.
 - Final response must call out any issue that could not be wired to a closing keyword and why.
 
-   - `Closes #<issue-number>` for the selected issue.
-   - Any follow-up issues created or known limitations.
-4. Do not merge the PR.
-5. Do not add closing keywords for follow-up issues to the parent PR unless that parent PR actually contains the fix and every referenced follow-up is complete.
-
-Run:
-`gh pr view <new-pr> --json number,title,url,headRefName,baseRefName,body,closingIssuesReferences,statusCheckRollup`
-
-Confirm the PR targets the intended base, checks are visible, and `closingIssuesReferences` contains every issue this PR is supposed to close. If not, immediately run `gh pr edit <new-pr> --body-file <file>` or equivalent to fix the PR body, then re-check.
-
-If a trunk-targeted child PR is related to a parent PR, comment or note the relationship without creating an artificial merge dependency. Example: "Found while working on #123; independent cleanup that can land directly on trunk."
-
-## Issue Closure Bookkeeping
-
-Before moving from one issue branch to the next, audit closure metadata:
-
-- Build a "fixed issues" list from the selected issue plus any additional issues the code actually resolves.
-- For the PR containing the fix, include exactly those fixed issues with closing keywords:
-  `Closes #12`
-  `Closes #34`
-- If one PR intentionally fixes multiple issues, list each `Closes #...` on its own line.
-- If a PR only unblocks, references, or partially addresses an issue, use non-closing language such as `Refs #...`; do not imply closure.
-- If the parent PR has an internal checklist or "follow-up issues" section, update that text to point at the child PR or mark the item as covered by the child PR. Do not add parent-level `Closes #...` unless the parent PR itself should close the issue.
-- After `gh pr create` or `gh pr edit`, verify with:
-  `gh pr view <pr> --json closingIssuesReferences,body`
-- If `closingIssuesReferences` is empty or missing an expected issue, fix the body before continuing.
-- Final response must call out any issue that could not be wired to a closing keyword and why.
-
 ## Multi-Issue Runs
 
 When the user asks to clear a set of issues:

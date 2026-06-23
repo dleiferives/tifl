@@ -199,7 +199,7 @@ Knowledge level colors are CSS custom properties on `:root`, overridden by a
 
 ```css
 :root {
-  --level-unknown:    #bfdbfe;   /* light blue  */
+  --level-unseen:     #bfdbfe;   /* light blue  */
   --level-1:          #fca5a5;   /* red         */
   --level-2:          #fdba74;   /* orange      */
   --level-3:          #fde68a;   /* yellow      */
