@@ -28,6 +28,25 @@ paths:
                   message:
                     type: string
                 required: [message]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /languages:
+    get:
+      summary: List enabled language plugins
+      operationId: listLanguages
+      responses:
+        "200":
+          description: Registered languages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Language"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /auth/register:
     post:
       security: []
@@ -49,9 +68,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuthResponse"
-        "400": { description: Invalid email or password policy failure }
-        "409": { description: Unable to create an account with that email }
-        "429": { description: Too many authentication attempts }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /auth/login:
     post:
       security: []
@@ -73,8 +97,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuthResponse"
-        "401": { description: Invalid email or password }
-        "429": { description: Too many authentication attempts }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /auth/refresh:
     post:
       security: []
@@ -90,21 +120,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuthResponse"
-        "401": { description: Missing, expired, revoked, or replayed refresh token }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /auth/logout:
     post:
       security: []
       summary: Revoke the current refresh cookie
       operationId: logout
       responses:
-        "204": { description: Logged out }
+        "204":
+          description: Logged out
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+        "500":
+          $ref: "#/components/responses/InternalError"
   /auth/logout-all:
     post:
       summary: Revoke every refresh session for the current user
       operationId: logoutAll
       responses:
-        "204": { description: All refresh sessions revoked }
-        "401": { description: Missing or invalid access token }
+        "204":
+          description: All refresh sessions revoked
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /auth/me:
     get:
       summary: Return the authenticated user
@@ -116,7 +160,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/User"
-        "401": { description: Missing or invalid access token }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /profile:
     get:
       summary: Return the current user's profile and client preferences
@@ -132,7 +179,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Profile"
-        "401": { description: Missing or invalid access token }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
     patch:
       summary: Partially update the current user's profile
       description: >
@@ -155,8 +205,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Profile"
-        "400": { description: Invalid profile field, language, level, theme, or preferences shape }
-        "401": { description: Missing or invalid access token }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /sessions:
     get:
       summary: List sessions for the current user
@@ -189,7 +243,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SessionList"
-        "400": { description: Invalid pagination query }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /sessions/generate:
     post:
       summary: Start generating a session (story + tasks)
@@ -212,8 +271,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SessionRef"
-        "400": { description: Missing, unknown, or disabled language; invalid level }
-        "503": { description: Generation not configured }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /sessions/{id}:
     get:
       summary: Get session detail and persisted generation progress
@@ -231,7 +296,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SessionDetail"
-        "404": { description: Session not found }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /sessions/{id}/events:
     get:
       summary: Stream generation progress (SSE)
@@ -251,7 +321,12 @@ paths:
             text/event-stream:
               schema:
                 $ref: "#/components/schemas/GenerationEvent"
-        "404": { description: Session not found }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /sessions/{id}/retry:
     post:
       summary: Retry a failed generation from its failed stage
@@ -268,8 +343,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SessionRef"
-        "404": { description: Session not found }
-        "503": { description: Generation not configured }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /stories/{id}:
     get:
       summary: Load a story for the reader (tokens + knowledge in one call)
@@ -292,7 +371,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StoryLoad"
-        "404": { description: Story not found }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /stories/{id}/definition:
     get:
       summary: Resolve a word definition for the reader popup
@@ -320,9 +404,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Definition"
-        "400": { description: Missing key }
-        "404": { description: Story not found }
-        "503": { description: Live lookup needed but no gateway configured }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /stories/{id}/sentence:
     post:
       summary: Sentence breakdown for the sentence containing a position
@@ -352,8 +443,16 @@ paths:
           content:
             application/json:
               schema: { type: object, additionalProperties: true }
-        "404": { description: Story not found / no sentence at position }
-        "503": { description: No gateway configured }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /stories/{id}/word:
     post:
       summary: Deep morphological/etymological breakdown of a word
@@ -382,9 +481,16 @@ paths:
           content:
             application/json:
               schema: { type: object, additionalProperties: true }
-        "400": { description: Missing key }
-        "404": { description: Story not found }
-        "503": { description: No gateway configured }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /reader/events:
     post:
       summary: Ingest a flushed batch of reader events
@@ -411,8 +517,14 @@ paths:
                 properties:
                   ingested: { type: integer }
                 required: [ingested]
-        "400": { description: Malformed body or event }
-        "404": { description: Referenced story not found / not the caller's }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /word_knowledge/{token}:
     put:
       summary: Optimistic knowledge-rating write for one word key
@@ -436,7 +548,12 @@ paths:
               $ref: "#/components/schemas/WordKnowledgeRequest"
       responses:
         "204": { description: Applied }
-        "400": { description: Missing language or invalid level }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /sessions/{id}/tasks:
     get:
       summary: List a session's tasks to present (answer-free)
@@ -456,7 +573,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SessionTasks"
-        "404": { description: Session not found }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /tasks/{id}:
     get:
       summary: Fetch one task to present (answer-free)
@@ -477,7 +599,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Task"
-        "404": { description: Task not found }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /tasks/{id}/submit:
     post:
       summary: Submit a response, grade it, update the learning signal
@@ -509,12 +636,21 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SubmitTaskResponse"
-        "400": { description: Missing response or unsupported input method }
-        "404": { description: Task not found }
-        "409": { description: Task already submitted }
-        "502": { description: Grading failed upstream (gateway/model) }
-        "503": { description: LLM grading not configured }
-# Planned surfaces (see context/): /auth/*, /skills.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+# Planned surfaces (see context/): /skills.
 components:
   securitySchemes:
     bearerAuth:
@@ -528,6 +664,21 @@ components:
       required: true
       schema: { type: string }
   schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error: { type: string }
+      required: [error]
+    Language:
+      type: object
+      properties:
+        code: { type: string }
+        name: { type: string }
+        key_strategy:
+          type: string
+          enum: [surface, lemma, root, stem]
+        enabled: { type: boolean }
+      required: [code, name, key_strategy, enabled]
     Credentials:
       type: object
       properties:
@@ -731,7 +882,7 @@ components:
           description: "selection|story_generation|tokenization|task_<type>|done"
         status:
           type: string
-          enum: [pending, in_progress, complete, failed]
+          enum: [pending, in_progress, generating, ready, reading, complete, failed]
         token_rate: { type: integer, description: "approx upstream tokens/sec" }
         error_code: { type: string, description: "stable code, set only on failure" }
       required: [stage]
@@ -868,3 +1019,58 @@ components:
         task_id: { type: string }
         grade: { $ref: "#/components/schemas/Grade" }
       required: [task_id, grade]
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: Authentication failed
+      headers:
+        WWW-Authenticate:
+          schema: { type: string }
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    TooManyRequests:
+      description: Too many requests
+      headers:
+        Retry-After:
+          schema: { type: string }
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    BadGateway:
+      description: Upstream failure
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ServiceUnavailable:
+      description: Service unavailable
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InternalError:
+      description: Server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
