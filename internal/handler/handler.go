@@ -29,6 +29,7 @@ type Handler struct {
 	grader       *tasks.Grader             // routes rule vs LLM grading
 	acquire      *acquire.Engine           // folds grades into user_knowledge signals
 	skillAssoc   *skillassoc.Associator    // lazy item -> skill association materializer (#68)
+	skillXP      *skillassoc.XPService     // task grade -> user_skill_xp + audit logs (#70/#71)
 	llmEnabled   bool                      // false when no LLM client: LLM-graded tasks return 503
 	frontendDir  string
 	auth         *authn.Service
@@ -100,6 +101,7 @@ func WithAuth(service *authn.Service, secureCookie bool) Option {
 func New(repo db.Repository, broker *story.Broker, client llm.Client, taskTypes *tasks.Registry, langs *lang.Registry, frontendDir string, opts ...Option) *Handler {
 	engine := acquire.NewEngine(repo, predictor.DefaultConfig(), acquire.Config{})
 	associator := skillassoc.NewAssociator(repo, langs)
+	skillXP := skillassoc.NewXPService(repo, associator, nil)
 	grader := tasks.NewGrader(client, tasks.WithNormalizers(func(code string) tasks.Normalizer {
 		l, ok := langs.Get(code)
 		if !ok {
@@ -116,6 +118,7 @@ func New(repo db.Repository, broker *story.Broker, client llm.Client, taskTypes 
 		grader:      grader,
 		acquire:     engine,
 		skillAssoc:  associator,
+		skillXP:     skillXP,
 		llmEnabled:  client != nil,
 		frontendDir: frontendDir,
 	}

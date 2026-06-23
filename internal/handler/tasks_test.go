@@ -136,12 +136,43 @@ func TestSubmitEnsuresSkillAssociationsForTargets(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("submit status = %d", resp.StatusCode)
 	}
+	var out struct {
+		SkillXP []struct {
+			SkillID       string `json:"skill_id"`
+			XPDelta       int    `json:"xp_delta"`
+			XPAfter       int    `json:"xp_after"`
+			TierAfter     int    `json:"tier_after"`
+			PendingVerify bool   `json:"pending_verify"`
+		} `json:"skill_xp"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
 	rows, err := repo.ListItemSkillAssociations(ctx, []string{"it1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(rows) != 1 || rows[0].SkillID != "xx-basic-words" {
 		t.Fatalf("target associations = %+v, want xx-basic-words", rows)
+	}
+	if len(out.SkillXP) != 1 || out.SkillXP[0].SkillID != "xx-basic-words" ||
+		out.SkillXP[0].XPDelta != 5 || out.SkillXP[0].XPAfter != 5 ||
+		out.SkillXP[0].TierAfter != 0 || out.SkillXP[0].PendingVerify {
+		t.Fatalf("skill XP response mismatch: %+v", out.SkillXP)
+	}
+	xp, err := repo.GetUserSkillXP(ctx, domain.LocalUserID, "xx-basic-words")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if xp.XP != 5 || xp.Tier != 0 || xp.PendingVerify {
+		t.Fatalf("persisted skill XP mismatch: %+v", xp)
+	}
+	logs, err := repo.ListTaskSkillXPLog(ctx, domain.LocalUserID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 1 || logs[0].SkillID != "xx-basic-words" || logs[0].XPDelta != 5 || logs[0].XPAfter != 5 {
+		t.Fatalf("skill XP log mismatch: %+v", logs)
 	}
 }
 

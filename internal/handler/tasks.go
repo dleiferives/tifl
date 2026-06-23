@@ -9,6 +9,7 @@ import (
 
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
+	"github.com/dleiferives/tifl/internal/skills"
 	"github.com/dleiferives/tifl/internal/tasks"
 )
 
@@ -51,8 +52,19 @@ type submitRequest struct {
 }
 
 type submitResponse struct {
-	TaskID string   `json:"task_id"`
-	Grade  gradeDTO `json:"grade"`
+	TaskID  string       `json:"task_id"`
+	Grade   gradeDTO     `json:"grade"`
+	SkillXP []skillXPDTO `json:"skill_xp"`
+}
+
+type skillXPDTO struct {
+	SkillID       string `json:"skill_id"`
+	XPDelta       int    `json:"xp_delta"`
+	XPBefore      int    `json:"xp_before"`
+	XPAfter       int    `json:"xp_after"`
+	TierBefore    int    `json:"tier_before"`
+	TierAfter     int    `json:"tier_after"`
+	PendingVerify bool   `json:"pending_verify"`
 }
 
 // getSessionTasks returns every task for a session in presentation form, plus a
@@ -174,14 +186,6 @@ func (h *Handler) submitTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	targetIDs := tt.Targets(task.Content)
-	if h.skillAssoc != nil {
-		if err := h.skillAssoc.EnsureAssociationsForItems(r.Context(), targetIDs); err != nil {
-			writeError(w, http.StatusInternalServerError, fmt.Errorf("ensuring skill associations: %w", err))
-			return
-		}
-	}
-
 	now := float64(time.Now().Unix())
 	if err := h.repo.RecordTaskGrade(r.Context(), userID, id, domain.TaskGrade{
 		Response:    req.Response,
@@ -196,15 +200,26 @@ func (h *Handler) submitTask(w http.ResponseWriter, r *http.Request) {
 
 	// Fold the grade into user_knowledge: every targeted item gets task_total++,
 	// and task_correct++ only for target items the response demonstrated.
+	targetIDs := tt.Targets(task.Content)
 	signal := tasks.LearningSignalFromGrade(grade, targetIDs)
 	if err := h.acquire.ApplyTaskSignal(r.Context(), userID, signal); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("recording learning signal: %w", err))
 		return
 	}
 
+	var skillChanges []skills.XPChange
+	if h.skillXP != nil {
+		skillChanges, err = h.skillXP.ApplyTaskSignal(r.Context(), userID, task, signal, now)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Errorf("recording skill XP: %w", err))
+			return
+		}
+	}
+
 	writeJSON(w, http.StatusOK, submitResponse{
-		TaskID: id,
-		Grade:  gradeDTO{grade.Correct, grade.Score, grade.Feedback, grade.ItemsDemonstrated, string(gradedBy)},
+		TaskID:  id,
+		Grade:   gradeDTO{grade.Correct, grade.Score, grade.Feedback, grade.ItemsDemonstrated, string(gradedBy)},
+		SkillXP: skillXPDTOs(skillChanges),
 	})
 }
 
@@ -293,4 +308,20 @@ func gradeDTOFromMap(m map[string]any, gradedBy string) *gradeDTO {
 		}
 	}
 	return dto
+}
+
+func skillXPDTOs(changes []skills.XPChange) []skillXPDTO {
+	out := make([]skillXPDTO, 0, len(changes))
+	for _, change := range changes {
+		out = append(out, skillXPDTO{
+			SkillID:       change.SkillID,
+			XPDelta:       change.XPDelta,
+			XPBefore:      change.XPBefore,
+			XPAfter:       change.XPAfter,
+			TierBefore:    change.TierBefore,
+			TierAfter:     change.TierAfter,
+			PendingVerify: change.PendingVerify,
+		})
+	}
+	return out
 }
