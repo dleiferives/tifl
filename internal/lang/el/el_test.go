@@ -119,6 +119,8 @@ func TestResolveKey(t *testing.T) {
 		{"τουαλέτα,", "τουαλέτα"}, // trailing punctuation stripped
 		{",τουαλέτα", "τουαλέτα"}, // leading punctuation stripped
 		{"Θέλω", "θέλω"},
+		{"ΣΚΎΛΟΣ,", "σκύλος"}, // final sigma and punctuation normalization
+		{"ανύπαρκτηλέξη", "ανύπαρκτηλέξη"},
 	}
 	for _, tt := range tests {
 		got, err := g.ResolveKey(tt.surface)
@@ -128,6 +130,120 @@ func TestResolveKey(t *testing.T) {
 		}
 		if got != tt.wantKey {
 			t.Errorf("ResolveKey(%q) = %q, want %q", tt.surface, got, tt.wantKey)
+		}
+	}
+}
+
+func TestResolveKeyInflectedNouns(t *testing.T) {
+	g := New()
+	tests := []struct {
+		name    string
+		forms   []string
+		wantKey string
+	}{
+		{"person", []string{"άνθρωπος", "άνθρωπο", "ανθρώπου", "άνθρωποι", "ανθρώπους", "ανθρώπων"}, "άνθρωπος"},
+		{"woman", []string{"γυναίκα", "γυναίκας", "γυναίκες", "γυναικών"}, "γυναίκα"},
+		{"child", []string{"παιδί", "παιδιού", "παιδιά", "παιδιών"}, "παιδί"},
+		{"house", []string{"σπίτι", "σπιτιού", "σπίτια", "σπιτιών"}, "σπίτι"},
+		{"book", []string{"βιβλίο", "βιβλίου", "βιβλία", "βιβλίων"}, "βιβλίο"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, form := range tt.forms {
+				got, err := g.ResolveKey(form)
+				if err != nil {
+					t.Fatalf("ResolveKey(%q): unexpected error %v", form, err)
+				}
+				if got != tt.wantKey {
+					t.Errorf("ResolveKey(%q) = %q, want %q", form, got, tt.wantKey)
+				}
+			}
+		})
+	}
+}
+
+func TestResolveKeyInflectedVerbs(t *testing.T) {
+	g := New()
+	tests := []struct {
+		name    string
+		forms   []string
+		wantKey string
+	}{
+		{"be", []string{"είμαι", "είσαι", "είναι", "είμαστε", "ήμουν", "ήταν"}, "είμαι"},
+		{"have", []string{"έχω", "έχεις", "έχει", "έχουμε", "είχα", "είχαν"}, "έχω"},
+		{"do", []string{"κάνω", "κάνεις", "κάνει", "έκανα", "έκανε", "έκαναν"}, "κάνω"},
+		{"go", []string{"πάω", "πας", "πάει", "πήγα", "πήγε", "πήγαν"}, "πάω"},
+		{"go-variant", []string{"πηγαίνω", "πηγαίνεις", "πηγαίνει", "πηγαίνουν"}, "πηγαίνω"},
+		{"see", []string{"βλέπω", "βλέπεις", "βλέπει", "είδα", "είδε", "είδαν"}, "βλέπω"},
+		{"say", []string{"λέω", "λες", "λέει", "είπα", "είπε", "είπαν"}, "λέω"},
+		{"want", []string{"θέλω", "θέλεις", "θέλει", "ήθελα", "ήθελε", "ήθελαν"}, "θέλω"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, form := range tt.forms {
+				got, err := g.ResolveKey(form)
+				if err != nil {
+					t.Fatalf("ResolveKey(%q): unexpected error %v", form, err)
+				}
+				if got != tt.wantKey {
+					t.Errorf("ResolveKey(%q) = %q, want %q", form, got, tt.wantKey)
+				}
+			}
+		})
+	}
+}
+
+func TestResolveKeyInflectedAdjectives(t *testing.T) {
+	g := New()
+	tests := []struct {
+		name    string
+		forms   []string
+		wantKey string
+	}{
+		{"good", []string{"καλός", "καλό", "καλή", "καλοί", "καλές", "καλά", "καλών"}, "καλός"},
+		{"big", []string{"μεγάλος", "μεγάλο", "μεγάλη", "μεγάλοι", "μεγάλες", "μεγάλα"}, "μεγάλος"},
+		{"easy", []string{"εύκολος", "εύκολο", "εύκολη", "εύκολοι", "εύκολες"}, "εύκολος"},
+		{"difficult", []string{"δύσκολος", "δύσκολο", "δύσκολη", "δύσκολοι", "δύσκολες"}, "δύσκολος"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, form := range tt.forms {
+				got, err := g.ResolveKey(form)
+				if err != nil {
+					t.Fatalf("ResolveKey(%q): unexpected error %v", form, err)
+				}
+				if got != tt.wantKey {
+					t.Errorf("ResolveKey(%q) = %q, want %q", form, got, tt.wantKey)
+				}
+			}
+		})
+	}
+}
+
+func TestTokenizeUsesLemmaKeys(t *testing.T) {
+	g := New()
+	tokens := g.Tokenize("Οι άνθρωποι είδαν μεγάλα βιβλία.")
+
+	got := make(map[string]string)
+	for _, tok := range tokens {
+		if tok.IsWord {
+			got[tok.Surface] = tok.Key
+		}
+	}
+
+	want := map[string]string{
+		"Οι":       "οι",
+		"άνθρωποι": "άνθρωπος",
+		"είδαν":    "βλέπω",
+		"μεγάλα":   "μεγάλος",
+		"βιβλία":   "βιβλίο",
+	}
+	for surface, wantKey := range want {
+		if got[surface] != wantKey {
+			t.Errorf("token %q key = %q, want %q", surface, got[surface], wantKey)
 		}
 	}
 }
