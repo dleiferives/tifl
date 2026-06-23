@@ -143,6 +143,41 @@ func TestAssessorBuilder_IncludesSignals(t *testing.T) {
 	}
 }
 
+func TestSkillTierVerifierBuilder_IncludesSkillAndEvidence(t *testing.T) {
+	at := 1710.0
+	b := SkillTierVerifierBuilder{
+		Skill: domain.Skill{
+			SkillID: "el.case.accusative", Language: "el", Name: "Accusative Case",
+			Description: "Recognize and use direct objects.", Category: "Cases", TierCount: 3,
+		},
+		Concept:     "accusative direct objects",
+		CurrentTier: 0,
+		TargetTier:  1,
+		TierMeaning: "Uses accusative objects in simple controlled tasks.",
+		Evidence: []SkillTierEvidence{{
+			TaskType: "fill_blank", PromptSummary: "Complete the direct object.",
+			ResponseSummary: "τον φίλο", Correct: true, Score: 1,
+			ItemsDemonstrated: []string{"el.case.accusative"}, OccurredAt: &at,
+		}},
+	}
+	req := b.Build(sampleCtx())
+	if b.Kind() != "skill_tier_verifier" {
+		t.Fatalf("Kind = %q, want skill_tier_verifier", b.Kind())
+	}
+	if req.ResponseFormat != "json" || req.Temperature != gradeTemperature {
+		t.Fatalf("request shape mismatch: %+v", req)
+	}
+	for _, want := range []string{
+		"skill-tier promotion", "XP threshold crossing alone is insufficient",
+		`"decision": "promote"|"hold"`, "Accusative Case", "el.case.accusative",
+		"accusative direct objects", "Target tier: 1 of 3", "fill_blank", "τον φίλο",
+	} {
+		if !strings.Contains(req.System+"\n"+req.User, want) {
+			t.Errorf("verifier prompt missing %q\nSystem:\n%s\nUser:\n%s", want, req.System, req.User)
+		}
+	}
+}
+
 func TestBuilders_VersionsStable(t *testing.T) {
 	cases := []struct {
 		b    PromptBuilder
@@ -152,6 +187,7 @@ func TestBuilders_VersionsStable(t *testing.T) {
 		{TaskBuilder{TaskTypeID: "x"}, "task/v1"},
 		{GraderBuilder{}, "grader/v1"},
 		{AssessorBuilder{}, "assessor/v1"},
+		{SkillTierVerifierBuilder{}, "skill_tier_verifier/v1"},
 	}
 	for _, c := range cases {
 		if got := c.b.Version(); got != c.want {
@@ -240,5 +276,33 @@ func TestCompleteJSON_PreservesExistingCallMeta(t *testing.T) {
 	}
 	if meta.SessionID != "s1" || meta.UserID != "u1" || meta.PromptVersion != "story/v1" {
 		t.Errorf("call meta not preserved/augmented: %+v", meta)
+	}
+}
+
+func TestCompleteJSON_SkillTierVerifier(t *testing.T) {
+	confidence := 0.82
+	c := &FakeClient{Response: LLMResponse{Text: `{"decision":"promote","confidence":0.82,"rationale":"Recent fill-blank responses consistently demonstrate the skill."}`}}
+	out, err := CompleteJSON(context.Background(), c, SkillTierVerifierBuilder{
+		Skill: domain.Skill{SkillID: "s1", Language: "el", Name: "Skill", TierCount: 3},
+	}, sampleCtx(), SkillTierVerificationResult.Validate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Decision != SkillTierDecisionPromote || out.Confidence == nil || *out.Confidence != confidence {
+		t.Fatalf("verification result mismatch: %+v", out)
+	}
+	if len(c.Calls) != 1 || c.Calls[0].Kind != "skill_tier_verifier" {
+		t.Fatalf("fake client call mismatch: %+v", c.Calls)
+	}
+}
+
+func TestCompleteJSON_SkillTierVerifierRejectsInvalidDecision(t *testing.T) {
+	c := &FakeClient{Response: LLMResponse{Text: `{"decision":"maybe","confidence":0.8,"rationale":"unclear"}`}}
+	_, err := CompleteJSON(context.Background(), c, SkillTierVerifierBuilder{}, sampleCtx(), SkillTierVerificationResult.Validate)
+	if err == nil {
+		t.Fatal("invalid verifier decision accepted")
+	}
+	if len(c.Calls) != 2 {
+		t.Fatalf("validation failures should retry once, got %d calls", len(c.Calls))
 	}
 }

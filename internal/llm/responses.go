@@ -91,6 +91,38 @@ func (r AssessmentResult) Validate() error {
 	}
 }
 
+const (
+	SkillTierDecisionPromote = "promote"
+	SkillTierDecisionHold    = "hold"
+)
+
+// SkillTierVerificationResult is the verifier's binary promotion judgment.
+type SkillTierVerificationResult struct {
+	Decision   string   `json:"decision"`
+	Confidence *float64 `json:"confidence,omitempty"`
+	Rationale  string   `json:"rationale"`
+}
+
+// Validate rejects ambiguous verifier output before it can affect skill state.
+func (r SkillTierVerificationResult) Validate() error {
+	switch r.Decision {
+	case SkillTierDecisionPromote, SkillTierDecisionHold:
+	default:
+		return fmt.Errorf("invalid skill-tier decision %q", r.Decision)
+	}
+	rationale := strings.TrimSpace(r.Rationale)
+	if rationale == "" {
+		return errors.New("skill-tier rationale is empty")
+	}
+	if len(rationale) > 600 {
+		return errors.New("skill-tier rationale is too long")
+	}
+	if r.Confidence != nil && (*r.Confidence < 0 || *r.Confidence > 1) {
+		return fmt.Errorf("confidence %v out of range [0,1]", *r.Confidence)
+	}
+	return nil
+}
+
 // CompleteJSON runs a builder end-to-end: it builds the request, stamps the
 // builder's Version() onto the llm_calls row (via CallMeta, preserving any
 // session/user metadata already on ctx), sends it through the client, and decodes
