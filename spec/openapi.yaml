@@ -211,6 +211,36 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "500":
           $ref: "#/components/responses/InternalError"
+  /skills:
+    get:
+      summary: Return the current user's skill tree for a language
+      description: >
+        Returns every skill defined for the requested language, grouped by
+        category and left-joined with the current user's XP/tier progress.
+        Untouched skills are included with tier 0 and 0 XP so the client can
+        render the complete read-only competency map. If `language` is omitted,
+        the current profile's active_language is used.
+      operationId: listSkills
+      parameters:
+        - name: language
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Optional enabled language code; defaults to profile.active_language.
+      responses:
+        "200":
+          description: Skill tree
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillTree"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /sessions:
     get:
       summary: List sessions for the current user
@@ -654,7 +684,6 @@ paths:
           $ref: "#/components/responses/ServiceUnavailable"
         "500":
           $ref: "#/components/responses/InternalError"
-# Planned surfaces (see context/): /skills.
 components:
   securitySchemes:
     bearerAuth:
@@ -773,6 +802,72 @@ components:
           type: object
           additionalProperties: true
           description: "shallow-merged; null values delete keys"
+    SkillTree:
+      type: object
+      properties:
+        language:
+          type: string
+          description: Language code the skill tree is scoped to.
+        categories:
+          type: array
+          items:
+            $ref: "#/components/schemas/SkillCategory"
+      required: [language, categories]
+    SkillCategory:
+      type: object
+      properties:
+        id: { type: string }
+        title: { type: string }
+        skills:
+          type: array
+          items:
+            $ref: "#/components/schemas/SkillProgress"
+      required: [id, title, skills]
+    SkillProgress:
+      type: object
+      properties:
+        skill_id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        category: { type: string }
+        tier: { type: integer, minimum: 0 }
+        tier_count: { type: integer, minimum: 1 }
+        tier_label:
+          type: string
+          description: Display label for the current tier, e.g. Not started, Introduced, Practicing, Acquired.
+        xp: { type: integer, minimum: 0 }
+        xp_per_tier: { type: integer, minimum: 1 }
+        xp_to_next:
+          type: integer
+          minimum: 0
+          description: XP remaining before the next tier threshold; 0 at the max tier.
+        progress_ratio:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Progress through the current tier as a 0..1 ratio.
+        pending_verification:
+          type: boolean
+          description: True when XP has crossed a tier boundary and AI verification has not completed.
+        recently_promoted:
+          type: boolean
+          description: True shortly after a verified tier promotion.
+        last_verified_at: { type: number }
+        updated_at: { type: number }
+      required:
+        - skill_id
+        - name
+        - description
+        - category
+        - tier
+        - tier_count
+        - tier_label
+        - xp
+        - xp_per_tier
+        - xp_to_next
+        - progress_ratio
+        - pending_verification
+        - recently_promoted
     SessionRef:
       type: object
       properties:

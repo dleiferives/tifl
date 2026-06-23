@@ -54,6 +54,7 @@ func currentAPIRoutes() []apiRoute {
 		{Method: http.MethodGet, Path: "/api/v1/languages", Handler: (*Handler).listLanguages, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/profile", Handler: (*Handler).getProfile, RequireUser: true},
 		{Method: http.MethodPatch, Path: "/api/v1/profile", Handler: (*Handler).patchProfile, RequireUser: true},
+		{Method: http.MethodGet, Path: "/api/v1/skills", Handler: (*Handler).listSkills, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/stories/{id}", Handler: (*Handler).getStory, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/stories/{id}/definition", Handler: (*Handler).getDefinition, RequireUser: true},
 		{Method: http.MethodPost, Path: "/api/v1/stories/{id}/sentence", Handler: (*Handler).postSentenceBreakdown, RequireUser: true},

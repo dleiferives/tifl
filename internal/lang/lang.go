@@ -9,6 +9,8 @@ package lang
 import (
 	"strings"
 
+	"github.com/dleiferives/tifl/internal/domain"
+
 	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
 )
@@ -52,6 +54,12 @@ type Language interface {
 	// not in the language-agnostic task types. Most languages can return
 	// DefaultNormalize(s).
 	Normalize(s string) string
+}
+
+// SkillProvider is optionally implemented by language plugins that ship a
+// hard-coded competency catalogue for the skill tree and story constraints.
+type SkillProvider interface {
+	Skills() []domain.Skill
 }
 
 // DefaultNormalize is the script-generic answer normalization most languages
