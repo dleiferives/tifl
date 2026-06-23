@@ -233,7 +233,7 @@ export interface paths {
         };
         /**
          * Stream generation progress (SSE)
-         * @description Server-Sent Events stream of stage transitions. On connect the current persisted stage state is replayed, then live events follow until a terminal `{"stage":"done"}` event. token_rate is an approximate upstream tokens/second during story generation (a ticker animation); story text is never streamed.
+         * @description Server-Sent Events stream of stage transitions. On connect the current persisted stage state is replayed, then live events follow until a terminal `{"stage":"done"}` event. The terminal event is enriched from persisted session detail so late subscribers receive the same navigation fields as live subscribers: final status, session_id, story_id when ready, compact task progress, stage summary, and failed stage/error code when generation failed. token_rate is an approximate upstream tokens/second during story generation (a ticker animation); story text is never streamed.
          */
         get: operations["sessionEvents"];
         put?: never;
@@ -595,16 +595,27 @@ export interface components {
             stage_summary: components["schemas"]["StageSummary"];
             stages: components["schemas"]["GenerationStageRecord"][];
         };
-        /** @description One SSE progress message (the JSON in each data line). */
+        /** @description One SSE progress message (the JSON in each data line). Non-terminal events report a pipeline stage status. The terminal `stage: done` event reports the final session status plus enough persisted state for the client to navigate to reader/tasks or show retry/error UI without guessing. */
         GenerationEvent: {
             /** @description selection|story_generation|tokenization|task_<type>|done */
             stage: string;
-            /** @enum {string} */
-            status?: "pending" | "in_progress" | "generating" | "ready" | "reading" | "complete" | "failed";
+            /**
+             * @description stage status for progress events; final session status for stage=done
+             * @enum {string}
+             */
+            status?: "pending" | "in_progress" | "complete" | "failed" | "generating" | "ready" | "reading";
+            /** @description present on stage=done */
+            session_id?: string;
+            /** @description present on stage=done once a story has been persisted */
+            story_id?: string;
             /** @description approx upstream tokens/sec */
             token_rate?: number;
-            /** @description stable code, set only on failure */
+            /** @description stable code on failed progress events and failed terminal events */
             error_code?: string;
+            /** @description first failed stage, present on failed terminal events */
+            failed_stage?: string;
+            tasks?: components["schemas"]["TaskProgress"];
+            stage_summary?: components["schemas"]["StageSummary"];
         };
         /** @description One token of the server-tokenized story; non-word tokens carry no key. */
         StoryToken: {

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -46,6 +47,30 @@ type fixedSelector struct{ items domain.SelectedItems }
 
 func (s fixedSelector) Select(context.Context, selector.SelectRequest) (domain.SelectedItems, error) {
 	return s.items, nil
+}
+
+type generationEventPayload struct {
+	Stage       string  `json:"stage"`
+	Status      string  `json:"status"`
+	SessionID   string  `json:"session_id"`
+	StoryID     *string `json:"story_id"`
+	TokenRate   int     `json:"token_rate"`
+	ErrorCode   string  `json:"error_code"`
+	FailedStage *string `json:"failed_stage"`
+	Tasks       *struct {
+		Total     int `json:"total"`
+		Completed int `json:"completed"`
+		Pending   int `json:"pending"`
+	} `json:"tasks"`
+	StageSummary *struct {
+		Total       int     `json:"total"`
+		Pending     int     `json:"pending"`
+		InProgress  int     `json:"in_progress"`
+		Complete    int     `json:"complete"`
+		Failed      int     `json:"failed"`
+		ActiveStage *string `json:"active_stage"`
+		FailedStage *string `json:"failed_stage"`
+	} `json:"stage_summary"`
 }
 
 // newServer builds an httptest server over the real handler. withBroker controls
@@ -398,24 +423,137 @@ func TestSessionEventsStream(t *testing.T) {
 	}
 	defer stream.Body.Close()
 
-	var doneStatus string
-	sc := bufio.NewScanner(stream.Body)
+	done := readDoneEvent(t, stream.Body)
+	if done.Status != string(domain.StatusReady) || done.SessionID != gen.SessionID {
+		t.Fatalf("ready done event core fields mismatch: %+v", done)
+	}
+	if done.StoryID == nil || *done.StoryID == "" {
+		t.Fatalf("ready done event missing story_id: %+v", done)
+	}
+	if done.Tasks == nil || done.Tasks.Total != 3 || done.Tasks.Completed != 0 || done.Tasks.Pending != 3 {
+		t.Fatalf("ready done event task progress mismatch: %+v", done.Tasks)
+	}
+	if done.StageSummary == nil || done.StageSummary.Failed != 0 || done.StageSummary.Complete == 0 {
+		t.Fatalf("ready done event stage summary mismatch: %+v", done.StageSummary)
+	}
+}
+
+func TestSessionEventsAlreadyTerminalBeforeSubscribe(t *testing.T) {
+	srv, repo := newServer(t, false)
+	ctx := context.Background()
+
+	sess, err := repo.CreateSession(ctx, domain.Session{
+		UserID: domain.LocalUserID, Language: "xx", Level: "beginner", Status: domain.StatusReady,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	storyRow, err := repo.CreateStory(ctx, domain.Story{
+		UserID: domain.LocalUserID, Language: "xx", Text: "a b", Level: "beginner", SessionID: &sess.SessionID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetSessionSelection(ctx, sess.SessionID, storyRow.StoryID, []string{"target-1"}, []string{"new-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpsertStage(ctx, domain.GenerationStage{SessionID: sess.SessionID, Stage: domain.StageStoryGeneration, Status: domain.StageComplete}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpsertStage(ctx, domain.GenerationStage{SessionID: sess.SessionID, Stage: domain.StageTokenization, Status: domain.StageComplete}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateTask(ctx, domain.Task{
+		SessionID: sess.SessionID, UserID: domain.LocalUserID, TaskType: tasks.TypeComprehensionMC,
+		Language: "xx", Content: map[string]any{"question": "q"}, GradedBy: "rule",
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(srv.URL + "/api/v1/sessions/" + sess.SessionID + "/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("events = %d", resp.StatusCode)
+	}
+	done := readDoneEvent(t, resp.Body)
+	if done.Status != string(domain.StatusReady) || done.SessionID != sess.SessionID {
+		t.Fatalf("terminal replay core fields mismatch: %+v", done)
+	}
+	if done.StoryID == nil || *done.StoryID != storyRow.StoryID {
+		t.Fatalf("terminal replay story mismatch: %+v", done)
+	}
+	if done.Tasks == nil || done.Tasks.Total != 1 || done.Tasks.Completed != 1 || done.Tasks.Pending != 0 {
+		t.Fatalf("terminal replay task progress mismatch: %+v", done.Tasks)
+	}
+	if done.StageSummary == nil || done.StageSummary.Total != 2 || done.StageSummary.Complete != 2 {
+		t.Fatalf("terminal replay stage summary mismatch: %+v", done.StageSummary)
+	}
+}
+
+func TestSessionEventsFailedTerminalIncludesError(t *testing.T) {
+	srv, repo := newServer(t, false)
+	ctx := context.Background()
+
+	sess, err := repo.CreateSession(ctx, domain.Session{
+		UserID: domain.LocalUserID, Language: "xx", Level: "beginner", Status: domain.StatusFailed,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := "GEN_STORY_001"
+	if err := repo.UpsertStage(ctx, domain.GenerationStage{
+		SessionID: sess.SessionID, Stage: domain.StageStoryGeneration,
+		Status: domain.StageFailed, ErrorCode: &code,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(srv.URL + "/api/v1/sessions/" + sess.SessionID + "/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("events = %d", resp.StatusCode)
+	}
+	done := readDoneEvent(t, resp.Body)
+	if done.Status != string(domain.StatusFailed) || done.SessionID != sess.SessionID {
+		t.Fatalf("failed done event core fields mismatch: %+v", done)
+	}
+	if done.FailedStage == nil || *done.FailedStage != domain.StageStoryGeneration {
+		t.Fatalf("failed done event missing failed_stage: %+v", done)
+	}
+	if done.ErrorCode != code {
+		t.Fatalf("failed done event error_code = %q, want %q", done.ErrorCode, code)
+	}
+	if done.StageSummary == nil || done.StageSummary.Failed != 1 || done.StageSummary.FailedStage == nil {
+		t.Fatalf("failed done event stage summary mismatch: %+v", done.StageSummary)
+	}
+}
+
+func readDoneEvent(t *testing.T, r io.Reader) generationEventPayload {
+	t.Helper()
+	sc := bufio.NewScanner(r)
 	for sc.Scan() {
 		line := sc.Text()
 		data, ok := strings.CutPrefix(line, "data: ")
 		if !ok {
 			continue
 		}
-		var ev story.Event
+		var ev generationEventPayload
 		if err := json.Unmarshal([]byte(data), &ev); err != nil {
 			t.Fatalf("bad SSE payload %q: %v", data, err)
 		}
 		if ev.Stage == story.DoneStage {
-			doneStatus = ev.Status
-			break
+			return ev
 		}
 	}
-	if doneStatus != string(domain.StatusReady) {
-		t.Fatalf("stream did not report ready; final done status = %q", doneStatus)
+	if err := sc.Err(); err != nil {
+		t.Fatalf("reading SSE stream: %v", err)
 	}
+	t.Fatal("SSE stream ended without done event")
+	return generationEventPayload{}
 }
