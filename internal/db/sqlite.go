@@ -154,6 +154,9 @@ func (r *SQLiteRepository) UpdateUserProfile(ctx context.Context, userID string,
 		return domain.UserProfile{}, err
 	}
 	profile := applyProfilePatch(profileFromSettings(user.UserID, user.Settings, firstEnabledLanguage(languages)), patch)
+	if err := validateProfile(profile); err != nil {
+		return domain.UserProfile{}, err
+	}
 	settings, err := marshalJSON(settingsWithProfile(user.Settings, profile))
 	if err != nil {
 		return domain.UserProfile{}, err

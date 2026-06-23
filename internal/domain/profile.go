@@ -1,5 +1,7 @@
 package domain
 
+import "strings"
+
 // UserProfile is the typed product surface backed by users.settings in v0.1.
 // The profile fields drive generation and UI defaults; Preferences is reserved
 // for arbitrary client-owned settings that do not need server-side querying.
@@ -52,4 +54,47 @@ func ValidLearnerLevel(level string) bool {
 	default:
 		return false
 	}
+}
+
+// ValidProfileLanguageTag accepts the ASCII BCP-47-style tags this API stores
+// today, e.g. "en", "el", "pt-br". Registered target-language codes are also
+// validated against the languages table by storage before becoming active.
+func ValidProfileLanguageTag(s string) bool {
+	if len(s) < 2 || len(s) > 35 {
+		return false
+	}
+	parts := strings.Split(s, "-")
+	for i, p := range parts {
+		if p == "" || len(p) > 8 {
+			return false
+		}
+		if i == 0 && len(p) < 2 {
+			return false
+		}
+		for _, r := range p {
+			if !asciiAlphaNum(r) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// ValidThemeID constrains theme ids to a filesystem- and CSS-friendly subset.
+// Theme definitions are client-owned, but persisted ids should remain simple.
+func ValidThemeID(s string) bool {
+	if s == "" || len(s) > 64 {
+		return false
+	}
+	for _, r := range s {
+		if asciiAlphaNum(r) || r == '_' || r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func asciiAlphaNum(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
 }

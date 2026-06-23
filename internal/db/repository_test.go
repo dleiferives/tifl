@@ -102,6 +102,14 @@ func testUserProfile(t *testing.T, repo db.Repository) {
 	if _, err := repo.UpdateUserProfile(ctx, user.UserID, domain.UserProfilePatch{ActiveLanguage: &disabled}); !errors.Is(err, db.ErrInvalidProfile) {
 		t.Fatalf("disabled language error = %v, want ErrInvalidProfile", err)
 	}
+	badLevel := "expert"
+	if _, err := repo.UpdateUserProfile(ctx, user.UserID, domain.UserProfilePatch{Level: &badLevel}); !errors.Is(err, db.ErrInvalidProfile) {
+		t.Fatalf("invalid level error = %v, want ErrInvalidProfile", err)
+	}
+	badTheme := "bad theme"
+	if _, err := repo.UpdateUserProfile(ctx, user.UserID, domain.UserProfilePatch{Theme: &badTheme}); !errors.Is(err, db.ErrInvalidProfile) {
+		t.Fatalf("invalid theme error = %v, want ErrInvalidProfile", err)
+	}
 	if _, err := repo.GetUserProfile(ctx, "missing"); !errors.Is(err, db.ErrNotFound) {
 		t.Fatalf("missing profile error = %v, want ErrNotFound", err)
 	}

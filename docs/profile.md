@@ -17,6 +17,12 @@ preferences.
 typed top-level fields are validated by the server. Unknown top-level fields are
 rejected; client-specific values belong under `preferences`.
 
+`level` is product state, not an arbitrary visual preference. In v0.1 it is
+stored here as the current generation default so onboarding, tests, and the later
+level-promotion system have one stable write path. When deterministic level
+derivation lands, that system can update this same field while sessions continue
+to snapshot the level they used.
+
 `preferences` is shallow-merged. A key with a JSON `null` value deletes that
 preference.
 
@@ -33,6 +39,10 @@ A user with no stored profile receives:
   "preferences": {}
 }
 ```
+
+`active_language` is the first enabled language returned by the language
+catalogue. If no languages are enabled, it is empty until server startup or tests
+seed the catalogue; normal server startup seeds enabled compiled-in languages.
 
 In `server.auth_mode: none`, the same API operates on the synthetic
 `local` user. In JWT mode, `/profile` uses the user id from the access token.

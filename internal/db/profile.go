@@ -12,41 +12,20 @@ const profileSettingsKey = "profile"
 // storage shape. The canonical layout is settings.profile, but the reader also
 // accepts old top-level keys so a future migration can be gradual.
 func profileFromSettings(userID string, settings map[string]any, defaultLanguage string) domain.UserProfile {
-	profile := domain.DefaultUserProfile(userID, defaultLanguage)
+	profile := domain.UserProfile{UserID: userID}
 	if settings == nil {
-		return profile
+		return defaultProfileValues(profile, defaultLanguage)
 	}
 
-	source := settings
-	nestedSource := false
+	applyProfileSettings(&profile, settings)
 	if nested, ok := objectMap(settings[profileSettingsKey]); ok {
-		source = nested
-		nestedSource = true
+		// Canonical nested values win over top-level compatibility keys.
+		applyProfileSettings(&profile, nested)
 	}
-	applyProfileSettings(&profile, source)
+	return defaultProfileValues(profile, defaultLanguage)
+}
 
-	if nestedSource {
-		// Compatibility fallback: top-level keys fill gaps not present in the
-		// canonical nested profile object.
-		fallback := profile
-		applyProfileSettings(&fallback, settings)
-		if profile.ActiveLanguage == "" {
-			profile.ActiveLanguage = fallback.ActiveLanguage
-		}
-		if profile.Level == "" {
-			profile.Level = fallback.Level
-		}
-		if profile.UILanguage == "" {
-			profile.UILanguage = fallback.UILanguage
-		}
-		if profile.Theme == "" {
-			profile.Theme = fallback.Theme
-		}
-		if len(profile.Preferences) == 0 && len(fallback.Preferences) > 0 {
-			profile.Preferences = fallback.Preferences
-		}
-	}
-
+func defaultProfileValues(profile domain.UserProfile, defaultLanguage string) domain.UserProfile {
 	if profile.ActiveLanguage == "" {
 		profile.ActiveLanguage = defaultLanguage
 	}
@@ -116,14 +95,34 @@ func settingsWithProfile(settings map[string]any, profile domain.UserProfile) ma
 	if out == nil {
 		out = map[string]any{}
 	}
+	prefs := cloneJSONMap(profile.Preferences)
+	if prefs == nil {
+		prefs = map[string]any{}
+	}
 	out[profileSettingsKey] = map[string]any{
 		"active_language": profile.ActiveLanguage,
 		"level":           profile.Level,
 		"ui_language":     profile.UILanguage,
 		"theme":           profile.Theme,
-		"preferences":     cloneJSONMap(profile.Preferences),
+		"preferences":     prefs,
 	}
 	return out
+}
+
+func validateProfile(profile domain.UserProfile) error {
+	if profile.ActiveLanguage != "" && !domain.ValidProfileLanguageTag(profile.ActiveLanguage) {
+		return invalidProfile("active_language %q is not a language tag", profile.ActiveLanguage)
+	}
+	if !domain.ValidLearnerLevel(profile.Level) {
+		return invalidProfile("level %q is not supported", profile.Level)
+	}
+	if !domain.ValidProfileLanguageTag(profile.UILanguage) {
+		return invalidProfile("ui_language %q is not a language tag", profile.UILanguage)
+	}
+	if !domain.ValidThemeID(profile.Theme) {
+		return invalidProfile("theme %q is not a valid theme id", profile.Theme)
+	}
+	return nil
 }
 
 func firstEnabledLanguage(langs []domain.Language) string {

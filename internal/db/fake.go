@@ -163,6 +163,9 @@ func (r *FakeRepository) UpdateUserProfile(_ context.Context, userID string, pat
 		return domain.UserProfile{}, ErrNotFound
 	}
 	profile := applyProfilePatch(profileFromSettings(user.UserID, user.Settings, r.firstEnabledLanguageLocked()), patch)
+	if err := validateProfile(profile); err != nil {
+		return domain.UserProfile{}, err
+	}
 	user.Settings = settingsWithProfile(user.Settings, profile)
 	r.users[userID] = cloneUser(user)
 	return profile, nil

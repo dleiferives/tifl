@@ -20,7 +20,10 @@ type profileResponse struct {
 }
 
 func TestProfileLocalDefaultsPatchAndReload(t *testing.T) {
-	srv, _ := newServer(t, false)
+	srv, repo := newServer(t, false)
+	if err := repo.UpsertLanguage(context.Background(), domain.Language{Code: "yy", Name: "Secondish", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
 
 	profile := getProfile(t, srv.URL, "")
 	if profile.UserID != domain.LocalUserID || profile.ActiveLanguage != "xx" ||
@@ -29,6 +32,7 @@ func TestProfileLocalDefaultsPatchAndReload(t *testing.T) {
 	}
 
 	body := []byte(`{
+		"active_language":"yy",
 		"level":"intermediate",
 		"ui_language":"es",
 		"theme":"high-contrast",
@@ -46,7 +50,7 @@ func TestProfileLocalDefaultsPatchAndReload(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&profile); err != nil {
 		t.Fatal(err)
 	}
-	if profile.Level != "intermediate" || profile.UILanguage != "es" ||
+	if profile.ActiveLanguage != "yy" || profile.Level != "intermediate" || profile.UILanguage != "es" ||
 		profile.Theme != "high-contrast" || profile.Preferences["density"] != "compact" ||
 		profile.Preferences["sound"] != true {
 		t.Fatalf("patched profile mismatch: %+v", profile)
@@ -55,7 +59,7 @@ func TestProfileLocalDefaultsPatchAndReload(t *testing.T) {
 	// A fresh GET proves the values survived the handler round-trip through repo
 	// storage, not just the PATCH response body.
 	profile = getProfile(t, srv.URL, "")
-	if profile.Level != "intermediate" || profile.Theme != "high-contrast" ||
+	if profile.ActiveLanguage != "yy" || profile.Level != "intermediate" || profile.Theme != "high-contrast" ||
 		profile.Preferences["density"] != "compact" {
 		t.Fatalf("profile did not persist: %+v", profile)
 	}

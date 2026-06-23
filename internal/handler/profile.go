@@ -105,7 +105,7 @@ func decodeProfilePatch(w http.ResponseWriter, r *http.Request) (domain.UserProf
 				return domain.UserProfilePatch{}, err
 			}
 			s = strings.ToLower(s)
-			if !validLanguageTag(s) {
+			if !domain.ValidProfileLanguageTag(s) {
 				return domain.UserProfilePatch{}, fmt.Errorf("%s must be a language tag", key)
 			}
 			patch.ActiveLanguage = &s
@@ -124,7 +124,7 @@ func decodeProfilePatch(w http.ResponseWriter, r *http.Request) (domain.UserProf
 				return domain.UserProfilePatch{}, err
 			}
 			s = strings.ToLower(s)
-			if !validLanguageTag(s) {
+			if !domain.ValidProfileLanguageTag(s) {
 				return domain.UserProfilePatch{}, fmt.Errorf("%s must be a language tag", key)
 			}
 			patch.UILanguage = &s
@@ -133,7 +133,7 @@ func decodeProfilePatch(w http.ResponseWriter, r *http.Request) (domain.UserProf
 			if err != nil {
 				return domain.UserProfilePatch{}, err
 			}
-			if !validThemeID(s) {
+			if !domain.ValidThemeID(s) {
 				return domain.UserProfilePatch{}, fmt.Errorf("%s must contain only letters, numbers, '_' or '-'", key)
 			}
 			patch.Theme = &s
@@ -187,44 +187,6 @@ func decodePreferences(raw json.RawMessage) (map[string]any, error) {
 		}
 	}
 	return prefs, nil
-}
-
-func validLanguageTag(s string) bool {
-	if len(s) < 2 || len(s) > 35 {
-		return false
-	}
-	parts := strings.Split(s, "-")
-	for i, p := range parts {
-		if p == "" || len(p) > 8 {
-			return false
-		}
-		if i == 0 && len(p) < 2 {
-			return false
-		}
-		for _, r := range p {
-			if !asciiAlphaNum(r) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func validThemeID(s string) bool {
-	if s == "" || len(s) > 64 {
-		return false
-	}
-	for _, r := range s {
-		if asciiAlphaNum(r) || r == '_' || r == '-' {
-			continue
-		}
-		return false
-	}
-	return true
-}
-
-func asciiAlphaNum(r rune) bool {
-	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
 }
 
 func toProfileDTO(profile domain.UserProfile) profileDTO {

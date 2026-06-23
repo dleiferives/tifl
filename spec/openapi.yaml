@@ -585,6 +585,7 @@ components:
         level:
           type: string
           enum: [beginner, elementary, intermediate, upper-intermediate, advanced]
+          description: "current generation default; product state that level-derivation can update"
         ui_language:
           type: string
           description: "BCP-47 style UI/gloss language tag, e.g. 'en'"
@@ -606,6 +607,7 @@ components:
         level:
           type: string
           enum: [beginner, elementary, intermediate, upper-intermediate, advanced]
+          description: "current generation default; clients should not treat this as arbitrary preference state"
         ui_language:
           type: string
           description: "BCP-47 style UI/gloss language tag"

@@ -211,6 +211,9 @@ func (r *PostgresRepository) UpdateUserProfile(ctx context.Context, userID strin
 		return domain.UserProfile{}, err
 	}
 	profile := applyProfilePatch(profileFromSettings(user.UserID, user.Settings, firstEnabledLanguage(languages)), patch)
+	if err := validateProfile(profile); err != nil {
+		return domain.UserProfile{}, err
+	}
 	settings, err := marshalJSONB(settingsWithProfile(user.Settings, profile))
 	if err != nil {
 		return domain.UserProfile{}, err
