@@ -1,0 +1,299 @@
+package db
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"strings"
+	"time"
+
+	"github.com/dleiferives/tifl/internal/domain"
+	"github.com/dleiferives/tifl/internal/id"
+)
+
+func (r *SQLiteRepository) UpsertSkill(ctx context.Context, skill domain.Skill) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO skills(skill_id, language, name, description, category, tier_count, xp_per_tier, sort_order)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(skill_id) DO UPDATE SET
+		   language = excluded.language,
+		   name = excluded.name,
+		   description = excluded.description,
+		   category = excluded.category,
+		   tier_count = excluded.tier_count,
+		   xp_per_tier = excluded.xp_per_tier,
+		   sort_order = excluded.sort_order`,
+		skill.SkillID, skill.Language, skill.Name, emptyToNull(skill.Description), skill.Category,
+		skill.TierCount, skill.XPPerTier, nullInt(skill.SortOrder))
+	return err
+}
+
+func (r *SQLiteRepository) ListSkills(ctx context.Context, language string) ([]domain.Skill, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT skill_id, language, name, description, category, tier_count, xp_per_tier, sort_order
+		 FROM skills WHERE language = ?
+		 ORDER BY category, sort_order IS NULL, sort_order, name, skill_id`, language)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanSQLiteSkills(rows)
+}
+
+func (r *SQLiteRepository) GetSkill(ctx context.Context, skillID string) (domain.Skill, error) {
+	skill, err := scanSQLiteSkill(r.db.QueryRowContext(ctx,
+		`SELECT skill_id, language, name, description, category, tier_count, xp_per_tier, sort_order
+		 FROM skills WHERE skill_id = ?`, skillID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Skill{}, ErrNotFound
+	}
+	return skill, err
+}
+
+func (r *SQLiteRepository) UpsertItemSkillAssociations(ctx context.Context, itemID string, skillIDs []string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM item_skill_associations WHERE item_id = ?`, itemID); err != nil {
+		return err
+	}
+	for _, skillID := range uniqueStrings(skillIDs) {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO item_skill_associations(item_id, skill_id) VALUES(?, ?)`,
+			itemID, skillID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (r *SQLiteRepository) ListItemSkillAssociations(ctx context.Context, itemIDs []string) ([]domain.ItemSkillAssociation, error) {
+	itemIDs = uniqueStrings(itemIDs)
+	if len(itemIDs) == 0 {
+		return nil, nil
+	}
+	args := make([]any, len(itemIDs))
+	for i, itemID := range itemIDs {
+		args[i] = itemID
+	}
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT item_id, skill_id FROM item_skill_associations
+		 WHERE item_id IN (`+sqlitePlaceholders(len(itemIDs))+`)
+		 ORDER BY item_id, skill_id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanSQLiteItemSkillAssociations(rows)
+}
+
+func (r *SQLiteRepository) ListSkillAssociations(ctx context.Context, skillID string) ([]domain.ItemSkillAssociation, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT item_id, skill_id FROM item_skill_associations
+		 WHERE skill_id = ? ORDER BY item_id`, skillID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanSQLiteItemSkillAssociations(rows)
+}
+
+func (r *SQLiteRepository) GetUserSkillXP(ctx context.Context, userID, skillID string) (domain.UserSkillXP, error) {
+	xp, err := scanSQLiteUserSkillXP(r.db.QueryRowContext(ctx,
+		`SELECT user_id, skill_id, xp, tier, pending_verify, last_verified_at, updated_at
+		 FROM user_skill_xp WHERE user_id = ? AND skill_id = ?`, userID, skillID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.UserSkillXP{}, ErrNotFound
+	}
+	return xp, err
+}
+
+func (r *SQLiteRepository) ListUserSkillXP(ctx context.Context, userID string, skillIDs []string) ([]domain.UserSkillXP, error) {
+	skillIDs = uniqueStrings(skillIDs)
+	query := `SELECT user_id, skill_id, xp, tier, pending_verify, last_verified_at, updated_at
+	          FROM user_skill_xp WHERE user_id = ?`
+	args := []any{userID}
+	if len(skillIDs) > 0 {
+		for _, skillID := range skillIDs {
+			args = append(args, skillID)
+		}
+		query += ` AND skill_id IN (` + sqlitePlaceholders(len(skillIDs)) + `)`
+	}
+	query += ` ORDER BY skill_id`
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanSQLiteUserSkillXPs(rows)
+}
+
+func (r *SQLiteRepository) UpsertUserSkillXP(ctx context.Context, xp domain.UserSkillXP) error {
+	if xp.UpdatedAt == 0 {
+		xp.UpdatedAt = float64(time.Now().Unix())
+	}
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO user_skill_xp(user_id, skill_id, xp, tier, pending_verify, last_verified_at, updated_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(user_id, skill_id) DO UPDATE SET
+		   xp = excluded.xp,
+		   tier = excluded.tier,
+		   pending_verify = excluded.pending_verify,
+		   last_verified_at = excluded.last_verified_at,
+		   updated_at = excluded.updated_at`,
+		xp.UserID, xp.SkillID, xp.XP, xp.Tier, boolToInt(xp.PendingVerify),
+		nullFloat(xp.LastVerifiedAt), xp.UpdatedAt)
+	return err
+}
+
+func (r *SQLiteRepository) InsertTaskSkillXPLog(ctx context.Context, row domain.TaskSkillXPLog) error {
+	if row.LogID == "" {
+		row.LogID = id.New()
+	}
+	if row.LoggedAt == 0 {
+		row.LoggedAt = float64(time.Now().Unix())
+	}
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO task_skill_xp_log(log_id, user_id, task_id, skill_id, xp_delta, xp_after, logged_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?)`,
+		row.LogID, row.UserID, row.TaskID, row.SkillID, row.XPDelta, row.XPAfter, row.LoggedAt)
+	return err
+}
+
+func (r *SQLiteRepository) ListTaskSkillXPLog(ctx context.Context, userID string, limit int) ([]domain.TaskSkillXPLog, error) {
+	query := `SELECT log_id, user_id, task_id, skill_id, xp_delta, xp_after, logged_at
+	          FROM task_skill_xp_log WHERE user_id = ?
+	          ORDER BY logged_at DESC, log_id DESC`
+	args := []any{userID}
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanSQLiteTaskSkillXPLogs(rows)
+}
+
+func scanSQLiteSkill(row *sql.Row) (domain.Skill, error) {
+	var (
+		skill       domain.Skill
+		description sql.NullString
+		sortOrder   sql.NullInt64
+	)
+	err := row.Scan(&skill.SkillID, &skill.Language, &skill.Name, &description, &skill.Category,
+		&skill.TierCount, &skill.XPPerTier, &sortOrder)
+	if err != nil {
+		return domain.Skill{}, err
+	}
+	skill.Description = description.String
+	if sortOrder.Valid {
+		v := int(sortOrder.Int64)
+		skill.SortOrder = &v
+	}
+	return skill, nil
+}
+
+func scanSQLiteSkills(rows *sql.Rows) ([]domain.Skill, error) {
+	var out []domain.Skill
+	for rows.Next() {
+		var (
+			skill       domain.Skill
+			description sql.NullString
+			sortOrder   sql.NullInt64
+		)
+		if err := rows.Scan(&skill.SkillID, &skill.Language, &skill.Name, &description, &skill.Category,
+			&skill.TierCount, &skill.XPPerTier, &sortOrder); err != nil {
+			return nil, err
+		}
+		skill.Description = description.String
+		if sortOrder.Valid {
+			v := int(sortOrder.Int64)
+			skill.SortOrder = &v
+		}
+		out = append(out, skill)
+	}
+	return out, rows.Err()
+}
+
+func scanSQLiteItemSkillAssociations(rows *sql.Rows) ([]domain.ItemSkillAssociation, error) {
+	var out []domain.ItemSkillAssociation
+	for rows.Next() {
+		var row domain.ItemSkillAssociation
+		if err := rows.Scan(&row.ItemID, &row.SkillID); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func scanSQLiteUserSkillXP(row *sql.Row) (domain.UserSkillXP, error) {
+	var (
+		xp             domain.UserSkillXP
+		pendingVerify  int
+		lastVerifiedAt sql.NullFloat64
+	)
+	err := row.Scan(&xp.UserID, &xp.SkillID, &xp.XP, &xp.Tier, &pendingVerify, &lastVerifiedAt, &xp.UpdatedAt)
+	if err != nil {
+		return domain.UserSkillXP{}, err
+	}
+	xp.PendingVerify = pendingVerify != 0
+	xp.LastVerifiedAt = floatPtr(lastVerifiedAt)
+	return xp, nil
+}
+
+func scanSQLiteUserSkillXPs(rows *sql.Rows) ([]domain.UserSkillXP, error) {
+	var out []domain.UserSkillXP
+	for rows.Next() {
+		var (
+			xp             domain.UserSkillXP
+			pendingVerify  int
+			lastVerifiedAt sql.NullFloat64
+		)
+		if err := rows.Scan(&xp.UserID, &xp.SkillID, &xp.XP, &xp.Tier, &pendingVerify, &lastVerifiedAt, &xp.UpdatedAt); err != nil {
+			return nil, err
+		}
+		xp.PendingVerify = pendingVerify != 0
+		xp.LastVerifiedAt = floatPtr(lastVerifiedAt)
+		out = append(out, xp)
+	}
+	return out, rows.Err()
+}
+
+func scanSQLiteTaskSkillXPLogs(rows *sql.Rows) ([]domain.TaskSkillXPLog, error) {
+	var out []domain.TaskSkillXPLog
+	for rows.Next() {
+		var row domain.TaskSkillXPLog
+		if err := rows.Scan(&row.LogID, &row.UserID, &row.TaskID, &row.SkillID, &row.XPDelta, &row.XPAfter, &row.LoggedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func sqlitePlaceholders(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return strings.TrimRight(strings.Repeat("?,", n), ",")
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]bool, len(values))
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		if v == "" || seen[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	return out
+}

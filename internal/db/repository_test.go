@@ -34,6 +34,7 @@ func testRepository(t *testing.T, newRepo repoFactory) {
 	t.Run("ReaderEvents", func(t *testing.T) { testReaderEvents(t, newRepo(t)) })
 	t.Run("DefinitionsBreakdowns", func(t *testing.T) { testDefinitionsBreakdowns(t, newRepo(t)) })
 	t.Run("Pipeline", func(t *testing.T) { testPipeline(t, newRepo(t)) })
+	t.Run("Skills", func(t *testing.T) { testSkills(t, newRepo(t)) })
 }
 
 func testUserProfile(t *testing.T, repo db.Repository) {
@@ -714,5 +715,142 @@ func testTenantIsolation(t *testing.T, repo db.Repository) {
 	must(t, err)
 	if len(bRows) != 1 || bRows[0].UserID != bob.UserID || bRows[0].ExposureCount != 99 {
 		t.Fatalf("bob read leaked or wrong: %+v", bRows)
+	}
+}
+
+func testSkills(t *testing.T, repo db.Repository) {
+	ctx := context.Background()
+	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "el", Name: "Greek", KeyStrategy: "lemma", Enabled: true}))
+	user, err := repo.CreateUser(ctx, domain.User{Email: "skills@example.com"})
+	must(t, err)
+	otherUser, err := repo.CreateUser(ctx, domain.User{Email: "skills-other@example.com"})
+	must(t, err)
+	itemID, err := repo.UpsertKnowledgeItem(ctx, domain.KnowledgeItem{Language: "el", ItemType: "word", Key: "λόγος"})
+	must(t, err)
+
+	order1, order2 := 10, 20
+	must(t, repo.UpsertSkill(ctx, domain.Skill{
+		SkillID: "el-case-nominative", Language: "el", Name: "Nominative Case",
+		Description: "Recognize nominative case subjects", Category: "Cases",
+		TierCount: 3, XPPerTier: 100, SortOrder: &order2,
+	}))
+	must(t, repo.UpsertSkill(ctx, domain.Skill{
+		SkillID: "el-case-accusative", Language: "el", Name: "Accusative Case",
+		Category: "Cases", TierCount: 3, XPPerTier: 120, SortOrder: &order1,
+	}))
+	// Same skill id updates in place rather than duplicating.
+	must(t, repo.UpsertSkill(ctx, domain.Skill{
+		SkillID: "el-case-nominative", Language: "el", Name: "Nominative Subjects",
+		Description: "Updated description", Category: "Cases",
+		TierCount: 4, XPPerTier: 150, SortOrder: &order2,
+	}))
+	skill, err := repo.GetSkill(ctx, "el-case-nominative")
+	must(t, err)
+	if skill.Name != "Nominative Subjects" || skill.TierCount != 4 || skill.XPPerTier != 150 {
+		t.Fatalf("skill upsert did not update metadata: %+v", skill)
+	}
+	if skill.SortOrder == nil || *skill.SortOrder != order2 {
+		t.Fatalf("skill sort order did not round-trip: %+v", skill.SortOrder)
+	}
+	if _, err := repo.GetSkill(ctx, "missing"); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("missing skill error = %v, want ErrNotFound", err)
+	}
+	skills, err := repo.ListSkills(ctx, "el")
+	must(t, err)
+	if len(skills) != 2 || skills[0].SkillID != "el-case-accusative" || skills[1].SkillID != "el-case-nominative" {
+		t.Fatalf("skill list/order mismatch: %+v", skills)
+	}
+
+	must(t, repo.UpsertItemSkillAssociations(ctx, itemID, []string{
+		"el-case-nominative", "el-case-nominative", "el-case-accusative",
+	}))
+	assocs, err := repo.ListItemSkillAssociations(ctx, []string{itemID})
+	must(t, err)
+	if len(assocs) != 2 || assocs[0].SkillID != "el-case-accusative" || assocs[1].SkillID != "el-case-nominative" {
+		t.Fatalf("association upsert/list mismatch: %+v", assocs)
+	}
+	reverse, err := repo.ListSkillAssociations(ctx, "el-case-nominative")
+	must(t, err)
+	if len(reverse) != 1 || reverse[0].ItemID != itemID {
+		t.Fatalf("reverse association list mismatch: %+v", reverse)
+	}
+	// Upsert replaces the item's full association set, which makes reseeding deterministic.
+	must(t, repo.UpsertItemSkillAssociations(ctx, itemID, []string{"el-case-accusative"}))
+	assocs, err = repo.ListItemSkillAssociations(ctx, []string{itemID})
+	must(t, err)
+	if len(assocs) != 1 || assocs[0].SkillID != "el-case-accusative" {
+		t.Fatalf("association replacement mismatch: %+v", assocs)
+	}
+
+	lastVerified := 1700.0
+	must(t, repo.UpsertUserSkillXP(ctx, domain.UserSkillXP{
+		UserID: user.UserID, SkillID: "el-case-accusative",
+		XP: 90, Tier: 1, PendingVerify: true, LastVerifiedAt: &lastVerified, UpdatedAt: 1800,
+	}))
+	gotXP, err := repo.GetUserSkillXP(ctx, user.UserID, "el-case-accusative")
+	must(t, err)
+	if gotXP.XP != 90 || gotXP.Tier != 1 || !gotXP.PendingVerify || gotXP.LastVerifiedAt == nil || *gotXP.LastVerifiedAt != 1700 {
+		t.Fatalf("user skill XP round-trip mismatch: %+v", gotXP)
+	}
+	if _, err := repo.GetUserSkillXP(ctx, user.UserID, "missing"); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("missing XP error = %v, want ErrNotFound", err)
+	}
+	must(t, repo.UpsertUserSkillXP(ctx, domain.UserSkillXP{
+		UserID: user.UserID, SkillID: "el-case-nominative", XP: 25, Tier: 0, UpdatedAt: 1810,
+	}))
+	must(t, repo.UpsertUserSkillXP(ctx, domain.UserSkillXP{
+		UserID: otherUser.UserID, SkillID: "el-case-accusative", XP: 999, Tier: 3, UpdatedAt: 1820,
+	}))
+	allXP, err := repo.ListUserSkillXP(ctx, user.UserID, nil)
+	must(t, err)
+	if len(allXP) != 2 || allXP[0].UserID != user.UserID || allXP[1].UserID != user.UserID {
+		t.Fatalf("ListUserSkillXP all rows mismatch/leak: %+v", allXP)
+	}
+	filteredXP, err := repo.ListUserSkillXP(ctx, user.UserID, []string{"el-case-nominative"})
+	must(t, err)
+	if len(filteredXP) != 1 || filteredXP[0].SkillID != "el-case-nominative" {
+		t.Fatalf("ListUserSkillXP filtered mismatch: %+v", filteredXP)
+	}
+	missingXP, err := repo.ListUserSkillXP(ctx, user.UserID, []string{"missing"})
+	must(t, err)
+	if len(missingXP) != 0 {
+		t.Fatalf("missing skill XP rows should stay absent: %+v", missingXP)
+	}
+
+	sess, err := repo.CreateSession(ctx, domain.Session{UserID: user.UserID, Language: "el", Level: "beginner"})
+	must(t, err)
+	task, err := repo.CreateTask(ctx, domain.Task{
+		SessionID: sess.SessionID, UserID: user.UserID, TaskType: "fill_blank", Language: "el",
+		Content: map[string]any{"sentence": "___"},
+	}, []string{itemID})
+	must(t, err)
+	must(t, repo.InsertTaskSkillXPLog(ctx, domain.TaskSkillXPLog{
+		LogID: "skill-log-1", UserID: user.UserID, TaskID: task.TaskID,
+		SkillID: "el-case-accusative", XPDelta: 12, XPAfter: 102, LoggedAt: 1900,
+	}))
+	must(t, repo.InsertTaskSkillXPLog(ctx, domain.TaskSkillXPLog{
+		LogID: "skill-log-2", UserID: user.UserID, TaskID: task.TaskID,
+		SkillID: "el-case-accusative", XPDelta: -3, XPAfter: 99, LoggedAt: 1910,
+	}))
+	logs, err := repo.ListTaskSkillXPLog(ctx, user.UserID, 1)
+	must(t, err)
+	if len(logs) != 1 || logs[0].LogID != "skill-log-2" || logs[0].XPDelta != -3 {
+		t.Fatalf("limited XP log order mismatch: %+v", logs)
+	}
+	logs, err = repo.ListTaskSkillXPLog(ctx, user.UserID, 0)
+	must(t, err)
+	if len(logs) != 2 || logs[0].LogID != "skill-log-2" || logs[1].LogID != "skill-log-1" {
+		t.Fatalf("XP log full order mismatch: %+v", logs)
+	}
+	otherLogs, err := repo.ListTaskSkillXPLog(ctx, otherUser.UserID, 0)
+	must(t, err)
+	if len(otherLogs) != 0 {
+		t.Fatalf("XP log should be tenant-scoped: %+v", otherLogs)
+	}
+	if err := repo.InsertTaskSkillXPLog(ctx, domain.TaskSkillXPLog{
+		LogID: "skill-log-1", UserID: user.UserID, TaskID: task.TaskID,
+		SkillID: "el-case-accusative", XPDelta: 1, XPAfter: 100, LoggedAt: 1920,
+	}); err == nil {
+		t.Fatal("expected duplicate XP log id to be rejected")
 	}
 }

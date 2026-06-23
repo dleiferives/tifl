@@ -32,6 +32,10 @@ type FakeRepository struct {
 	readerIDs  map[string]bool                 // event_id set, for idempotent insert
 	defs       map[string]domain.Definition    // language\x00key\x00source -> definition
 	breakdowns map[string]domain.Breakdown     // scope\x00language\x00cacheKey -> breakdown
+	skills     map[string]domain.Skill         // skill_id -> skill
+	itemSkills map[string]map[string]bool      // item_id -> skill_id set
+	userSkills map[string]domain.UserSkillXP   // user_id\x00skill_id -> state
+	skillLogs  []domain.TaskSkillXPLog         // append-only skill XP log
 
 	// Generation-pipeline state.
 	sessions map[string]domain.Session                    // session_id -> session
@@ -59,6 +63,9 @@ func NewFake() *FakeRepository {
 		readerIDs:  make(map[string]bool),
 		defs:       make(map[string]domain.Definition),
 		breakdowns: make(map[string]domain.Breakdown),
+		skills:     make(map[string]domain.Skill),
+		itemSkills: make(map[string]map[string]bool),
+		userSkills: make(map[string]domain.UserSkillXP),
 		sessions:   make(map[string]domain.Session),
 		stages:     make(map[string]map[string]domain.GenerationStage),
 		stories:    make(map[string]domain.Story),
