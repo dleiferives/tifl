@@ -1848,3 +1848,78 @@ select {
   color: var(--text-muted);
   font-size: 0.8rem;
 }
+
+/* Phrase set view (#74) — the phrase-session counterpart to the reader. */
+.view-heading-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.phrase-list {
+  display: grid;
+  gap: 0.85rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.phrase-card {
+  display: grid;
+  gap: 0.5rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  background: var(--surface);
+}
+
+.phrase-target {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+
+.phrase-gloss {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.phrase-notes {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.phrase-annotations {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.phrase-annotation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 0.35rem;
+  background: var(--surface-subtle);
+  font-size: 0.85rem;
+}
+
+.phrase-annotation-kind {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.phrase-annotation-label {
+  font-weight: 600;
+}
+
+.phrase-annotation-note {
+  color: var(--text-muted);
+}

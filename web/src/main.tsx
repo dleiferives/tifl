@@ -6,6 +6,7 @@ import { appStore } from "./store";
 import { GenerationView } from "./views/generation";
 import { HomeView } from "./views/home";
 import { LoginView } from "./views/login";
+import { PhrasesView } from "./views/phrases";
 import { ReaderView } from "./views/reader";
 import { SettingsView } from "./views/settings";
 import { SkillsView } from "./views/skills";
@@ -39,6 +40,9 @@ function App() {
             </Match>
             <Match when={route().name === "reader"}>
               <ReaderView storyId={(route() as Extract<Route, { name: "reader" }>).storyId} />
+            </Match>
+            <Match when={route().name === "phrases"}>
+              <PhrasesView sessionId={(route() as Extract<Route, { name: "phrases" }>).sessionId} />
             </Match>
             <Match when={route().name === "tasks"}>
               <TasksView sessionId={(route() as Extract<Route, { name: "tasks" }>).sessionId} />
