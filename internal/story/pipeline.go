@@ -12,7 +12,13 @@ import (
 	"github.com/dleiferives/tifl/internal/llm"
 	"github.com/dleiferives/tifl/internal/selector"
 	"github.com/dleiferives/tifl/internal/tasks"
+	"github.com/dleiferives/tifl/internal/topic"
 )
+
+// topicHistoryWindow is how many recent session topics the system-driven chooser
+// excludes to avoid repeating a setting. It matches the "last 5 sessions" recent
+// history convention in context/prompting-system.md.
+const topicHistoryWindow = 5
 
 // Stable, admin-inspectable error codes written to session_generation_stages and
 // surfaced to the client in SSE failure events. They identify the stage and the
@@ -121,6 +127,20 @@ func (p *Pipeline) Generate(ctx context.Context, sessionID string, emit emitter)
 
 	if err := p.deps.Repo.UpdateSessionStatus(ctx, sess.SessionID, domain.StatusGenerating); err != nil {
 		return err
+	}
+
+	// System-driven sessions arrive with no topic: the hard-system chooser picks
+	// one (avoiding recent repeats), persists it for reproducibility/inspection,
+	// and feeds it into selection biasing and the story prompt. See
+	// context/session-types.md ("System-Driven").
+	if sess.SessionType == domain.SessionSystem && sess.Topic == "" {
+		if chosen := p.chooseTopic(ctx, sess); chosen != "" {
+			if err := p.deps.Repo.SetSessionTopic(ctx, sess.SessionID, chosen); err != nil {
+				p.markSession(ctx, sess.SessionID, domain.StatusFailed)
+				return fail(ErrCodePersist, err)
+			}
+			sess.Topic = chosen
+		}
 	}
 
 	// Stage 1 — selection (no LLM). Not a persisted checkpoint; it re-runs as part
@@ -267,7 +287,11 @@ func (p *Pipeline) runSelection(ctx context.Context, sess domain.Session) (domai
 		lc.Skills = skills
 	}
 	switch sess.SessionType {
-	case domain.SessionTopicGuided:
+	case domain.SessionTopicGuided, domain.SessionSystem:
+		// Both carry a topic into the story prompt: topic-guided from the user,
+		// system-driven from the chooser. They differ upstream (topic-guided runs a
+		// scope check; system-driven picks the topic), not in how the story builder
+		// consumes it.
 		if sess.Topic != "" {
 			lc.Guidance = &domain.UserGuidance{Topic: sess.Topic}
 		}
@@ -277,6 +301,27 @@ func (p *Pipeline) runSelection(ctx context.Context, sess domain.Session) (domai
 		}
 	}
 	return lc, nil
+}
+
+// chooseTopic runs the deterministic, no-LLM topic chooser for a system-driven
+// session: it prefers a language plugin's own pools (lang.TopicPoolProvider) and
+// otherwise uses the generic per-level defaults, excluding the learner's recent
+// topics for this language. A history-read failure degrades to no exclusion
+// rather than blocking generation.
+func (p *Pipeline) chooseTopic(ctx context.Context, sess domain.Session) string {
+	pools := topic.DefaultPools()
+	if plugin, ok := p.deps.Langs.Get(sess.Language); ok {
+		if tp, ok := plugin.(lang.TopicPoolProvider); ok {
+			if custom := tp.TopicPools(); len(custom) > 0 {
+				pools = custom
+			}
+		}
+	}
+	recent, err := p.deps.Repo.RecentSessionTopics(ctx, sess.UserID, sess.Language, topicHistoryWindow)
+	if err != nil {
+		recent = nil
+	}
+	return topic.Choose(pools, sess.Level, recent)
 }
 
 // runStory generates the story (retrying while coverage is short), persists the

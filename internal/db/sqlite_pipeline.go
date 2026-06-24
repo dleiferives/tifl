@@ -116,6 +116,40 @@ func (r *SQLiteRepository) UpdateSessionStatus(ctx context.Context, sessionID st
 	return requireRow(res)
 }
 
+func (r *SQLiteRepository) SetSessionTopic(ctx context.Context, sessionID, topic string) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE sessions SET topic = ? WHERE session_id = ?`, nullEmpty(topic), sessionID)
+	if err != nil {
+		return err
+	}
+	return requireRow(res)
+}
+
+func (r *SQLiteRepository) RecentSessionTopics(ctx context.Context, userID, language string, limit int) ([]string, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT topic FROM sessions
+		 WHERE user_id = ? AND language = ? AND topic IS NOT NULL AND topic <> ''
+		 ORDER BY created_at DESC, session_id DESC
+		 LIMIT ?`, userID, language, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var topic string
+		if err := rows.Scan(&topic); err != nil {
+			return nil, err
+		}
+		out = append(out, topic)
+	}
+	return out, rows.Err()
+}
+
 func (r *SQLiteRepository) SetSessionSelection(ctx context.Context, sessionID, storyID string, targets, new []string) error {
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE sessions SET story_id = ?, selected_targets = ?, selected_new = ? WHERE session_id = ?`,

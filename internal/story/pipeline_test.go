@@ -290,6 +290,49 @@ func TestPipeline_WiresSkillConstraintsIntoStoryPrompt(t *testing.T) {
 	}
 }
 
+func TestPipeline_SystemSessionChoosesAndPersistsTopic(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t, &clientControl{stories: []string{"a a a a"}}, []string{tasks.TypeComprehensionMC})
+	sessID := h.newSession(t, "beginner") // SessionSystem with no user topic
+
+	must(t, h.pipeline.Generate(ctx, sessID, nil))
+
+	sess, _ := h.repo.GetSession(ctx, sessID)
+	if sess.Topic == "" {
+		t.Fatal("system session should have a chosen topic persisted")
+	}
+	// The chosen topic flows into the story prompt as guidance.
+	var storyPrompt string
+	for _, call := range h.client.Calls {
+		if call.Kind == "story_generator" {
+			storyPrompt = call.Req.User
+		}
+	}
+	if !strings.Contains(storyPrompt, "Requested topic: "+sess.Topic) {
+		t.Fatalf("story prompt missing chosen topic %q:\n%s", sess.Topic, storyPrompt)
+	}
+}
+
+func TestPipeline_SystemSessionAvoidsRecentTopic(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t, &clientControl{stories: []string{"a a a a"}}, []string{tasks.TypeComprehensionMC})
+
+	s1 := h.newSession(t, "beginner")
+	must(t, h.pipeline.Generate(ctx, s1, nil))
+	first, _ := h.repo.GetSession(ctx, s1)
+
+	s2 := h.newSession(t, "beginner")
+	must(t, h.pipeline.Generate(ctx, s2, nil))
+	second, _ := h.repo.GetSession(ctx, s2)
+
+	if first.Topic == "" || second.Topic == "" {
+		t.Fatal("both system sessions should have chosen topics")
+	}
+	if first.Topic == second.Topic {
+		t.Fatalf("second session repeated the recent topic %q", first.Topic)
+	}
+}
+
 func TestPipeline_TaskTargetsPopulated(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t, &clientControl{stories: []string{"a a a a"}}, []string{tasks.TypeComprehensionMC})

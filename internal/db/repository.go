@@ -98,6 +98,14 @@ type Repository interface {
 	ListSessions(ctx context.Context, userID string, opts domain.ListSessionsOptions) ([]domain.SessionOverview, error)
 	GetSessionDetail(ctx context.Context, userID, sessionID string) (domain.SessionDetail, error)
 	UpdateSessionStatus(ctx context.Context, sessionID string, status domain.SessionStatus) error
+	// SetSessionTopic records the chosen topic on a session. The system-driven
+	// topic chooser writes it before story generation so the topic is reproducible
+	// and inspectable (context/session-types.md "System-Driven").
+	SetSessionTopic(ctx context.Context, sessionID, topic string) error
+	// RecentSessionTopics returns the most recent non-empty session topics for a
+	// (user, language), newest first, capped at limit. The topic chooser uses it
+	// to avoid repeating recent settings; it is tenant-scoped by userID.
+	RecentSessionTopics(ctx context.Context, userID, language string, limit int) ([]string, error)
 	// SetSessionSelection records the selected target/new item ids and links the
 	// generated story to the session (story stage output).
 	SetSessionSelection(ctx context.Context, sessionID, storyID string, targets, new []string) error

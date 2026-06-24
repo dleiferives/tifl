@@ -115,6 +115,46 @@ func (r *FakeRepository) UpdateSessionStatus(_ context.Context, sessionID string
 	return nil
 }
 
+func (r *FakeRepository) SetSessionTopic(_ context.Context, sessionID, topic string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s, ok := r.sessions[sessionID]
+	if !ok {
+		return ErrNotFound
+	}
+	s.Topic = topic
+	r.sessions[sessionID] = cloneSession(s)
+	return nil
+}
+
+func (r *FakeRepository) RecentSessionTopics(_ context.Context, userID, language string, limit int) ([]string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if limit <= 0 {
+		return nil, nil
+	}
+	var sessions []domain.Session
+	for _, s := range r.sessions {
+		if s.UserID == userID && s.Language == language && s.Topic != "" {
+			sessions = append(sessions, s)
+		}
+	}
+	sort.Slice(sessions, func(i, j int) bool {
+		if sessions[i].CreatedAt != sessions[j].CreatedAt {
+			return sessions[i].CreatedAt > sessions[j].CreatedAt
+		}
+		return sessions[i].SessionID > sessions[j].SessionID
+	})
+	var out []string
+	for _, s := range sessions {
+		if len(out) >= limit {
+			break
+		}
+		out = append(out, s.Topic)
+	}
+	return out, nil
+}
+
 func (r *FakeRepository) SetSessionSelection(_ context.Context, sessionID, storyID string, targets, new []string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
