@@ -722,6 +722,11 @@ export interface components {
             status?: "pending" | "in_progress" | "complete" | "failed" | "generating" | "ready" | "reading";
             /** @description present on stage=done */
             session_id?: string;
+            /**
+             * @description present on stage=done; whether the session produced a story (load via /stories/{id}) or a phrase set (load via /sessions/{id}/content)
+             * @enum {string}
+             */
+            content_type?: "story" | "phrase_set";
             /** @description present on stage=done once a story has been persisted */
             story_id?: string;
             /** @description approx upstream tokens/sec */

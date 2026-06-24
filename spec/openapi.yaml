@@ -1095,6 +1095,12 @@ components:
         session_id:
           type: string
           description: "present on stage=done"
+        content_type:
+          type: string
+          enum: [story, phrase_set]
+          description: >
+            present on stage=done; whether the session produced a story (load via
+            /stories/{id}) or a phrase set (load via /sessions/{id}/content)
         story_id:
           type: string
           description: "present on stage=done once a story has been persisted"

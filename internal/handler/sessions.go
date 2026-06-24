@@ -77,6 +77,7 @@ type generationEventDTO struct {
 	Stage        string           `json:"stage"`
 	Status       string           `json:"status,omitempty"`
 	SessionID    string           `json:"session_id,omitempty"`
+	ContentType  string           `json:"content_type,omitempty"`
 	StoryID      *string          `json:"story_id,omitempty"`
 	TokenRate    int              `json:"token_rate,omitempty"`
 	ErrorCode    string           `json:"error_code,omitempty"`
@@ -548,6 +549,7 @@ func (h *Handler) terminalGenerationEvent(r *http.Request, sessionID, fallbackSt
 	}
 	dto := toSessionDetailDTO(detail)
 	out.Status = dto.Status
+	out.ContentType = dto.ContentType
 	out.StoryID = dto.StoryID
 	out.Tasks = &dto.Tasks
 	out.StageSummary = &dto.StageSummary
