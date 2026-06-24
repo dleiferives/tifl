@@ -27,6 +27,7 @@ import (
 	"github.com/dleiferives/tifl/internal/llm"
 	"github.com/dleiferives/tifl/internal/predictor"
 	"github.com/dleiferives/tifl/internal/selector"
+	"github.com/dleiferives/tifl/internal/skills"
 	"github.com/dleiferives/tifl/internal/story"
 	"github.com/dleiferives/tifl/internal/tasks"
 )
@@ -90,11 +91,12 @@ func main() {
 			llm.WithRecorder(repo),
 		)
 		pipeline := story.New(story.Deps{
-			Repo:     repo,
-			Selector: selector.NewDBSelector(repo, predictor.DefaultConfig()),
-			Client:   client,
-			Langs:    langRegistry,
-			Tasks:    taskRegistry,
+			Repo:             repo,
+			Selector:         selector.NewDBSelector(repo, predictor.DefaultConfig()),
+			Client:           client,
+			Langs:            langRegistry,
+			Tasks:            taskRegistry,
+			SkillConstraints: skills.NewConstraintBuilder(repo, langRegistry),
 		}, story.Config{})
 		broker = story.NewBroker(pipeline)
 	} else {
