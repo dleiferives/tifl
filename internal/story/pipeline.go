@@ -47,11 +47,18 @@ func DefaultConfig() Config {
 // registries so the pipeline is fully testable with a FakeClient and a fake
 // repository — no network, no real database.
 type Deps struct {
-	Repo     db.Repository
-	Selector selector.Selector
-	Client   llm.Client
-	Langs    *lang.Registry
-	Tasks    *tasks.Registry
+	Repo             db.Repository
+	Selector         selector.Selector
+	Client           llm.Client
+	Langs            *lang.Registry
+	Tasks            *tasks.Registry
+	SkillConstraints SkillConstraintProvider
+}
+
+// SkillConstraintProvider supplies optional story-generation constraints derived
+// from persisted skill XP. A nil result preserves level-label fallback.
+type SkillConstraintProvider interface {
+	BuildSkillConstraints(ctx context.Context, userID, language string) (*domain.SkillConstraints, error)
 }
 
 // Pipeline runs the staged, checkpointed generation flow every session goes
@@ -251,6 +258,13 @@ func (p *Pipeline) runSelection(ctx context.Context, sess domain.Session) (domai
 		Language: sess.Language,
 		Level:    sess.Level,
 		Selected: items,
+	}
+	if p.deps.SkillConstraints != nil {
+		skills, err := p.deps.SkillConstraints.BuildSkillConstraints(ctx, sess.UserID, sess.Language)
+		if err != nil {
+			return domain.LearnerCtx{}, err
+		}
+		lc.Skills = skills
 	}
 	switch sess.SessionType {
 	case domain.SessionTopicGuided:

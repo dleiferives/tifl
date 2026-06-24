@@ -114,6 +114,10 @@ type harness struct {
 }
 
 func newHarness(t *testing.T, ctrl *clientControl, taskTypes []string) *harness {
+	return newHarnessWithConstraints(t, ctrl, taskTypes, nil)
+}
+
+func newHarnessWithConstraints(t *testing.T, ctrl *clientControl, taskTypes []string, constraints story.SkillConstraintProvider) *harness {
 	t.Helper()
 	ctx := context.Background()
 	repo := db.NewFake()
@@ -138,14 +142,24 @@ func newHarness(t *testing.T, ctrl *clientControl, taskTypes []string) *harness 
 	client := ctrl.client()
 
 	p := story.New(story.Deps{
-		Repo:     repo,
-		Selector: fixedSelector{selected},
-		Client:   client,
-		Langs:    langs,
-		Tasks:    tasks.DefaultRegistry(),
+		Repo:             repo,
+		Selector:         fixedSelector{selected},
+		Client:           client,
+		Langs:            langs,
+		Tasks:            tasks.DefaultRegistry(),
+		SkillConstraints: constraints,
 	}, story.Config{})
 
 	return &harness{repo: repo, pipeline: p, client: client, userID: user.UserID, targets: []string{t1, t2}}
+}
+
+type fixedSkillConstraints struct {
+	value *domain.SkillConstraints
+	err   error
+}
+
+func (f fixedSkillConstraints) BuildSkillConstraints(context.Context, string, string) (*domain.SkillConstraints, error) {
+	return f.value, f.err
 }
 
 func (h *harness) newSession(t *testing.T, level string) string {
@@ -242,6 +256,37 @@ func TestPipeline_HappyPath(t *testing.T) {
 	}
 	if !sawRate || !sawStoryComplete {
 		t.Fatalf("missing story progress events: rate=%v complete=%v", sawRate, sawStoryComplete)
+	}
+}
+
+func TestPipeline_WiresSkillConstraintsIntoStoryPrompt(t *testing.T) {
+	ctx := context.Background()
+	h := newHarnessWithConstraints(t, &clientControl{stories: []string{"a a a a"}}, []string{tasks.TypeComprehensionMC}, fixedSkillConstraints{
+		value: &domain.SkillConstraints{
+			Allowed:    []string{"nominative case"},
+			Introduce:  []string{"accusative case"},
+			Avoid:      []string{"genitive case"},
+			VocabRange: "top 500 lemmas",
+		},
+	})
+	sessID := h.newSession(t, "beginner")
+
+	must(t, h.pipeline.Generate(ctx, sessID, nil))
+
+	var storyPrompt string
+	for _, call := range h.client.Calls {
+		if call.Kind == "story_generator" {
+			storyPrompt = call.Req.User
+			break
+		}
+	}
+	for _, want := range []string{"Complexity constraints:", "nominative case", "accusative case", "genitive case", "top 500 lemmas"} {
+		if !strings.Contains(storyPrompt, want) {
+			t.Fatalf("story prompt missing %q:\n%s", want, storyPrompt)
+		}
+	}
+	if strings.Contains(storyPrompt, "Write at the beginner level") {
+		t.Fatalf("story prompt should use skill constraints instead of level fallback:\n%s", storyPrompt)
 	}
 }
 
