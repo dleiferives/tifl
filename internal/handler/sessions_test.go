@@ -216,6 +216,75 @@ func TestGenerateSession(t *testing.T) {
 	}
 }
 
+func TestGenerateTopicGuidedPersistsSessionTypeAndTopic(t *testing.T) {
+	srv, repo := newServer(t, true)
+
+	resp, err := http.Post(srv.URL+"/api/v1/sessions/generate", "application/json",
+		strings.NewReader(`{"language":"xx","level":"beginner","session_type":"topic_guided","topic":"  a seaside market  "}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("want 202, got %d", resp.StatusCode)
+	}
+	var out struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := repo.GetSession(context.Background(), out.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.SessionType != domain.SessionTopicGuided {
+		t.Fatalf("session_type = %q, want topic_guided", sess.SessionType)
+	}
+	if sess.Topic != "a seaside market" {
+		t.Fatalf("topic = %q, want trimmed topic", sess.Topic)
+	}
+}
+
+func TestGenerateExpressionGuidedPersistsInputs(t *testing.T) {
+	srv, repo := newServer(t, true)
+
+	resp, err := http.Post(srv.URL+"/api/v1/sessions/generate", "application/json",
+		strings.NewReader(`{"language":"xx","level":"beginner","session_type":"expression_guided","expression_output":"phrases","user_expressions":[" invite a friend "," ","order coffee"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("want 202, got %d", resp.StatusCode)
+	}
+	var out struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := repo.GetSession(context.Background(), out.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.SessionType != domain.SessionExpressionGuided {
+		t.Fatalf("session_type = %q, want expression_guided", sess.SessionType)
+	}
+	if sess.ExpressionOutput != domain.ExpressionOutputPhrases {
+		t.Fatalf("expression_output = %q, want phrases", sess.ExpressionOutput)
+	}
+	want := []string{"invite a friend", "order coffee"}
+	if len(sess.UserExpressions) != len(want) {
+		t.Fatalf("user_expressions = %+v, want %+v", sess.UserExpressions, want)
+	}
+	for i := range want {
+		if sess.UserExpressions[i] != want[i] {
+			t.Fatalf("user_expressions = %+v, want %+v", sess.UserExpressions, want)
+		}
+	}
+}
+
 func TestGenerateSessionDefaultsToDerivedLevel(t *testing.T) {
 	srv, repo := newLevelRuleServer(t)
 	ctx := context.Background()
@@ -620,6 +689,19 @@ func TestGenerateTopicGuidedRequiresTopic(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("want 400 for topic-guided with empty topic, got %d", resp.StatusCode)
+	}
+}
+
+func TestGenerateUnknownSessionTypeReturns400(t *testing.T) {
+	srv, _ := newServer(t, true)
+	resp, err := http.Post(srv.URL+"/api/v1/sessions/generate", "application/json",
+		strings.NewReader(`{"language":"xx","level":"beginner","session_type":"surprise"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("want 400 for unknown session_type, got %d", resp.StatusCode)
 	}
 }
 

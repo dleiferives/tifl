@@ -214,7 +214,11 @@ func (h *Handler) generateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionType := sessionTypeOrDefault(req.SessionType)
+	sessionType, err := parseSessionType(req.SessionType)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
 	topic := strings.TrimSpace(req.Topic)
 	// Topic-guided sessions need a topic to scope-check; an empty one is a client
 	// error, not a silent fall-through to a system-driven story.
@@ -706,13 +710,19 @@ func toPhraseSetDTO(ps domain.PhraseSet) *phraseSetDTO {
 	return &phraseSetDTO{SessionID: ps.SessionID, Language: ps.Language, Items: items}
 }
 
-func sessionTypeOrDefault(t string) domain.SessionType {
+func parseSessionType(t string) (domain.SessionType, error) {
+	t = strings.TrimSpace(t)
+	if t == "" {
+		return domain.SessionSystem, nil
+	}
 	switch domain.SessionType(t) {
+	case domain.SessionSystem:
+		return domain.SessionSystem, nil
 	case domain.SessionTopicGuided:
-		return domain.SessionTopicGuided
+		return domain.SessionTopicGuided, nil
 	case domain.SessionExpressionGuided:
-		return domain.SessionExpressionGuided
+		return domain.SessionExpressionGuided, nil
 	default:
-		return domain.SessionSystem
+		return "", fmt.Errorf("unsupported session_type %q", t)
 	}
 }
