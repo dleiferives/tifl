@@ -115,6 +115,46 @@ func (r *FakeRepository) UpdateSessionStatus(_ context.Context, sessionID string
 	return nil
 }
 
+func (r *FakeRepository) SetSessionTopic(_ context.Context, sessionID, topic string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s, ok := r.sessions[sessionID]
+	if !ok {
+		return ErrNotFound
+	}
+	s.Topic = topic
+	r.sessions[sessionID] = cloneSession(s)
+	return nil
+}
+
+func (r *FakeRepository) RecentSessionTopics(_ context.Context, userID, language string, limit int) ([]string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if limit <= 0 {
+		return nil, nil
+	}
+	var sessions []domain.Session
+	for _, s := range r.sessions {
+		if s.UserID == userID && s.Language == language && s.Topic != "" {
+			sessions = append(sessions, s)
+		}
+	}
+	sort.Slice(sessions, func(i, j int) bool {
+		if sessions[i].CreatedAt != sessions[j].CreatedAt {
+			return sessions[i].CreatedAt > sessions[j].CreatedAt
+		}
+		return sessions[i].SessionID > sessions[j].SessionID
+	})
+	var out []string
+	for _, s := range sessions {
+		if len(out) >= limit {
+			break
+		}
+		out = append(out, s.Topic)
+	}
+	return out, nil
+}
+
 func (r *FakeRepository) SetSessionSelection(_ context.Context, sessionID, storyID string, targets, new []string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -240,6 +280,29 @@ func (r *FakeRepository) ListStoryGlossary(_ context.Context, storyID string) ([
 	return out, nil
 }
 
+func (r *FakeRepository) CreatePhraseSet(_ context.Context, ps domain.PhraseSet) (domain.PhraseSet, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.sessions[ps.SessionID]; !ok {
+		return domain.PhraseSet{}, errFakeFK("session_phrase_sets.session_id")
+	}
+	if ps.GeneratedAt == 0 {
+		ps.GeneratedAt = float64(time.Now().Unix())
+	}
+	r.phraseSets[ps.SessionID] = clonePhraseSet(ps) // upsert, like ON CONFLICT
+	return ps, nil
+}
+
+func (r *FakeRepository) GetPhraseSet(_ context.Context, sessionID string) (domain.PhraseSet, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ps, ok := r.phraseSets[sessionID]
+	if !ok {
+		return domain.PhraseSet{}, ErrNotFound
+	}
+	return clonePhraseSet(ps), nil
+}
+
 func (r *FakeRepository) CreateTask(_ context.Context, t domain.Task, targets []string) (domain.Task, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -338,6 +401,17 @@ func cloneStory(s domain.Story) domain.Story {
 	s.EstimatedCoverage = cloneFloat(s.EstimatedCoverage)
 	s.SessionID = cloneStr(s.SessionID)
 	return s
+}
+
+func clonePhraseSet(ps domain.PhraseSet) domain.PhraseSet {
+	items := make([]domain.PhraseItem, len(ps.Items))
+	for i, it := range ps.Items {
+		it.TargetItemIDs = append([]string(nil), it.TargetItemIDs...)
+		it.Annotations = append([]domain.PhraseAnnotation(nil), it.Annotations...)
+		items[i] = it
+	}
+	ps.Items = items
+	return ps
 }
 
 func cloneTask(t domain.Task) domain.Task {

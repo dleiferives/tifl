@@ -91,6 +91,70 @@ func (r AssessmentResult) Validate() error {
 	}
 }
 
+// ScopeCheckResult is the topic-guided scope check's output: whether a requested
+// topic can produce comprehensible input at the learner's level, with a
+// human-readable reason and an optional rephrasing the client can offer. Viable
+// is a pointer so a reply that omits it is rejected rather than silently read as
+// false. See context/session-types.md ("Scope check").
+type ScopeCheckResult struct {
+	Viable         *bool  `json:"viable"`
+	Reason         string `json:"reason"`
+	SuggestedTopic string `json:"suggested_topic"`
+}
+
+// Validate enforces that the verdict is present and that a rejection carries a
+// reason the user can act on.
+func (r ScopeCheckResult) Validate() error {
+	if r.Viable == nil {
+		return errors.New("scope check missing 'viable'")
+	}
+	if !*r.Viable && strings.TrimSpace(r.Reason) == "" {
+		return errors.New("rejected scope check must include a reason")
+	}
+	return nil
+}
+
+// IsViable reports the verdict, treating an absent value as not viable.
+func (r ScopeCheckResult) IsViable() bool { return r.Viable != nil && *r.Viable }
+
+// PhraseSetResult is the phrase generator's output for an expression-guided
+// phrase session: a curated list of target-language phrases with annotations
+// that teach the learner's requested expressions. The pipeline assigns phrase
+// ids and item attribution; this is purely the model's content. See
+// context/session-types.md ("Phrase set").
+type PhraseSetResult struct {
+	Phrases []PhraseResult `json:"phrases"`
+}
+
+// PhraseResult is one generated phrase plus its learner-facing annotations.
+type PhraseResult struct {
+	TargetText  string                   `json:"target_text"`
+	Gloss       string                   `json:"gloss"`
+	Notes       string                   `json:"notes"`
+	Annotations []PhraseAnnotationResult `json:"annotations"`
+}
+
+// PhraseAnnotationResult explains a construction or vocabulary point in a phrase.
+type PhraseAnnotationResult struct {
+	Kind  string `json:"kind"`
+	Label string `json:"label"`
+	Note  string `json:"note"`
+}
+
+// Validate enforces that a phrase set has at least one phrase and that every
+// phrase carries target-language text — the minimum a usable set must have.
+func (r PhraseSetResult) Validate() error {
+	if len(r.Phrases) == 0 {
+		return errors.New("phrase set is empty")
+	}
+	for _, p := range r.Phrases {
+		if strings.TrimSpace(p.TargetText) == "" {
+			return errors.New("phrase missing target_text")
+		}
+	}
+	return nil
+}
+
 const (
 	SkillTierDecisionPromote = "promote"
 	SkillTierDecisionHold    = "hold"

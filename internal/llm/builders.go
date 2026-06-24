@@ -355,6 +355,104 @@ func (b WordBreakdownBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
 	return LLMRequest{System: sys.String(), User: usr.String(), Temperature: gradeTemperature, MaxTokens: 600, ResponseFormat: "json"}
 }
 
+// ScopeCheckBuilder runs the lightweight topic-guided pre-check: can a
+// comprehensible story on this topic be written at the learner's level, or is it
+// too specialized? It is a cheap gate before the expensive story call, returning
+// a verdict plus a human reason and an optional simpler rephrasing. See
+// context/session-types.md ("Scope check").
+type ScopeCheckBuilder struct {
+	Topic string
+}
+
+func (ScopeCheckBuilder) Kind() string    { return "scope_check" }
+func (ScopeCheckBuilder) Version() string { return "scope_check/v1" }
+
+func (b ScopeCheckBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
+	var sys strings.Builder
+	fmt.Fprintf(&sys, "You judge whether a %s learning story on a requested topic is viable at the learner's level.\n", ctx.Language)
+	sys.WriteString("A topic is out of scope when it can only be told with vocabulary far beyond the learner ")
+	sys.WriteString("(dense technical, legal, or specialist terms) such that a comprehensible story is not possible.\n")
+	sys.WriteString("Most everyday topics are viable, possibly with a simpler framing. Be generous but honest.\n")
+	sys.WriteString("Respond with a JSON object: ")
+	sys.WriteString(`{"viable": bool, "reason": string, "suggested_topic": string}.`)
+	sys.WriteString("\nreason is a brief, friendly explanation (always set it when not viable). ")
+	sys.WriteString("suggested_topic is an optional simpler rephrasing the learner could try.")
+	sys.WriteString("\nReturn JSON only — no prose, no markdown.")
+
+	var usr strings.Builder
+	if constraints := serializeSkillConstraints(ctx.Skills); constraints != "" {
+		usr.WriteString("Learner can handle:\n")
+		usr.WriteString(constraints)
+	} else {
+		fmt.Fprintf(&usr, "Learner level: %s\n", levelOrDefault(ctx.Level))
+	}
+	fmt.Fprintf(&usr, "Requested topic: %s\n", b.Topic)
+
+	return LLMRequest{
+		System:         sys.String(),
+		User:           usr.String(),
+		Temperature:    gradeTemperature,
+		MaxTokens:      300,
+		ResponseFormat: "json",
+	}
+}
+
+// PhraseSetBuilder produces a curated phrase set for an expression-guided phrase
+// session: target-language phrases that let the learner express the L1 ideas they
+// entered, embedded with the constructions the system wants to teach and
+// annotated so the set is self-documenting. Like the story builder it is bounded
+// by SelectedItems and the learner level; unlike it, the output is a list of
+// phrases, not narrative prose. See context/session-types.md ("Phrase set").
+type PhraseSetBuilder struct {
+	Assets LangAssets
+}
+
+func (PhraseSetBuilder) Kind() string    { return "phrase_generator" }
+func (PhraseSetBuilder) Version() string { return "phrase_set/v1" }
+
+func (b PhraseSetBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
+	var sys strings.Builder
+	fmt.Fprintf(&sys, "You build short %s phrase sets for a learner.\n", ctx.Language)
+	sys.WriteString("Given the L1 ideas the learner wants to express and the items to practise, write a small ")
+	sys.WriteString("set of natural target-language phrases that let them say those things at their level.\n")
+	sys.WriteString("Hard constraints:\n")
+	sys.WriteString("- Draw vocabulary from the provided item lists; introduce new items with supportive context.\n")
+	sys.WriteString("- Each target item should appear in at least one phrase.\n")
+	sys.WriteString("- Annotate each phrase with the constructions or vocabulary it teaches.\n")
+	if note := noteOf(b.Assets); note != "" {
+		fmt.Fprintf(&sys, "- Writing system: %s\n", note)
+	}
+	sys.WriteString("Respond with a JSON object: ")
+	sys.WriteString(`{"phrases": [{"target_text": string, "gloss": string, "notes": string, "annotations": [{"kind": string, "label": string, "note": string}]}]}.`)
+	sys.WriteString("\ngloss is an English translation; annotations explain useful constructions/vocabulary.")
+	sys.WriteString("\nReturn JSON only — no prose, no markdown.")
+
+	var usr strings.Builder
+	if constraints := serializeSkillConstraints(ctx.Skills); constraints != "" {
+		usr.WriteString("Complexity constraints:\n")
+		usr.WriteString(constraints)
+	} else {
+		fmt.Fprintf(&usr, "Write at the %s level.\n", levelOrDefault(ctx.Level))
+	}
+	if g := ctx.Guidance; g != nil && len(g.Expressions) > 0 {
+		usr.WriteString("\nThe learner wants to be able to express:\n")
+		for _, e := range g.Expressions {
+			fmt.Fprintf(&usr, "- %s\n", e)
+		}
+	}
+	writeItemBlock(&usr, "TARGET items (teach these)", ctx.Selected.Targets, formatItemTarget)
+	writeItemBlock(&usr, "BACKGROUND vocabulary (known; use freely)", ctx.Selected.Background, formatItemCompact)
+	writeItemBlock(&usr, "NEW items (introduce with context support)", ctx.Selected.New, formatItemNew)
+
+	return LLMRequest{
+		System:         sys.String(),
+		User:           usr.String(),
+		Temperature:    storyTemperature,
+		MaxTokens:      1200,
+		ResponseFormat: "json",
+	}
+}
+
 // compile-time assertions that every builder satisfies PromptBuilder.
 var (
 	_ PromptBuilder = StoryBuilder{}
@@ -364,4 +462,6 @@ var (
 	_ PromptBuilder = DefinitionBuilder{}
 	_ PromptBuilder = SentenceBreakdownBuilder{}
 	_ PromptBuilder = WordBreakdownBuilder{}
+	_ PromptBuilder = ScopeCheckBuilder{}
+	_ PromptBuilder = PhraseSetBuilder{}
 )

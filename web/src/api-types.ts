@@ -216,6 +216,8 @@ export interface paths {
         /**
          * Start generating a session (story + tasks)
          * @description Creates a session and kicks off the staged generation pipeline asynchronously, returning immediately. If language is omitted, the current profile's active_language is used. If level is omitted, the server derives it from verified skill tiers when the language provides deterministic level rules; otherwise the current profile level is used. Poll progress via /sessions/{id}/events. Returns 503 if no LLM gateway is configured.
+         *
+         *     Topic-guided sessions (session_type=topic_guided) require a non-empty topic (400 otherwise) and run a scope_check stage first: an out-of-scope topic fails generation with error_code GEN_SCOPE_REJECTED and a human-readable error_detail rather than silently producing a system-driven story. System-driven sessions choose a topic automatically.
          */
         post: operations["generateSession"];
         delete?: never;
@@ -236,6 +238,26 @@ export interface paths {
          * @description Returns one tenant-scoped session with the metadata needed to navigate to reader/tasks, retry failed generation, or render a progress screen without subscribing to SSE. Another user's session returns 404.
          */
         get: operations["getSessionDetail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a session's content (story reference or phrase set)
+         * @description Loads whatever a session produced, discriminated by content_type. For a story it returns a reference the client loads through GET /stories/{id} (story content_type); for an expression-guided phrase session it returns the phrase items inline (phrase_set content_type). Phrase sets are not tokenized, so the reader's story endpoints do not apply to them. A story session whose story has not been generated yet returns 404; another user's session returns 404.
+         */
+        get: operations["getSessionContent"];
         put?: never;
         post?: never;
         delete?: never;
@@ -606,6 +628,11 @@ export interface components {
             level: string;
             /** @enum {string} */
             session_type: "system" | "topic_guided" | "expression_guided";
+            /**
+             * @description what the session's content is — a narrative story or a phrase set. Derived from the session shape (expression-guided + expression_output phrases is a phrase set; everything else is a story). Tells the client whether to load /stories/{id} or the phrase set via /sessions/{id}/content.
+             * @enum {string}
+             */
+            content_type: "story" | "phrase_set";
             topic?: string;
             user_expressions?: string[];
             /** @enum {string} */
@@ -647,9 +674,46 @@ export interface components {
             stage_summary: components["schemas"]["StageSummary"];
             stages: components["schemas"]["GenerationStageRecord"][];
         };
+        /** @description A session's content, discriminated by content_type. Exactly one of story or phrase_set is present. */
+        SessionContent: {
+            session_id: string;
+            /** @enum {string} */
+            content_type: "story" | "phrase_set";
+            story?: components["schemas"]["StoryContentRef"];
+            phrase_set?: components["schemas"]["PhraseSet"];
+        };
+        /** @description Reference to a story session's story; load it via GET /stories/{id}. */
+        StoryContentRef: {
+            story_id: string;
+            language: string;
+        };
+        /** @description The content of an expression-guided phrase session. */
+        PhraseSet: {
+            session_id: string;
+            language: string;
+            items: components["schemas"]["PhraseItem"][];
+        };
+        /** @description One phrase plus the annotations that explain what it teaches. */
+        PhraseItem: {
+            phrase_id: string;
+            /** @description the target-language phrase */
+            target_text: string;
+            /** @description English translation */
+            gloss?: string;
+            notes?: string;
+            /** @description knowledge item ids this phrase practises */
+            target_item_ids?: string[];
+            annotations?: components["schemas"]["PhraseAnnotation"][];
+        };
+        PhraseAnnotation: {
+            /** @description e.g. construction | vocabulary */
+            kind: string;
+            label?: string;
+            note?: string;
+        };
         /** @description One SSE progress message (the JSON in each data line). Non-terminal events report a pipeline stage status. The terminal `stage: done` event reports the final session status plus enough persisted state for the client to navigate to reader/tasks or show retry/error UI without guessing. */
         GenerationEvent: {
-            /** @description selection|story_generation|tokenization|task_<type>|done */
+            /** @description scope_check|selection|story_generation|phrase_generation|tokenization|task_<type>|done */
             stage: string;
             /**
              * @description stage status for progress events; final session status for stage=done
@@ -658,12 +722,19 @@ export interface components {
             status?: "pending" | "in_progress" | "complete" | "failed" | "generating" | "ready" | "reading";
             /** @description present on stage=done */
             session_id?: string;
+            /**
+             * @description present on stage=done; whether the session produced a story (load via /stories/{id}) or a phrase set (load via /sessions/{id}/content)
+             * @enum {string}
+             */
+            content_type?: "story" | "phrase_set";
             /** @description present on stage=done once a story has been persisted */
             story_id?: string;
             /** @description approx upstream tokens/sec */
             token_rate?: number;
-            /** @description stable code on failed progress events and failed terminal events */
+            /** @description stable code on failed progress events and failed terminal events; GEN_SCOPE_REJECTED means a topic-guided topic was out of scope for the learner level */
             error_code?: string;
+            /** @description human-readable failure reason on failed terminal events, e.g. why a topic was rejected and an optional simpler rephrasing to try */
+            error_detail?: string;
             /** @description first failed stage, present on failed terminal events */
             failed_stage?: string;
             tasks?: components["schemas"]["TaskProgress"];
@@ -1215,6 +1286,31 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SessionDetail"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getSessionContent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session content */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionContent"];
                 };
             };
             401: components["responses"]["Unauthorized"];

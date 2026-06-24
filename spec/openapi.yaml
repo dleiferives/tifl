@@ -290,6 +290,13 @@ paths:
         deterministic level rules; otherwise the current profile level is used.
         Poll progress via /sessions/{id}/events. Returns 503 if no LLM gateway
         is configured.
+
+
+        Topic-guided sessions (session_type=topic_guided) require a non-empty
+        topic (400 otherwise) and run a scope_check stage first: an out-of-scope
+        topic fails generation with error_code GEN_SCOPE_REJECTED and a
+        human-readable error_detail rather than silently producing a
+        system-driven story. System-driven sessions choose a topic automatically.
       operationId: generateSession
       requestBody:
         required: true
@@ -329,6 +336,33 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SessionDetail"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /sessions/{id}/content:
+    get:
+      summary: Get a session's content (story reference or phrase set)
+      description: >
+        Loads whatever a session produced, discriminated by content_type. For a
+        story it returns a reference the client loads through GET /stories/{id}
+        (story content_type); for an expression-guided phrase session it returns
+        the phrase items inline (phrase_set content_type). Phrase sets are not
+        tokenized, so the reader's story endpoints do not apply to them. A story
+        session whose story has not been generated yet returns 404; another user's
+        session returns 404.
+      operationId: getSessionContent
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      responses:
+        "200":
+          description: Session content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionContent"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -903,6 +937,14 @@ components:
         session_type:
           type: string
           enum: [system, topic_guided, expression_guided]
+        content_type:
+          type: string
+          enum: [story, phrase_set]
+          description: >
+            what the session's content is — a narrative story or a phrase set.
+            Derived from the session shape (expression-guided + expression_output
+            phrases is a phrase set; everything else is a story). Tells the client
+            whether to load /stories/{id} or the phrase set via /sessions/{id}/content.
         topic: { type: string }
         user_expressions:
           type: array
@@ -925,6 +967,7 @@ components:
         - language
         - level
         - session_type
+        - content_type
         - status
         - created_at
         - selected_counts
@@ -976,6 +1019,63 @@ components:
               items:
                 $ref: "#/components/schemas/GenerationStageRecord"
           required: [stage_summary, stages]
+    SessionContent:
+      type: object
+      description: >
+        A session's content, discriminated by content_type. Exactly one of story
+        or phrase_set is present.
+      properties:
+        session_id: { type: string }
+        content_type:
+          type: string
+          enum: [story, phrase_set]
+        story:
+          $ref: "#/components/schemas/StoryContentRef"
+        phrase_set:
+          $ref: "#/components/schemas/PhraseSet"
+      required: [session_id, content_type]
+    StoryContentRef:
+      type: object
+      description: Reference to a story session's story; load it via GET /stories/{id}.
+      properties:
+        story_id: { type: string }
+        language: { type: string }
+      required: [story_id, language]
+    PhraseSet:
+      type: object
+      description: The content of an expression-guided phrase session.
+      properties:
+        session_id: { type: string }
+        language: { type: string }
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PhraseItem"
+      required: [session_id, language, items]
+    PhraseItem:
+      type: object
+      description: One phrase plus the annotations that explain what it teaches.
+      properties:
+        phrase_id: { type: string }
+        target_text: { type: string, description: "the target-language phrase" }
+        gloss: { type: string, description: "English translation" }
+        notes: { type: string }
+        target_item_ids:
+          type: array
+          items: { type: string }
+          description: "knowledge item ids this phrase practises"
+        annotations:
+          type: array
+          items:
+            $ref: "#/components/schemas/PhraseAnnotation"
+      required: [phrase_id, target_text]
+    PhraseAnnotation:
+      type: object
+      properties:
+        kind: { type: string, description: "e.g. construction | vocabulary" }
+        label: { type: string }
+        note: { type: string }
+      required: [kind]
     GenerationEvent:
       type: object
       description: >
@@ -987,7 +1087,7 @@ components:
       properties:
         stage:
           type: string
-          description: "selection|story_generation|tokenization|task_<type>|done"
+          description: "scope_check|selection|story_generation|phrase_generation|tokenization|task_<type>|done"
         status:
           type: string
           description: "stage status for progress events; final session status for stage=done"
@@ -995,13 +1095,27 @@ components:
         session_id:
           type: string
           description: "present on stage=done"
+        content_type:
+          type: string
+          enum: [story, phrase_set]
+          description: >
+            present on stage=done; whether the session produced a story (load via
+            /stories/{id}) or a phrase set (load via /sessions/{id}/content)
         story_id:
           type: string
           description: "present on stage=done once a story has been persisted"
         token_rate: { type: integer, description: "approx upstream tokens/sec" }
         error_code:
           type: string
-          description: "stable code on failed progress events and failed terminal events"
+          description: >
+            stable code on failed progress events and failed terminal events;
+            GEN_SCOPE_REJECTED means a topic-guided topic was out of scope for the
+            learner level
+        error_detail:
+          type: string
+          description: >
+            human-readable failure reason on failed terminal events, e.g. why a
+            topic was rejected and an optional simpler rephrasing to try
         failed_stage:
           type: string
           description: "first failed stage, present on failed terminal events"

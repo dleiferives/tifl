@@ -3,28 +3,39 @@ package story
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
+	"github.com/dleiferives/tifl/internal/id"
 	"github.com/dleiferives/tifl/internal/lang"
 	"github.com/dleiferives/tifl/internal/llm"
 	"github.com/dleiferives/tifl/internal/selector"
 	"github.com/dleiferives/tifl/internal/tasks"
+	"github.com/dleiferives/tifl/internal/topic"
 )
+
+// topicHistoryWindow is how many recent session topics the system-driven chooser
+// excludes to avoid repeating a setting. It matches the "last 5 sessions" recent
+// history convention in context/prompting-system.md.
+const topicHistoryWindow = 5
 
 // Stable, admin-inspectable error codes written to session_generation_stages and
 // surfaced to the client in SSE failure events. They identify the stage and the
 // failure class, not the underlying message (that goes in error_detail). See
 // context/session-types.md ("Error handling").
 const (
-	ErrCodeSelection    = "GEN_SELECT_001"     // selection layer failed (no LLM stage)
-	ErrCodeStory        = "GEN_STORY_001"      // story generation LLM/parse failure
-	ErrCodeCoverage     = "GEN_STORY_COVERAGE" // coverage below target after retries
-	ErrCodeTokenize     = "GEN_TOKENIZE_001"   // tokenization / persistence failure
-	ErrCodeTaskGenerate = "GEN_TASK_001"       // a task type's generation failed
-	ErrCodePersist      = "GEN_PERSIST_001"    // a non-LLM persistence step failed
+	ErrCodeSelection     = "GEN_SELECT_001"     // selection layer failed (no LLM stage)
+	ErrCodeScopeCheck    = "GEN_SCOPE_001"      // scope-check LLM/parse failure
+	ErrCodeScopeRejected = "GEN_SCOPE_REJECTED" // topic out of scope for the learner level
+	ErrCodeStory         = "GEN_STORY_001"      // story generation LLM/parse failure
+	ErrCodePhrase        = "GEN_PHRASE_001"     // phrase-set generation LLM/parse failure
+	ErrCodeCoverage      = "GEN_STORY_COVERAGE" // coverage below target after retries
+	ErrCodeTokenize      = "GEN_TOKENIZE_001"   // tokenization / persistence failure
+	ErrCodeTaskGenerate  = "GEN_TASK_001"       // a task type's generation failed
+	ErrCodePersist       = "GEN_PERSIST_001"    // a non-LLM persistence step failed
 )
 
 // Config tunes the pipeline. The defaults encode the 90% comprehensible-input
@@ -123,6 +134,30 @@ func (p *Pipeline) Generate(ctx context.Context, sessionID string, emit emitter)
 		return err
 	}
 
+	// Stage 0 — scope check (topic-guided only). An out-of-scope topic is rejected
+	// here with a human reason rather than silently downgraded to a system story,
+	// so the expensive story call never runs. See context/session-types.md.
+	if sess.SessionType == domain.SessionTopicGuided {
+		if err := p.runScopeCheck(ctx, sess, emit); err != nil {
+			p.markSession(ctx, sess.SessionID, domain.StatusFailed)
+			return err
+		}
+	}
+
+	// System-driven sessions arrive with no topic: the hard-system chooser picks
+	// one (avoiding recent repeats), persists it for reproducibility/inspection,
+	// and feeds it into selection biasing and the story prompt. See
+	// context/session-types.md ("System-Driven").
+	if sess.SessionType == domain.SessionSystem && sess.Topic == "" {
+		if chosen := p.chooseTopic(ctx, sess); chosen != "" {
+			if err := p.deps.Repo.SetSessionTopic(ctx, sess.SessionID, chosen); err != nil {
+				p.markSession(ctx, sess.SessionID, domain.StatusFailed)
+				return fail(ErrCodePersist, err)
+			}
+			sess.Topic = chosen
+		}
+	}
+
 	// Stage 1 — selection (no LLM). Not a persisted checkpoint; it re-runs as part
 	// of a story-stage retry. Failure here fails the whole generation.
 	emit.emit(Event{Stage: "selection", Status: string(domain.StageInProgress)})
@@ -134,17 +169,19 @@ func (p *Pipeline) Generate(ctx context.Context, sessionID string, emit emitter)
 	}
 	emit.emit(Event{Stage: "selection", Status: string(domain.StageComplete)})
 
-	// Stages 2+3 — story generation (with coverage retry) and tokenization.
-	story, err := p.runStory(ctx, sess, lc, emit)
+	// Stages 2+3 — content generation: a story (with coverage retry) and its
+	// tokenization, or a phrase set, depending on the session's ContentType. Both
+	// yield the source text task generation consumes.
+	content, err := p.runContent(ctx, sess, lc, emit)
 	if err != nil {
 		p.markSession(ctx, sess.SessionID, domain.StatusFailed)
 		return err
 	}
 
 	// Stage 4 — task generation, one independent checkpoint per task type.
-	completed := p.runTasks(ctx, sess, lc, story, emit)
+	completed := p.runTasks(ctx, sess, lc, content.sourceText, emit)
 
-	// Session becomes ready once the story plus at least one task type completed.
+	// Session becomes ready once the content plus at least one task type completed.
 	final := domain.StatusReady
 	if completed == 0 {
 		final = domain.StatusFailed
@@ -152,12 +189,34 @@ func (p *Pipeline) Generate(ctx context.Context, sessionID string, emit emitter)
 	return p.markSession(ctx, sess.SessionID, final)
 }
 
+// generatedContent is the output of the content stage that task generation needs:
+// the text the task builders read (story prose or the phrase set's phrases joined
+// together) and the story id when the content was a story.
+type generatedContent struct {
+	storyID    *string
+	sourceText string
+}
+
+// runContent dispatches to the right content generator for the session. A phrase
+// set and a story are mutually exclusive (one ContentType per session); both
+// return the source text the task stage consumes.
+func (p *Pipeline) runContent(ctx context.Context, sess domain.Session, lc domain.LearnerCtx, emit emitter) (generatedContent, error) {
+	if sess.ContentType() == domain.ContentPhraseSet {
+		return p.runPhraseSet(ctx, sess, lc, emit)
+	}
+	story, err := p.runStory(ctx, sess, lc, emit)
+	if err != nil {
+		return generatedContent{}, err
+	}
+	return generatedContent{storyID: &story.StoryID, sourceText: story.Text}, nil
+}
+
 // Retry resumes a failed generation from the failed stage rather than the
 // beginning, inspecting session_generation_stages to decide where to continue
-// (context/session-types.md "Error handling"). If the story stage never
-// completed, the whole pipeline re-runs (selection + story + tokenization +
-// tasks). If the story is persisted but some task types failed, only those task
-// stages are regenerated — the expensive story call is not repeated.
+// (context/session-types.md "Error handling"). If the content stage never
+// completed, the whole pipeline re-runs. If the content (story or phrase set) is
+// persisted but some task types failed, only those task stages are regenerated —
+// the expensive content call is not repeated.
 func (p *Pipeline) Retry(ctx context.Context, sessionID string, emit emitter) error {
 	sess, err := p.deps.Repo.GetSession(ctx, sessionID)
 	if err != nil {
@@ -166,18 +225,12 @@ func (p *Pipeline) Retry(ctx context.Context, sessionID string, emit emitter) er
 	ctx = llm.WithCallMeta(ctx, llm.CallMeta{SessionID: sess.SessionID, UserID: sess.UserID})
 
 	stages := p.stageIndex(ctx, sessionID)
-	storyDone := sess.StoryID != nil &&
-		stages[domain.StageStoryGeneration].Status == domain.StageComplete &&
-		stages[domain.StageTokenization].Status == domain.StageComplete
-	if !storyDone {
+	sourceText, contentDone := p.completedContent(ctx, sess, stages)
+	if !contentDone {
 		return p.Generate(ctx, sessionID, emit)
 	}
 
-	// Story is intact: re-run only the task-type stages that did not complete.
-	story, err := p.deps.Repo.GetStory(ctx, *sess.StoryID)
-	if err != nil {
-		return err
-	}
+	// Content is intact: re-run only the task-type stages that did not complete.
 	lc, err := p.rebuildTaskCtx(ctx, sess)
 	if err != nil {
 		p.markSession(ctx, sessionID, domain.StatusFailed)
@@ -192,7 +245,7 @@ func (p *Pipeline) Retry(ctx context.Context, sessionID string, emit emitter) er
 	for _, spec := range specs {
 		st := stages[domain.StageForTask(spec.TaskTypeID)]
 		if st.Status != domain.StageComplete {
-			_ = p.runTaskType(ctx, sess, lc, story, spec, emit)
+			_ = p.runTaskType(ctx, sess, lc, sourceText, spec, emit)
 		}
 	}
 
@@ -231,6 +284,36 @@ func (p *Pipeline) rebuildTaskCtx(ctx context.Context, sess domain.Session) (dom
 	}, nil
 }
 
+// completedContent reports whether a session's content stage already finished
+// and, if so, the source text task generation should consume on retry. For a
+// story that is the persisted story text (requires both story_generation and
+// tokenization complete); for a phrase set it is the persisted phrases joined
+// together (requires phrase_generation complete). When content is not done it
+// returns ("", false) and the caller re-runs the whole pipeline.
+func (p *Pipeline) completedContent(ctx context.Context, sess domain.Session, stages map[string]domain.GenerationStage) (string, bool) {
+	if sess.ContentType() == domain.ContentPhraseSet {
+		if stages[domain.StagePhraseGeneration].Status != domain.StageComplete {
+			return "", false
+		}
+		ps, err := p.deps.Repo.GetPhraseSet(ctx, sess.SessionID)
+		if err != nil {
+			return "", false
+		}
+		return joinPhrases(ps.Items), true
+	}
+	storyDone := sess.StoryID != nil &&
+		stages[domain.StageStoryGeneration].Status == domain.StageComplete &&
+		stages[domain.StageTokenization].Status == domain.StageComplete
+	if !storyDone {
+		return "", false
+	}
+	story, err := p.deps.Repo.GetStory(ctx, *sess.StoryID)
+	if err != nil {
+		return "", false
+	}
+	return story.Text, true
+}
+
 // stageIndex returns the session's stages keyed by stage name for quick lookup.
 func (p *Pipeline) stageIndex(ctx context.Context, sessionID string) map[string]domain.GenerationStage {
 	all, _ := p.deps.Repo.ListStages(ctx, sessionID)
@@ -239,6 +322,50 @@ func (p *Pipeline) stageIndex(ctx context.Context, sessionID string) map[string]
 		idx[s.Stage] = s
 	}
 	return idx
+}
+
+// runScopeCheck is the topic-guided pre-flight, persisted as the scope_check
+// stage so SSE progress, retry, and admin inspection are consistent. A viable
+// topic completes the stage and generation proceeds; an out-of-scope topic fails
+// the stage with ErrCodeScopeRejected and the human-readable reason in
+// error_detail (the client offers a rephrase and creates a new session). An
+// LLM/parse failure fails with ErrCodeScopeCheck and is retryable. See
+// context/session-types.md ("Scope check").
+func (p *Pipeline) runScopeCheck(ctx context.Context, sess domain.Session, emit emitter) error {
+	stage := domain.StageScopeCheck
+	p.beginStage(ctx, sess.SessionID, stage)
+	emit.emit(Event{Stage: stage, Status: string(domain.StageInProgress)})
+
+	lc := domain.LearnerCtx{UserID: sess.UserID, Language: sess.Language, Level: sess.Level}
+	// Skill constraints sharpen the level signal but are not required; ignore a
+	// failure to build them rather than rejecting a topic on an unrelated error.
+	if p.deps.SkillConstraints != nil {
+		if skills, err := p.deps.SkillConstraints.BuildSkillConstraints(ctx, sess.UserID, sess.Language); err == nil {
+			lc.Skills = skills
+		}
+	}
+
+	res, err := llm.CompleteJSON(ctx, p.deps.Client, llm.ScopeCheckBuilder{Topic: sess.Topic}, lc,
+		func(r llm.ScopeCheckResult) error { return r.Validate() })
+	if err != nil {
+		se := fail(ErrCodeScopeCheck, err)
+		p.failStage(ctx, sess.SessionID, stage, se)
+		emit.emit(Event{Stage: stage, Status: string(domain.StageFailed), ErrorCode: se.code})
+		return se
+	}
+	if !res.IsViable() {
+		detail := res.Reason
+		if res.SuggestedTopic != "" {
+			detail += " (try: " + res.SuggestedTopic + ")"
+		}
+		se := fail(ErrCodeScopeRejected, fmt.Errorf("%s", detail))
+		p.failStage(ctx, sess.SessionID, stage, se)
+		emit.emit(Event{Stage: stage, Status: string(domain.StageFailed), ErrorCode: se.code})
+		return se
+	}
+	p.completeStage(ctx, sess.SessionID, stage)
+	emit.emit(Event{Stage: stage, Status: string(domain.StageComplete)})
+	return nil
 }
 
 // runSelection runs the hard-system selector and assembles the LearnerCtx the
@@ -267,7 +394,11 @@ func (p *Pipeline) runSelection(ctx context.Context, sess domain.Session) (domai
 		lc.Skills = skills
 	}
 	switch sess.SessionType {
-	case domain.SessionTopicGuided:
+	case domain.SessionTopicGuided, domain.SessionSystem:
+		// Both carry a topic into the story prompt: topic-guided from the user,
+		// system-driven from the chooser. They differ upstream (topic-guided runs a
+		// scope check; system-driven picks the topic), not in how the story builder
+		// consumes it.
 		if sess.Topic != "" {
 			lc.Guidance = &domain.UserGuidance{Topic: sess.Topic}
 		}
@@ -277,6 +408,27 @@ func (p *Pipeline) runSelection(ctx context.Context, sess domain.Session) (domai
 		}
 	}
 	return lc, nil
+}
+
+// chooseTopic runs the deterministic, no-LLM topic chooser for a system-driven
+// session: it prefers a language plugin's own pools (lang.TopicPoolProvider) and
+// otherwise uses the generic per-level defaults, excluding the learner's recent
+// topics for this language. A history-read failure degrades to no exclusion
+// rather than blocking generation.
+func (p *Pipeline) chooseTopic(ctx context.Context, sess domain.Session) string {
+	pools := topic.DefaultPools()
+	if plugin, ok := p.deps.Langs.Get(sess.Language); ok {
+		if tp, ok := plugin.(lang.TopicPoolProvider); ok {
+			if custom := tp.TopicPools(); len(custom) > 0 {
+				pools = custom
+			}
+		}
+	}
+	recent, err := p.deps.Repo.RecentSessionTopics(ctx, sess.UserID, sess.Language, topicHistoryWindow)
+	if err != nil {
+		recent = nil
+	}
+	return topic.Choose(pools, sess.Level, recent)
 }
 
 // runStory generates the story (retrying while coverage is short), persists the
@@ -363,11 +515,53 @@ func (p *Pipeline) runStory(ctx context.Context, sess domain.Session, lc domain.
 	return story, nil
 }
 
+// runPhraseSet generates the curated phrase set for an expression-guided phrase
+// session and persists it as the phrase_generation checkpoint. There is no
+// story and no tokenization: the phrases are the content. It records the
+// selection on the session (no story id) and returns the phrases joined into a
+// source text for task generation. See context/session-types.md ("Phrase set").
+func (p *Pipeline) runPhraseSet(ctx context.Context, sess domain.Session, lc domain.LearnerCtx, emit emitter) (generatedContent, error) {
+	stage := domain.StagePhraseGeneration
+	p.beginStage(ctx, sess.SessionID, stage)
+	emit.emit(Event{Stage: stage, Status: string(domain.StageInProgress)})
+
+	res, rate, err := p.generatePhrases(ctx, lc)
+	if err != nil {
+		se := fail(ErrCodePhrase, err)
+		p.failStage(ctx, sess.SessionID, stage, se)
+		emit.emit(Event{Stage: stage, Status: string(domain.StageFailed), ErrorCode: se.code})
+		return generatedContent{}, se
+	}
+	emit.emit(Event{Stage: stage, TokenRate: rate})
+
+	items := toPhraseItems(res.Phrases, itemIDs(lc.Selected.Targets))
+	if _, err := p.deps.Repo.CreatePhraseSet(ctx, domain.PhraseSet{
+		SessionID: sess.SessionID, UserID: sess.UserID, Language: sess.Language, Items: items,
+	}); err != nil {
+		se := fail(ErrCodePersist, err)
+		p.failStage(ctx, sess.SessionID, stage, se)
+		emit.emit(Event{Stage: stage, Status: string(domain.StageFailed), ErrorCode: se.code})
+		return generatedContent{}, se
+	}
+	// Record the selection with no story id (phrase sets have no story).
+	if err := p.deps.Repo.SetSessionSelection(ctx, sess.SessionID, "",
+		itemIDs(lc.Selected.Targets), itemIDs(lc.Selected.New)); err != nil {
+		se := fail(ErrCodePersist, err)
+		p.failStage(ctx, sess.SessionID, stage, se)
+		emit.emit(Event{Stage: stage, Status: string(domain.StageFailed), ErrorCode: se.code})
+		return generatedContent{}, se
+	}
+	p.completeStage(ctx, sess.SessionID, stage)
+	emit.emit(Event{Stage: stage, Status: string(domain.StageComplete)})
+	return generatedContent{sourceText: joinPhrases(items)}, nil
+}
+
 // runTasks generates tasks for every supported, composed task type, each in its
 // own checkpointed stage and its own goroutine (independent retry). It returns
 // how many task-type stages completed; the caller uses that for the ready/failed
-// decision.
-func (p *Pipeline) runTasks(ctx context.Context, sess domain.Session, lc domain.LearnerCtx, story domain.Story, emit emitter) int {
+// decision. sourceText is the story prose or the phrase set's joined phrases the
+// task builders read.
+func (p *Pipeline) runTasks(ctx context.Context, sess domain.Session, lc domain.LearnerCtx, sourceText string, emit emitter) int {
 	plugin, _ := p.deps.Langs.Get(sess.Language)
 	specs := tasks.ComposeTaskSet(sess.Level, plugin.SupportedTaskTypes())
 
@@ -380,7 +574,7 @@ func (p *Pipeline) runTasks(ctx context.Context, sess domain.Session, lc domain.
 		wg.Add(1)
 		go func(spec tasks.Spec) {
 			defer wg.Done()
-			if err := p.runTaskType(ctx, sess, lc, story, spec, emit); err == nil {
+			if err := p.runTaskType(ctx, sess, lc, sourceText, spec, emit); err == nil {
 				mu.Lock()
 				completed++
 				mu.Unlock()
@@ -394,7 +588,7 @@ func (p *Pipeline) runTasks(ctx context.Context, sess domain.Session, lc domain.
 // runTaskType generates spec.Count tasks of one type within a single
 // task_<type> stage. The stage fails (and is independently retryable) if any
 // task in it fails to generate.
-func (p *Pipeline) runTaskType(ctx context.Context, sess domain.Session, lc domain.LearnerCtx, story domain.Story, spec tasks.Spec, emit emitter) error {
+func (p *Pipeline) runTaskType(ctx context.Context, sess domain.Session, lc domain.LearnerCtx, sourceText string, spec tasks.Spec, emit emitter) error {
 	stage := domain.StageForTask(spec.TaskTypeID)
 	tt, ok := p.deps.Tasks.Get(spec.TaskTypeID)
 	if !ok {
@@ -408,7 +602,7 @@ func (p *Pipeline) runTaskType(ctx context.Context, sess domain.Session, lc doma
 		count = 1
 	}
 	for i := 0; i < count; i++ {
-		content, err := p.generateTaskContent(ctx, spec.TaskTypeID, story.Text, lc)
+		content, err := p.generateTaskContent(ctx, spec.TaskTypeID, sourceText, lc)
 		if err != nil {
 			se := fail(ErrCodeTaskGenerate, err)
 			p.failStage(ctx, sess.SessionID, stage, se)
@@ -443,6 +637,18 @@ func (p *Pipeline) generateStory(ctx context.Context, lc domain.LearnerCtx) (llm
 		return llm.StoryResult{}, 0, err
 	}
 	return res, approxTokenRate(res.Story, time.Since(start)), nil
+}
+
+// generatePhrases runs the phrase-set builder through CompleteJSON and reports an
+// approximate token_rate for the SSE ticker, mirroring generateStory.
+func (p *Pipeline) generatePhrases(ctx context.Context, lc domain.LearnerCtx) (llm.PhraseSetResult, int, error) {
+	start := time.Now()
+	res, err := llm.CompleteJSON(ctx, p.deps.Client, llm.PhraseSetBuilder{}, lc,
+		func(r llm.PhraseSetResult) error { return r.Validate() })
+	if err != nil {
+		return llm.PhraseSetResult{}, 0, err
+	}
+	return res, approxTokenRate(joinPhraseResults(res.Phrases), time.Since(start)), nil
 }
 
 // generateTaskContent builds and sends the task-content prompt for one type,
@@ -591,6 +797,54 @@ func itemIDs(items []domain.KnowledgeItem) []string {
 		out[i] = it.ItemID
 	}
 	return out
+}
+
+// toPhraseItems converts the model's phrases into stored phrase items, assigning
+// a stable phrase id and attributing the session's target item ids to each
+// phrase. The per-phrase attribution is coarse for v0 — every phrase is credited
+// with the session targets, mirroring how injectTargets stamps task targets — and
+// can be refined to per-phrase attribution later (session-types Open Questions).
+func toPhraseItems(phrases []llm.PhraseResult, targetIDs []string) []domain.PhraseItem {
+	out := make([]domain.PhraseItem, 0, len(phrases))
+	for _, p := range phrases {
+		anns := make([]domain.PhraseAnnotation, 0, len(p.Annotations))
+		for _, a := range p.Annotations {
+			anns = append(anns, domain.PhraseAnnotation{Kind: a.Kind, Label: a.Label, Note: a.Note})
+		}
+		out = append(out, domain.PhraseItem{
+			PhraseID:      id.New(),
+			TargetText:    p.TargetText,
+			Gloss:         p.Gloss,
+			Notes:         p.Notes,
+			TargetItemIDs: append([]string(nil), targetIDs...),
+			Annotations:   anns,
+		})
+	}
+	return out
+}
+
+// joinPhrases concatenates a phrase set's target texts into one block, the source
+// text task generation consumes when the session content is a phrase set.
+func joinPhrases(items []domain.PhraseItem) string {
+	parts := make([]string, 0, len(items))
+	for _, it := range items {
+		if t := strings.TrimSpace(it.TargetText); t != "" {
+			parts = append(parts, t)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+// joinPhraseResults is joinPhrases for the model's raw result, used only for the
+// token-rate estimate before items are assigned ids.
+func joinPhraseResults(phrases []llm.PhraseResult) string {
+	parts := make([]string, 0, len(phrases))
+	for _, p := range phrases {
+		if t := strings.TrimSpace(p.TargetText); t != "" {
+			parts = append(parts, t)
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 // approxTokenRate estimates upstream tokens/second for the ticker animation from

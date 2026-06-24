@@ -75,6 +75,15 @@ type LevelRuleProvider interface {
 	LevelRules() []LevelRule
 }
 
+// TopicPoolProvider is optionally implemented by language plugins that want to
+// override the system-driven topic chooser's generic, language-agnostic pools
+// with their own per-level scenarios (see internal/topic). The returned map is
+// keyed by learner level. A plugin that does not implement this gets the default
+// pools; returning an empty map also falls back to the defaults.
+type TopicPoolProvider interface {
+	TopicPools() map[string][]string
+}
+
 // SkillDefinition describes one language competency. Concept is the stable
 // grammatical/semantic handle prompt builders can later map to
 // SkillConstraints, while Associations is an explicit small key map for #68.

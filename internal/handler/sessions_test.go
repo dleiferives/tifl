@@ -67,9 +67,11 @@ type generationEventPayload struct {
 	Stage       string  `json:"stage"`
 	Status      string  `json:"status"`
 	SessionID   string  `json:"session_id"`
+	ContentType string  `json:"content_type"`
 	StoryID     *string `json:"story_id"`
 	TokenRate   int     `json:"token_rate"`
 	ErrorCode   string  `json:"error_code"`
+	ErrorDetail string  `json:"error_detail"`
 	FailedStage *string `json:"failed_stage"`
 	Tasks       *struct {
 		Total     int `json:"total"`
@@ -111,6 +113,8 @@ func newServer(t *testing.T, withBroker bool) (*httptest.Server, *db.FakeReposit
 	if withBroker {
 		client = &llm.FakeClient{Func: func(_ context.Context, kind string, _ llm.LLMRequest) (llm.LLMResponse, error) {
 			switch kind {
+			case "scope_check":
+				return llm.LLMResponse{Text: `{"viable":true,"reason":"ok","suggested_topic":""}`}, nil
 			case "story_generator":
 				return llm.LLMResponse{Text: `{"story":"a a a","estimated_coverage":0.9,"glossary":[]}`}, nil
 			case "definition":
@@ -480,6 +484,119 @@ func TestSessionReadAPITenantIsolation(t *testing.T) {
 	}
 }
 
+func TestGetSessionContentPhraseSet(t *testing.T) {
+	srv, repo := newServer(t, false)
+	ctx := context.Background()
+	sess, err := repo.CreateSession(ctx, domain.Session{
+		UserID: domain.LocalUserID, Language: "xx", Level: "beginner",
+		SessionType: domain.SessionExpressionGuided, ExpressionOutput: domain.ExpressionOutputPhrases,
+		UserExpressions: []string{"say hello"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreatePhraseSet(ctx, domain.PhraseSet{
+		SessionID: sess.SessionID, UserID: domain.LocalUserID, Language: "xx",
+		Items: []domain.PhraseItem{{PhraseID: "p1", TargetText: "hello there", Gloss: "hello"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(srv.URL + "/api/v1/sessions/" + sess.SessionID + "/content")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("content = %d", resp.StatusCode)
+	}
+	var out struct {
+		ContentType string `json:"content_type"`
+		Story       *struct {
+			StoryID string `json:"story_id"`
+		} `json:"story"`
+		PhraseSet *struct {
+			Items []struct {
+				TargetText string `json:"target_text"`
+			} `json:"items"`
+		} `json:"phrase_set"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.ContentType != "phrase_set" {
+		t.Fatalf("want phrase_set, got %q", out.ContentType)
+	}
+	if out.Story != nil {
+		t.Fatal("phrase-set content must not include story")
+	}
+	if out.PhraseSet == nil || len(out.PhraseSet.Items) != 1 || out.PhraseSet.Items[0].TargetText != "hello there" {
+		t.Fatalf("phrase set not returned: %+v", out.PhraseSet)
+	}
+}
+
+func TestGetSessionContentStory(t *testing.T) {
+	srv, repo := newServer(t, false)
+	ctx := context.Background()
+	sess, err := repo.CreateSession(ctx, domain.Session{
+		UserID: domain.LocalUserID, Language: "xx", Level: "beginner",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	story, err := repo.CreateStory(ctx, domain.Story{
+		UserID: domain.LocalUserID, Language: "xx", Text: "a b", Level: "beginner",
+		SessionID: &sess.SessionID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetSessionSelection(ctx, sess.SessionID, story.StoryID, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(srv.URL + "/api/v1/sessions/" + sess.SessionID + "/content")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("content = %d", resp.StatusCode)
+	}
+	var out struct {
+		ContentType string `json:"content_type"`
+		Story       *struct {
+			StoryID string `json:"story_id"`
+		} `json:"story"`
+		PhraseSet *json.RawMessage `json:"phrase_set"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.ContentType != "story" {
+		t.Fatalf("want story, got %q", out.ContentType)
+	}
+	if out.PhraseSet != nil {
+		t.Fatal("story content must not include phrase_set")
+	}
+	if out.Story == nil || out.Story.StoryID != story.StoryID {
+		t.Fatalf("story ref not returned: %+v", out.Story)
+	}
+}
+
+func TestGenerateExpressionGuidedRequiresExpressions(t *testing.T) {
+	srv, _ := newServer(t, true)
+	resp, err := http.Post(srv.URL+"/api/v1/sessions/generate", "application/json",
+		strings.NewReader(`{"language":"xx","level":"beginner","session_type":"expression_guided","expression_output":"phrases"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("want 400 for expression-guided with no expressions, got %d", resp.StatusCode)
+	}
+}
+
 func TestGenerateUnknownLanguage(t *testing.T) {
 	srv, _ := newServer(t, true)
 	resp, err := http.Post(srv.URL+"/api/v1/sessions/generate", "application/json",
@@ -493,16 +610,37 @@ func TestGenerateUnknownLanguage(t *testing.T) {
 	}
 }
 
-func TestGenerateNoBrokerReturns503(t *testing.T) {
-	srv, _ := newServer(t, false)
+func TestGenerateTopicGuidedRequiresTopic(t *testing.T) {
+	srv, _ := newServer(t, true)
 	resp, err := http.Post(srv.URL+"/api/v1/sessions/generate", "application/json",
-		strings.NewReader(`{"language":"xx"}`))
+		strings.NewReader(`{"language":"xx","level":"beginner","session_type":"topic_guided","topic":"  "}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("want 503 without a gateway, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("want 400 for topic-guided with empty topic, got %d", resp.StatusCode)
+	}
+}
+
+func TestGenerateNoBrokerReturns503(t *testing.T) {
+	srv, _ := newServer(t, false)
+	// Every session type needs the gateway; with none configured, generation is
+	// 503 regardless of type (no deterministic offline fallback — scope check and
+	// content generation both require the LLM).
+	for _, body := range []string{
+		`{"language":"xx"}`,
+		`{"language":"xx","level":"beginner","session_type":"topic_guided","topic":"the market"}`,
+		`{"language":"xx","level":"beginner","session_type":"expression_guided","expression_output":"phrases","user_expressions":["say hi"]}`,
+	} {
+		resp, err := http.Post(srv.URL+"/api/v1/sessions/generate", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusServiceUnavailable {
+			t.Fatalf("want 503 without a gateway for %s, got %d", body, resp.StatusCode)
+		}
 	}
 }
 
@@ -610,6 +748,9 @@ func TestSessionEventsAlreadyTerminalBeforeSubscribe(t *testing.T) {
 	if done.Status != string(domain.StatusReady) || done.SessionID != sess.SessionID {
 		t.Fatalf("terminal replay core fields mismatch: %+v", done)
 	}
+	if done.ContentType != "story" {
+		t.Fatalf("terminal replay content_type = %q, want story", done.ContentType)
+	}
 	if done.StoryID == nil || *done.StoryID != storyRow.StoryID {
 		t.Fatalf("terminal replay story mismatch: %+v", done)
 	}
@@ -618,6 +759,42 @@ func TestSessionEventsAlreadyTerminalBeforeSubscribe(t *testing.T) {
 	}
 	if done.StageSummary == nil || done.StageSummary.Total != 2 || done.StageSummary.Complete != 2 {
 		t.Fatalf("terminal replay stage summary mismatch: %+v", done.StageSummary)
+	}
+}
+
+func TestSessionEventsPhraseSessionTerminalContentType(t *testing.T) {
+	srv, repo := newServer(t, false)
+	ctx := context.Background()
+
+	sess, err := repo.CreateSession(ctx, domain.Session{
+		UserID: domain.LocalUserID, Language: "xx", Level: "beginner", Status: domain.StatusReady,
+		SessionType: domain.SessionExpressionGuided, ExpressionOutput: domain.ExpressionOutputPhrases,
+		UserExpressions: []string{"say hi"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreatePhraseSet(ctx, domain.PhraseSet{
+		SessionID: sess.SessionID, UserID: domain.LocalUserID, Language: "xx",
+		Items: []domain.PhraseItem{{PhraseID: "p1", TargetText: "hi"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpsertStage(ctx, domain.GenerationStage{SessionID: sess.SessionID, Stage: domain.StagePhraseGeneration, Status: domain.StageComplete}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(srv.URL + "/api/v1/sessions/" + sess.SessionID + "/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	done := readDoneEvent(t, resp.Body)
+	if done.ContentType != "phrase_set" {
+		t.Fatalf("phrase session terminal content_type = %q, want phrase_set", done.ContentType)
+	}
+	if done.StoryID != nil {
+		t.Fatalf("phrase session terminal should have no story_id: %+v", done.StoryID)
 	}
 }
 
@@ -631,10 +808,10 @@ func TestSessionEventsFailedTerminalIncludesError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code := "GEN_STORY_001"
+	code, detail := "GEN_SCOPE_REJECTED", "too specialized (try: a simpler version)"
 	if err := repo.UpsertStage(ctx, domain.GenerationStage{
-		SessionID: sess.SessionID, Stage: domain.StageStoryGeneration,
-		Status: domain.StageFailed, ErrorCode: &code,
+		SessionID: sess.SessionID, Stage: domain.StageScopeCheck,
+		Status: domain.StageFailed, ErrorCode: &code, ErrorDetail: &detail,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -651,11 +828,14 @@ func TestSessionEventsFailedTerminalIncludesError(t *testing.T) {
 	if done.Status != string(domain.StatusFailed) || done.SessionID != sess.SessionID {
 		t.Fatalf("failed done event core fields mismatch: %+v", done)
 	}
-	if done.FailedStage == nil || *done.FailedStage != domain.StageStoryGeneration {
+	if done.FailedStage == nil || *done.FailedStage != domain.StageScopeCheck {
 		t.Fatalf("failed done event missing failed_stage: %+v", done)
 	}
 	if done.ErrorCode != code {
 		t.Fatalf("failed done event error_code = %q, want %q", done.ErrorCode, code)
+	}
+	if done.ErrorDetail != detail {
+		t.Fatalf("failed done event error_detail = %q, want %q", done.ErrorDetail, detail)
 	}
 	if done.StageSummary == nil || done.StageSummary.Failed != 1 || done.StageSummary.FailedStage == nil {
 		t.Fatalf("failed done event stage summary mismatch: %+v", done.StageSummary)

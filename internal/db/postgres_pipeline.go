@@ -121,6 +121,43 @@ func (r *PostgresRepository) UpdateSessionStatus(ctx context.Context, sessionID 
 	return nil
 }
 
+func (r *PostgresRepository) SetSessionTopic(ctx context.Context, sessionID, topic string) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE sessions SET topic = $1 WHERE session_id = $2`, pgText(topic), sessionID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *PostgresRepository) RecentSessionTopics(ctx context.Context, userID, language string, limit int) ([]string, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT topic FROM sessions
+		 WHERE user_id = $1 AND language = $2 AND topic IS NOT NULL AND topic <> ''
+		 ORDER BY created_at DESC, session_id DESC
+		 LIMIT $3`, userID, language, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var topic string
+		if err := rows.Scan(&topic); err != nil {
+			return nil, err
+		}
+		out = append(out, topic)
+	}
+	return out, rows.Err()
+}
+
 func (r *PostgresRepository) SetSessionSelection(ctx context.Context, sessionID, storyID string, targets, new []string) error {
 	t, _ := marshalStringsB(targets)
 	n, _ := marshalStringsB(new)
@@ -309,6 +346,52 @@ func (r *PostgresRepository) ListStoryGlossary(ctx context.Context, storyID stri
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+func (r *PostgresRepository) CreatePhraseSet(ctx context.Context, ps domain.PhraseSet) (domain.PhraseSet, error) {
+	if ps.GeneratedAt == 0 {
+		ps.GeneratedAt = float64(time.Now().Unix())
+	}
+	items, err := json.Marshal(ps.Items)
+	if err != nil {
+		return domain.PhraseSet{}, err
+	}
+	_, err = r.pool.Exec(ctx,
+		`INSERT INTO session_phrase_sets(session_id, user_id, language, items, generated_at)
+		 VALUES($1, $2, $3, $4, $5)
+		 ON CONFLICT(session_id) DO UPDATE SET
+		   user_id = excluded.user_id,
+		   language = excluded.language,
+		   items = excluded.items,
+		   generated_at = excluded.generated_at`,
+		ps.SessionID, ps.UserID, ps.Language, items, ps.GeneratedAt)
+	if err != nil {
+		return domain.PhraseSet{}, err
+	}
+	return ps, nil
+}
+
+func (r *PostgresRepository) GetPhraseSet(ctx context.Context, sessionID string) (domain.PhraseSet, error) {
+	var (
+		ps    domain.PhraseSet
+		items []byte
+	)
+	err := r.pool.QueryRow(ctx,
+		`SELECT session_id, user_id, language, items, generated_at
+		 FROM session_phrase_sets WHERE session_id = $1`, sessionID).
+		Scan(&ps.SessionID, &ps.UserID, &ps.Language, &items, &ps.GeneratedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.PhraseSet{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.PhraseSet{}, err
+	}
+	if len(items) > 0 {
+		if err := json.Unmarshal(items, &ps.Items); err != nil {
+			return domain.PhraseSet{}, err
+		}
+	}
+	return ps, nil
 }
 
 func (r *PostgresRepository) CreateTask(ctx context.Context, t domain.Task, targets []string) (domain.Task, error) {

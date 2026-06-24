@@ -38,13 +38,14 @@ type FakeRepository struct {
 	skillLogs  []domain.TaskSkillXPLog         // append-only skill XP log
 
 	// Generation-pipeline state.
-	sessions map[string]domain.Session                    // session_id -> session
-	stages   map[string]map[string]domain.GenerationStage // session_id -> stage -> row
-	stories  map[string]domain.Story                      // story_id -> story
-	tokens   map[string][]domain.StoryToken               // story_id -> ordered tokens
-	glossary map[string][]domain.StoryGlossaryEntry       // story_id -> entries
-	tasks    map[string]domain.Task                       // task_id -> task
-	targets  map[string][]string                          // task_id -> item_ids
+	sessions   map[string]domain.Session                    // session_id -> session
+	stages     map[string]map[string]domain.GenerationStage // session_id -> stage -> row
+	stories    map[string]domain.Story                      // story_id -> story
+	tokens     map[string][]domain.StoryToken               // story_id -> ordered tokens
+	glossary   map[string][]domain.StoryGlossaryEntry       // story_id -> entries
+	tasks      map[string]domain.Task                       // task_id -> task
+	targets    map[string][]string                          // task_id -> item_ids
+	phraseSets map[string]domain.PhraseSet                  // session_id -> phrase set
 }
 
 // compile-time assertion that we satisfy the interface.
@@ -73,6 +74,7 @@ func NewFake() *FakeRepository {
 		glossary:   make(map[string][]domain.StoryGlossaryEntry),
 		tasks:      make(map[string]domain.Task),
 		targets:    make(map[string][]string),
+		phraseSets: make(map[string]domain.PhraseSet),
 	}
 }
 

@@ -24,6 +24,7 @@ const STAGE_RANK: Record<string, number> = {
   scope_check: 0,
   selection: 1,
   story_generation: 2,
+  phrase_generation: 2,
   tokenization: 3,
 };
 
@@ -31,6 +32,7 @@ const STAGE_LABELS: Record<string, string> = {
   scope_check: "Checking the topic",
   selection: "Choosing target words",
   story_generation: "Writing the story",
+  phrase_generation: "Writing the phrases",
   tokenization: "Preparing the text",
 };
 
@@ -39,6 +41,7 @@ const STAGE_LABELS: Record<string, string> = {
 const ERROR_MESSAGES: Record<string, string> = {
   GEN_SELECT_001: "We couldn't choose words for this session.",
   GEN_STORY_001: "The story couldn't be generated.",
+  GEN_PHRASE_001: "The phrase set couldn't be generated.",
   GEN_STORY_COVERAGE: "The story didn't cover enough of your target words.",
   GEN_TOKENIZE_001: "The story couldn't be processed for reading.",
   GEN_TASK_001: "A practice task couldn't be generated.",
@@ -183,7 +186,12 @@ export function GenerationView(props: { sessionId: string }) {
             <h2>Session ready</h2>
             <p>{readySummary(result())}</p>
             <div class="panel-actions">
-              <Show when={result()?.story_id}>
+              <Show when={result()?.content_type === "phrase_set"}>
+                <a class="button-link" href={routeHref(`/phrases/${encodeURIComponent(props.sessionId)}`)}>
+                  View phrases
+                </a>
+              </Show>
+              <Show when={result()?.content_type !== "phrase_set" && result()?.story_id}>
                 <a class="button-link" href={routeHref(`/reader/${encodeURIComponent(result()?.story_id ?? "")}`)}>
                   Start reading
                 </a>
@@ -232,7 +240,9 @@ export function GenerationView(props: { sessionId: string }) {
 }
 
 function StageRow(props: { stage: string; status: StageStatus; tokenRate: number }) {
-  const showTicker = () => props.stage === "story_generation" && props.status === "in_progress";
+  const showTicker = () =>
+    (props.stage === "story_generation" || props.stage === "phrase_generation") &&
+    props.status === "in_progress";
   return (
     <li class="stage-row" data-status={props.status}>
       <span class="stage-icon" aria-hidden="true">{stageGlyph(props.status)}</span>
@@ -328,13 +338,21 @@ function subtitleFor(result: GenerationEvent | null): string {
 
 function readySummary(result: GenerationEvent | null): string {
   const total = result?.tasks?.total ?? 0;
+  const noun = result?.content_type === "phrase_set" ? "phrase set" : "story";
   if (total > 0) {
-    return `Your story is ready, with ${total} practice ${total === 1 ? "task" : "tasks"}.`;
+    return `Your ${noun} is ready, with ${total} practice ${total === 1 ? "task" : "tasks"}.`;
   }
-  return "Your story is ready to read.";
+  return result?.content_type === "phrase_set"
+    ? "Your phrase set is ready."
+    : "Your story is ready to read.";
 }
 
 function failureMessage(result: GenerationEvent | null): string {
+  // The server's human-readable detail is the most specific; fall back to the
+  // per-code copy, then a generic line.
+  if (result?.error_detail) {
+    return result.error_detail;
+  }
   const code = result?.error_code;
   if (code && ERROR_MESSAGES[code]) {
     return ERROR_MESSAGES[code];
@@ -343,6 +361,11 @@ function failureMessage(result: GenerationEvent | null): string {
 }
 
 function scopeMessage(result: GenerationEvent | null): string {
+  // The scope check returns a topic-specific reason (and an optional rephrasing);
+  // prefer it over generic copy so the learner knows exactly why it was rejected.
+  if (result?.error_detail) {
+    return result.error_detail;
+  }
   const code = result?.error_code;
   if (code && ERROR_MESSAGES[code]) {
     return ERROR_MESSAGES[code];

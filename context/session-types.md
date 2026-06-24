@@ -254,11 +254,31 @@ sessions (additions)
 
 ---
 
+## Resolved
+
+- **Scope check is its own persisted stage.** Topic-guided generation runs a
+  `scope_check` stage (before selection) recorded in `session_generation_stages`,
+  so SSE progress, retry, and admin inspection are consistent. A rejected topic
+  fails the stage with `GEN_SCOPE_REJECTED` and a human reason in `error_detail`;
+  the session is left `failed` and no story is generated. Rephrasing = a new
+  session. (#75)
+- **Phrase-set sessions do not produce `story_tokens`.** A phrase set has no
+  narrative prose; it is stored as one JSON row in `session_phrase_sets` and is
+  not tokenized. The session's content shape is the derived `content_type`
+  (`story` | `phrase_set`); clients load it through
+  `GET /sessions/{id}/content`, which returns a story reference or the phrase
+  items. Task generation consumes the phrases joined into a source-text block.
+  (#74)
+- **System-driven topic selection is a deterministic chooser.** `internal/topic`
+  picks a per-level topic, excludes the learner's recent topics, and persists it
+  on `sessions.topic`; it feeds selection biasing and the story prompt via
+  `LearnerCtx.Guidance.Topic`. No LLM. (#76)
+
 ## Open Questions
 
-- Whether the scope check warrants its own stage in `session_generation_stages`
-  or is just a pre-flight before stage 1 starts
 - SSE connection management for long-running generation (keepalive intervals,
   reconnect on mobile)
-- Whether phrase-set sessions produce `story_tokens` (they do not have a
-  narrative story text, so the token model may need to flex)
+- Per-phrase target-item attribution (today every phrase is credited with the
+  session targets; finer attribution is a future refinement)
+- Whether a phrase set should eventually be tappable like the reader (would need
+  per-phrase tokenization, intentionally deferred)
