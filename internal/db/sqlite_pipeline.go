@@ -335,6 +335,54 @@ func (r *SQLiteRepository) ListStoryGlossary(ctx context.Context, storyID string
 	return out, rows.Err()
 }
 
+func (r *SQLiteRepository) CreatePhraseSet(ctx context.Context, ps domain.PhraseSet) (domain.PhraseSet, error) {
+	if ps.GeneratedAt == 0 {
+		ps.GeneratedAt = float64(time.Now().Unix())
+	}
+	items, err := json.Marshal(ps.Items)
+	if err != nil {
+		return domain.PhraseSet{}, err
+	}
+	// Upsert keyed by session_id so a phrase-generation stage retry replaces the
+	// prior attempt rather than failing on the primary key.
+	_, err = r.db.ExecContext(ctx,
+		`INSERT INTO session_phrase_sets(session_id, user_id, language, items, generated_at)
+		 VALUES(?, ?, ?, ?, ?)
+		 ON CONFLICT(session_id) DO UPDATE SET
+		   user_id = excluded.user_id,
+		   language = excluded.language,
+		   items = excluded.items,
+		   generated_at = excluded.generated_at`,
+		ps.SessionID, ps.UserID, ps.Language, string(items), ps.GeneratedAt)
+	if err != nil {
+		return domain.PhraseSet{}, err
+	}
+	return ps, nil
+}
+
+func (r *SQLiteRepository) GetPhraseSet(ctx context.Context, sessionID string) (domain.PhraseSet, error) {
+	var (
+		ps    domain.PhraseSet
+		items string
+	)
+	err := r.db.QueryRowContext(ctx,
+		`SELECT session_id, user_id, language, items, generated_at
+		 FROM session_phrase_sets WHERE session_id = ?`, sessionID).
+		Scan(&ps.SessionID, &ps.UserID, &ps.Language, &items, &ps.GeneratedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.PhraseSet{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.PhraseSet{}, err
+	}
+	if items != "" {
+		if err := json.Unmarshal([]byte(items), &ps.Items); err != nil {
+			return domain.PhraseSet{}, err
+		}
+	}
+	return ps, nil
+}
+
 func (r *SQLiteRepository) CreateTask(ctx context.Context, t domain.Task, targets []string) (domain.Task, error) {
 	if t.TaskID == "" {
 		t.TaskID = id.New()

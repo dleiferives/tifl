@@ -131,6 +131,10 @@ export async function getSessionDetail(sessionID: string): Promise<APIResponse<"
   return apiFetch<APIResponse<"getSessionDetail", 200>>(`/sessions/${encodeURIComponent(sessionID)}`);
 }
 
+export async function getSessionContent(sessionID: string): Promise<APIResponse<"getSessionContent", 200>> {
+  return apiFetch<APIResponse<"getSessionContent", 200>>(`/sessions/${encodeURIComponent(sessionID)}/content`);
+}
+
 export async function retrySession(sessionID: string): Promise<APIResponse<"retrySession", 202>> {
   return apiFetch<APIResponse<"retrySession", 202>>(
     `/sessions/${encodeURIComponent(sessionID)}/retry`,

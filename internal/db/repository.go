@@ -124,6 +124,13 @@ type Repository interface {
 	ReplaceStoryGlossary(ctx context.Context, storyID string, entries []domain.StoryGlossaryEntry) error
 	ListStoryGlossary(ctx context.Context, storyID string) ([]domain.StoryGlossaryEntry, error)
 
+	// Phrase sets — the content of an expression-guided phrase session (one row per
+	// session, keyed by session_id). CreatePhraseSet is an upsert so a
+	// phrase-generation stage retry is idempotent; GetPhraseSet returns ErrNotFound
+	// when the session has none. See context/session-types.md ("Phrase set").
+	CreatePhraseSet(ctx context.Context, ps domain.PhraseSet) (domain.PhraseSet, error)
+	GetPhraseSet(ctx context.Context, sessionID string) (domain.PhraseSet, error)
+
 	// Tasks — generated exercises. CreateTask inserts the task row and its
 	// task_targets (from tasks.TaskType.Targets) atomically.
 	CreateTask(ctx context.Context, t domain.Task, targets []string) (domain.Task, error)

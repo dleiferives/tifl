@@ -92,6 +92,7 @@ type sessionOverviewDTO struct {
 	Language         string            `json:"language"`
 	Level            string            `json:"level"`
 	SessionType      string            `json:"session_type"`
+	ContentType      string            `json:"content_type"`
 	Topic            string            `json:"topic,omitempty"`
 	UserExpressions  []string          `json:"user_expressions,omitempty"`
 	ExpressionOutput string            `json:"expression_output,omitempty"`
@@ -221,14 +222,36 @@ func (h *Handler) generateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	expressions := trimmedNonEmpty(req.UserExpressions)
+	expressionOutput := strings.TrimSpace(req.ExpressionOutput)
+	if sessionType == domain.SessionExpressionGuided {
+		if len(expressions) == 0 {
+			writeError(w, http.StatusBadRequest, errors.New("user_expressions is required for expression-guided sessions"))
+			return
+		}
+		// Default the output mode to a full story; only "phrases" produces a
+		// phrase-set session (see domain.Session.ContentType).
+		if expressionOutput == "" {
+			expressionOutput = domain.ExpressionOutputStory
+		}
+		if expressionOutput != domain.ExpressionOutputPhrases && expressionOutput != domain.ExpressionOutputStory {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("unsupported expression_output %q", expressionOutput))
+			return
+		}
+	} else {
+		// expression_output only applies to expression-guided sessions.
+		expressionOutput = ""
+		expressions = nil
+	}
+
 	sess, err := h.repo.CreateSession(r.Context(), domain.Session{
 		UserID:           h.currentUserID(r),
 		Language:         language,
 		Level:            level,
 		SessionType:      sessionType,
 		Topic:            topic,
-		UserExpressions:  req.UserExpressions,
-		ExpressionOutput: req.ExpressionOutput,
+		UserExpressions:  expressions,
+		ExpressionOutput: expressionOutput,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -324,6 +347,7 @@ func toSessionOverviewDTO(overview domain.SessionOverview) sessionOverviewDTO {
 		Language:         s.Language,
 		Level:            s.Level,
 		SessionType:      string(s.SessionType),
+		ContentType:      string(s.ContentType()),
 		Topic:            s.Topic,
 		UserExpressions:  s.UserExpressions,
 		ExpressionOutput: s.ExpressionOutput,
@@ -402,7 +426,7 @@ func stageOrder(stage string) int {
 	switch stage {
 	case domain.StageScopeCheck:
 		return 10
-	case domain.StageStoryGeneration:
+	case domain.StageStoryGeneration, domain.StagePhraseGeneration:
 		return 20
 	case domain.StageTokenization:
 		return 30
@@ -574,6 +598,110 @@ func isTerminal(s domain.SessionStatus) bool {
 	default:
 		return false
 	}
+}
+
+// trimmedNonEmpty trims each entry and drops the empties, so a list of blank
+// expressions is treated as absent.
+func trimmedNonEmpty(in []string) []string {
+	var out []string
+	for _, s := range in {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// Session content. One polymorphic endpoint loads whatever a session produced —
+// a story reference or the phrase set — discriminated by content_type, so a
+// client has a single place to ask "what is in this session" regardless of type.
+
+type phraseAnnotationDTO struct {
+	Kind  string `json:"kind"`
+	Label string `json:"label,omitempty"`
+	Note  string `json:"note,omitempty"`
+}
+
+type phraseItemDTO struct {
+	PhraseID      string                `json:"phrase_id"`
+	TargetText    string                `json:"target_text"`
+	Gloss         string                `json:"gloss,omitempty"`
+	Notes         string                `json:"notes,omitempty"`
+	TargetItemIDs []string              `json:"target_item_ids,omitempty"`
+	Annotations   []phraseAnnotationDTO `json:"annotations,omitempty"`
+}
+
+type phraseSetDTO struct {
+	SessionID string          `json:"session_id"`
+	Language  string          `json:"language"`
+	Items     []phraseItemDTO `json:"items"`
+}
+
+type storyContentDTO struct {
+	StoryID  string `json:"story_id"`
+	Language string `json:"language"`
+}
+
+type sessionContentDTO struct {
+	SessionID   string           `json:"session_id"`
+	ContentType string           `json:"content_type"`
+	Story       *storyContentDTO `json:"story,omitempty"`
+	PhraseSet   *phraseSetDTO    `json:"phrase_set,omitempty"`
+}
+
+// getSessionContent returns a session's content discriminated by content_type:
+// for a story, a reference the client loads through /stories/{id}; for a phrase
+// set, the phrase items inline (phrase sets are not tokenized, so the reader's
+// story endpoints do not apply). Tenant-scoped: another user's session is 404.
+func (h *Handler) getSessionContent(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sess, err := h.repo.GetSession(r.Context(), id)
+	if err != nil || sess.UserID != h.currentUserID(r) {
+		if err == nil {
+			err = db.ErrNotFound
+		}
+		h.writeSessionLookupError(w, err)
+		return
+	}
+
+	out := sessionContentDTO{SessionID: sess.SessionID, ContentType: string(sess.ContentType())}
+	if sess.ContentType() == domain.ContentPhraseSet {
+		ps, err := h.repo.GetPhraseSet(r.Context(), sess.SessionID)
+		if err != nil {
+			h.writeSessionLookupError(w, err)
+			return
+		}
+		out.PhraseSet = toPhraseSetDTO(ps)
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+
+	// Story content: a story exists only once the story stage has persisted one.
+	if sess.StoryID == nil {
+		writeError(w, http.StatusNotFound, errors.New("session has no story yet"))
+		return
+	}
+	out.Story = &storyContentDTO{StoryID: *sess.StoryID, Language: sess.Language}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func toPhraseSetDTO(ps domain.PhraseSet) *phraseSetDTO {
+	items := make([]phraseItemDTO, 0, len(ps.Items))
+	for _, it := range ps.Items {
+		anns := make([]phraseAnnotationDTO, 0, len(it.Annotations))
+		for _, a := range it.Annotations {
+			anns = append(anns, phraseAnnotationDTO{Kind: a.Kind, Label: a.Label, Note: a.Note})
+		}
+		items = append(items, phraseItemDTO{
+			PhraseID:      it.PhraseID,
+			TargetText:    it.TargetText,
+			Gloss:         it.Gloss,
+			Notes:         it.Notes,
+			TargetItemIDs: it.TargetItemIDs,
+			Annotations:   anns,
+		})
+	}
+	return &phraseSetDTO{SessionID: ps.SessionID, Language: ps.Language, Items: items}
 }
 
 func sessionTypeOrDefault(t string) domain.SessionType {

@@ -482,6 +482,119 @@ func TestSessionReadAPITenantIsolation(t *testing.T) {
 	}
 }
 
+func TestGetSessionContentPhraseSet(t *testing.T) {
+	srv, repo := newServer(t, false)
+	ctx := context.Background()
+	sess, err := repo.CreateSession(ctx, domain.Session{
+		UserID: domain.LocalUserID, Language: "xx", Level: "beginner",
+		SessionType: domain.SessionExpressionGuided, ExpressionOutput: domain.ExpressionOutputPhrases,
+		UserExpressions: []string{"say hello"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreatePhraseSet(ctx, domain.PhraseSet{
+		SessionID: sess.SessionID, UserID: domain.LocalUserID, Language: "xx",
+		Items: []domain.PhraseItem{{PhraseID: "p1", TargetText: "hello there", Gloss: "hello"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(srv.URL + "/api/v1/sessions/" + sess.SessionID + "/content")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("content = %d", resp.StatusCode)
+	}
+	var out struct {
+		ContentType string `json:"content_type"`
+		Story       *struct {
+			StoryID string `json:"story_id"`
+		} `json:"story"`
+		PhraseSet *struct {
+			Items []struct {
+				TargetText string `json:"target_text"`
+			} `json:"items"`
+		} `json:"phrase_set"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.ContentType != "phrase_set" {
+		t.Fatalf("want phrase_set, got %q", out.ContentType)
+	}
+	if out.Story != nil {
+		t.Fatal("phrase-set content must not include story")
+	}
+	if out.PhraseSet == nil || len(out.PhraseSet.Items) != 1 || out.PhraseSet.Items[0].TargetText != "hello there" {
+		t.Fatalf("phrase set not returned: %+v", out.PhraseSet)
+	}
+}
+
+func TestGetSessionContentStory(t *testing.T) {
+	srv, repo := newServer(t, false)
+	ctx := context.Background()
+	sess, err := repo.CreateSession(ctx, domain.Session{
+		UserID: domain.LocalUserID, Language: "xx", Level: "beginner",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	story, err := repo.CreateStory(ctx, domain.Story{
+		UserID: domain.LocalUserID, Language: "xx", Text: "a b", Level: "beginner",
+		SessionID: &sess.SessionID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetSessionSelection(ctx, sess.SessionID, story.StoryID, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(srv.URL + "/api/v1/sessions/" + sess.SessionID + "/content")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("content = %d", resp.StatusCode)
+	}
+	var out struct {
+		ContentType string `json:"content_type"`
+		Story       *struct {
+			StoryID string `json:"story_id"`
+		} `json:"story"`
+		PhraseSet *json.RawMessage `json:"phrase_set"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.ContentType != "story" {
+		t.Fatalf("want story, got %q", out.ContentType)
+	}
+	if out.PhraseSet != nil {
+		t.Fatal("story content must not include phrase_set")
+	}
+	if out.Story == nil || out.Story.StoryID != story.StoryID {
+		t.Fatalf("story ref not returned: %+v", out.Story)
+	}
+}
+
+func TestGenerateExpressionGuidedRequiresExpressions(t *testing.T) {
+	srv, _ := newServer(t, true)
+	resp, err := http.Post(srv.URL+"/api/v1/sessions/generate", "application/json",
+		strings.NewReader(`{"language":"xx","level":"beginner","session_type":"expression_guided","expression_output":"phrases"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("want 400 for expression-guided with no expressions, got %d", resp.StatusCode)
+	}
+}
+
 func TestGenerateUnknownLanguage(t *testing.T) {
 	srv, _ := newServer(t, true)
 	resp, err := http.Post(srv.URL+"/api/v1/sessions/generate", "application/json",

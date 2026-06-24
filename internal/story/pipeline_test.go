@@ -89,6 +89,15 @@ func (c *clientControl) client() *llm.FakeClient {
 			})
 			return llm.LLMResponse{Text: string(body)}, nil
 		}
+		if kind == "phrase_generator" {
+			body, _ := json.Marshal(map[string]any{
+				"phrases": []map[string]any{
+					{"target_text": "a a", "gloss": "a a", "notes": "",
+						"annotations": []map[string]string{{"kind": "vocabulary", "label": "a", "note": "letter a"}}},
+				},
+			})
+			return llm.LLMResponse{Text: string(body), OutputTokens: 20}, nil
+		}
 		if kind == "story_generator" {
 			text := c.stories[min(c.storyN, len(c.stories)-1)]
 			c.storyN++
@@ -343,6 +352,111 @@ func TestPipeline_SystemSessionAvoidsRecentTopic(t *testing.T) {
 	}
 	if first.Topic == second.Topic {
 		t.Fatalf("second session repeated the recent topic %q", first.Topic)
+	}
+}
+
+// phraseSession creates an expression-guided phrase session.
+func (h *harness) phraseSession(t *testing.T, expressions ...string) string {
+	t.Helper()
+	sess, err := h.repo.CreateSession(context.Background(), domain.Session{
+		UserID: h.userID, Language: "xx", Level: "beginner",
+		SessionType:      domain.SessionExpressionGuided,
+		ExpressionOutput: domain.ExpressionOutputPhrases,
+		UserExpressions:  expressions,
+	})
+	must(t, err)
+	return sess.SessionID
+}
+
+func TestPipeline_ExpressionPhraseSessionProducesPhraseSetNotStory(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t, &clientControl{stories: []string{"a a a a"}}, []string{tasks.TypeComprehensionMC})
+	sessID := h.phraseSession(t, "invite a friend to coffee")
+
+	must(t, h.pipeline.Generate(ctx, sessID, nil))
+
+	sess, _ := h.repo.GetSession(ctx, sessID)
+	if sess.Status != domain.StatusReady {
+		t.Fatalf("want ready, got %q", sess.Status)
+	}
+	if sess.StoryID != nil {
+		t.Fatal("phrase session must not produce a story")
+	}
+	if sess.ContentType() != domain.ContentPhraseSet {
+		t.Fatalf("want phrase_set content type, got %q", sess.ContentType())
+	}
+
+	ps, err := h.repo.GetPhraseSet(ctx, sessID)
+	must(t, err)
+	if len(ps.Items) == 0 || strings.TrimSpace(ps.Items[0].TargetText) == "" {
+		t.Fatalf("phrase set not persisted: %+v", ps)
+	}
+	// Targets were attributed to the phrase.
+	if len(ps.Items[0].TargetItemIDs) != 2 {
+		t.Fatalf("phrase missing target attribution: %+v", ps.Items[0])
+	}
+
+	// phrase_generation completed; the story/tokenization stages never ran.
+	if h.stageStatus(t, sessID, domain.StagePhraseGeneration) != domain.StageComplete {
+		t.Fatal("phrase_generation stage should be complete")
+	}
+	if h.stageStatus(t, sessID, domain.StageStoryGeneration) != "" {
+		t.Fatal("phrase session must not run story_generation")
+	}
+	for _, call := range h.client.Calls {
+		if call.Kind == "story_generator" {
+			t.Fatal("phrase session must not call the story generator")
+		}
+	}
+
+	// Tasks were generated from the phrases (joined target text as source).
+	tks, _ := h.repo.ListSessionTasks(ctx, sessID)
+	if len(tks) == 0 {
+		t.Fatal("no tasks generated for phrase session")
+	}
+	var phrasePrompt, taskPrompt string
+	for _, call := range h.client.Calls {
+		switch call.Kind {
+		case "phrase_generator":
+			phrasePrompt = call.Req.User
+		case "task_comprehension_mc":
+			taskPrompt = call.Req.User
+		}
+	}
+	if !strings.Contains(phrasePrompt, "invite a friend to coffee") {
+		t.Fatalf("phrase prompt missing user expression:\n%s", phrasePrompt)
+	}
+	if !strings.Contains(taskPrompt, "a a") {
+		t.Fatalf("task prompt should consume the joined phrases:\n%s", taskPrompt)
+	}
+}
+
+func TestPipeline_PhraseSessionRetryReusesPhraseSet(t *testing.T) {
+	ctx := context.Background()
+	ctrl := &clientControl{
+		stories:  []string{"a a a a"},
+		failKind: map[string]bool{"task_comprehension_mc": true},
+	}
+	h := newHarness(t, ctrl, []string{tasks.TypeComprehensionMC})
+	sessID := h.phraseSession(t, "order food")
+
+	// First run: phrase set succeeds, the only task type fails -> session failed.
+	must(t, h.pipeline.Generate(ctx, sessID, nil))
+	sess, _ := h.repo.GetSession(ctx, sessID)
+	if sess.Status != domain.StatusFailed {
+		t.Fatalf("want failed (task failed), got %q", sess.Status)
+	}
+	phraseCallsBefore := ctrl.calls(h.client, "phrase_generator")
+
+	// Retry: only the failed task stage re-runs; phrases are not regenerated.
+	ctrl.failKind = nil
+	must(t, h.pipeline.Retry(ctx, sessID, nil))
+	if got := ctrl.calls(h.client, "phrase_generator"); got != phraseCallsBefore {
+		t.Fatalf("retry regenerated the phrase set (%d -> %d)", phraseCallsBefore, got)
+	}
+	sess, _ = h.repo.GetSession(ctx, sessID)
+	if sess.Status != domain.StatusReady {
+		t.Fatalf("want ready after retry, got %q", sess.Status)
 	}
 }
 

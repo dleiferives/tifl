@@ -107,11 +107,14 @@ const (
 )
 
 // Stage names. Task stages are "task_" + the task type id (see StageForTask).
+// A session produces content through exactly one of story_generation (+
+// tokenization) or phrase_generation, depending on its ContentType.
 const (
-	StageScopeCheck      = "scope_check"
-	StageStoryGeneration = "story_generation"
-	StageTokenization    = "tokenization"
-	StageTaskPrefix      = "task_"
+	StageScopeCheck       = "scope_check"
+	StageStoryGeneration  = "story_generation"
+	StagePhraseGeneration = "phrase_generation"
+	StageTokenization     = "tokenization"
+	StageTaskPrefix       = "task_"
 )
 
 // StageForTask returns the stage name for a task type id, e.g.

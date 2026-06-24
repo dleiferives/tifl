@@ -504,6 +504,50 @@ func testPipeline(t *testing.T, repo db.Repository) {
 	}, nil); err == nil {
 		t.Fatal("expected FK violation for task on unknown session")
 	}
+
+	// --- phrase sets: round-trip, upsert idempotency, FK, ErrNotFound --------
+	phraseSess, err := repo.CreateSession(ctx, domain.Session{
+		UserID: user.UserID, Language: "grc", Level: "beginner",
+		SessionType: domain.SessionExpressionGuided, ExpressionOutput: domain.ExpressionOutputPhrases,
+		UserExpressions: []string{"greet a friend"},
+	})
+	must(t, err)
+	if phraseSess.ContentType() != domain.ContentPhraseSet {
+		t.Fatalf("expression+phrases should be a phrase set, got %q", phraseSess.ContentType())
+	}
+	ps := domain.PhraseSet{
+		SessionID: phraseSess.SessionID, UserID: user.UserID, Language: "grc",
+		Items: []domain.PhraseItem{{
+			PhraseID: "ph1", TargetText: "χαῖρε", Gloss: "hello", Notes: "greeting",
+			TargetItemIDs: []string{item},
+			Annotations:   []domain.PhraseAnnotation{{Kind: "vocabulary", Label: "χαῖρε", Note: "imperative greeting"}},
+		}},
+	}
+	if _, err := repo.CreatePhraseSet(ctx, ps); err != nil {
+		t.Fatal(err)
+	}
+	// Upsert is idempotent: a second create replaces rather than erroring.
+	must(t, func() error { _, e := repo.CreatePhraseSet(ctx, ps); return e }())
+	gotPS, err := repo.GetPhraseSet(ctx, phraseSess.SessionID)
+	must(t, err)
+	if len(gotPS.Items) != 1 || gotPS.Items[0].TargetText != "χαῖρε" || gotPS.Items[0].Gloss != "hello" {
+		t.Fatalf("phrase set round-trip mismatch: %+v", gotPS)
+	}
+	if len(gotPS.Items[0].Annotations) != 1 || gotPS.Items[0].Annotations[0].Kind != "vocabulary" {
+		t.Fatalf("phrase annotations not round-tripped: %+v", gotPS.Items[0])
+	}
+	if len(gotPS.Items[0].TargetItemIDs) != 1 || gotPS.Items[0].TargetItemIDs[0] != item {
+		t.Fatalf("phrase target ids not round-tripped: %+v", gotPS.Items[0])
+	}
+	if _, err := repo.GetPhraseSet(ctx, "missing"); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("want ErrNotFound for missing phrase set, got %v", err)
+	}
+	if _, err := repo.CreatePhraseSet(ctx, domain.PhraseSet{
+		SessionID: "missing", UserID: user.UserID, Language: "grc",
+		Items: []domain.PhraseItem{{PhraseID: "x", TargetText: "x"}},
+	}); err == nil {
+		t.Fatal("expected FK violation for phrase set on unknown session")
+	}
 }
 
 // testLLMCalls exercises the append-only audit log shared by every backend: a
