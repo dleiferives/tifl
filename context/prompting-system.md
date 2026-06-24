@@ -266,6 +266,16 @@ injection points in the prompt. Adding a new language does not require
 touching the builder code — the plugin provides its own fragments and the
 builder uses them.
 
+**Zero-background hint.** The story builder has one additional injection point:
+when `len(lc.Selected.Background) == 0` (the learner's first session, before any
+items have been acquired), the pipeline checks whether the language plugin
+implements `ZeroBackgroundProvider`. If it does, the returned hint string is
+appended to the story builder's hard-constraint list. It should instruct the LLM
+to produce a single very short paragraph using only the most elementary vocabulary
+for that language. This prevents the model from writing a normal-complexity story
+when the coverage check is vacuously satisfied and there is no background pool to
+anchor vocabulary choices. See `language-plugins.md` for the interface definition.
+
 ---
 
 ## Prompt Versioning

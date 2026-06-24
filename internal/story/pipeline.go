@@ -630,8 +630,16 @@ func (p *Pipeline) runTaskType(ctx context.Context, sess domain.Session, lc doma
 // and reports an approximate token_rate from the elapsed wall time for the SSE
 // ticker. The story text is never streamed; this is a rate visualization only.
 func (p *Pipeline) generateStory(ctx context.Context, lc domain.LearnerCtx) (llm.StoryResult, int, error) {
+	builder := llm.StoryBuilder{}
+	if len(lc.Selected.Background) == 0 {
+		if plugin, ok := p.deps.Langs.Get(lc.Language); ok {
+			if zbp, ok := plugin.(lang.ZeroBackgroundProvider); ok {
+				builder.ZeroBackgroundHint = zbp.ZeroBackgroundHint()
+			}
+		}
+	}
 	start := time.Now()
-	res, err := llm.CompleteJSON(ctx, p.deps.Client, llm.StoryBuilder{}, lc,
+	res, err := llm.CompleteJSON(ctx, p.deps.Client, builder, lc,
 		func(r llm.StoryResult) error { return r.Validate() })
 	if err != nil {
 		return llm.StoryResult{}, 0, err
@@ -735,8 +743,12 @@ func (p *Pipeline) markSession(ctx context.Context, sessionID string, status dom
 
 // measureCoverage is the comprehensible-input check from
 // context/knowledge-predictor.md: the fraction of story word tokens whose key is
-// in the known background pool. A story with no word tokens is trivially covered.
+// in the known background pool. A story with no word tokens, or a learner with no
+// background yet, is trivially covered.
 func measureCoverage(tokens []lang.Token, background []domain.KnowledgeItem) float64 {
+	if len(background) == 0 {
+		return 1.0
+	}
 	known := make(map[string]bool, len(background))
 	for _, it := range background {
 		known[it.Key] = true

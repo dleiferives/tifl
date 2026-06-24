@@ -231,6 +231,15 @@ story first, then measure coverage, then retry. With the predictor, you can
 budget the coverage target into the item selection before generation begins,
 dramatically reducing wasted LLM calls.
 
+**New-user edge case.** When the learner has no background vocabulary yet
+(acquisition stage `acquired` or `automatic` on zero items), the coverage check
+is vacuously satisfied — `measureCoverage` returns `1.0` when the background pool
+is empty, rather than dividing by zero and claiming 0% coverage. The pipeline
+instead relies on the language plugin's `ZeroBackgroundHint` (see
+`language-plugins.md`) to constrain the LLM to elementary vocabulary for that
+session. Coverage becomes a meaningful gate only once the user has accumulated
+some background items through normal reading and task completion.
+
 ---
 
 ## What to Log Now for Training Later

@@ -84,6 +84,16 @@ type TopicPoolProvider interface {
 	TopicPools() map[string][]string
 }
 
+// ZeroBackgroundProvider is optionally implemented by language plugins to supply
+// a story-generation hint used when the learner has no background vocabulary yet
+// (i.e. their first session). The hint is injected into the story prompt to
+// constrain the LLM to the most elementary possible language — a single short
+// paragraph using only the most fundamental words. Plugins that do not implement
+// this get no special constraint and rely on the level label alone.
+type ZeroBackgroundProvider interface {
+	ZeroBackgroundHint() string
+}
+
 // SkillDefinition describes one language competency. Concept is the stable
 // grammatical/semantic handle prompt builders can later map to
 // SkillConstraints, while Associations is an explicit small key map for #68.

@@ -126,6 +126,14 @@ func (Greek) Frequency() []string {
 	return frequency
 }
 
+// ZeroBackgroundHint returns the story-generation constraint injected when the
+// learner has no background vocabulary yet. It limits the LLM to the most
+// elementary Modern Greek possible so a first-session story is comprehensible
+// without any prior knowledge record.
+func (Greek) ZeroBackgroundHint() string {
+	return "The learner has no background vocabulary yet. Write a single very short paragraph (3–4 simple sentences maximum) using only the most elementary Modern Greek: basic pronouns (εγώ, εσύ, αυτός/αυτή), the verbs είμαι and έχω, one or two high-frequency everyday nouns, and essential particles (και, δεν, να). No complex grammar, no subordinate clauses."
+}
+
 // isWordRune reports whether r should be treated as part of a word token.
 // Letters (Greek and other scripts) and the apostrophe (used in Greek elision,
 // e.g. κι' αντί) are word characters.

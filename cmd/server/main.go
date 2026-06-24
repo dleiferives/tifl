@@ -62,6 +62,9 @@ func main() {
 	if err := seedSkills(ctx, repo, langRegistry); err != nil {
 		log.Fatalf("seed skills: %v", err)
 	}
+	if err := seedKnowledgeItems(ctx, repo, langRegistry); err != nil {
+		log.Fatalf("seed knowledge items: %v", err)
+	}
 
 	// Register the built-in task types and verify every language only advertises
 	// task types that actually resolve — a missing type would fail at generation
@@ -161,6 +164,27 @@ func verifyTaskTypes(langs *lang.Registry, registry *tasks.Registry) error {
 		for _, id := range l.SupportedTaskTypes() {
 			if _, ok := registry.Get(id); !ok {
 				return fmt.Errorf("language %q lists unregistered task type %q", l.Code(), id)
+			}
+		}
+	}
+	return nil
+}
+
+// seedKnowledgeItems upserts a knowledge_items catalogue row for every key in a
+// plugin's frequency list. Frequency rank (1-based, lower = more common) is
+// stored so the selector can prefer high-frequency items when introducing new
+// vocabulary. Existing rows are not overwritten — only a missing frequency value
+// is filled in — so manually curated metadata is preserved across restarts.
+func seedKnowledgeItems(ctx context.Context, repo db.Repository, registry *lang.Registry) error {
+	for _, l := range registry.All() {
+		for rank, key := range l.Frequency() {
+			if _, err := repo.UpsertKnowledgeItem(ctx, domain.KnowledgeItem{
+				Language:  l.Code(),
+				ItemType:  "word",
+				Key:       key,
+				Frequency: rank + 1,
+			}); err != nil {
+				return fmt.Errorf("language %s key %q: %w", l.Code(), key, err)
 			}
 		}
 	}

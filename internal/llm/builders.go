@@ -25,8 +25,11 @@ const (
 // surrounding context to infer its meaning. The vocabulary pool is the whole of
 // the constraint: the model is told not to reach beyond SelectedItems, which is
 // how the comprehensible-input ratio is held. Assets is optional.
+// ZeroBackgroundHint, when non-empty, is injected as an additional hard
+// constraint for learners who have no background vocabulary yet.
 type StoryBuilder struct {
-	Assets LangAssets
+	Assets             LangAssets
+	ZeroBackgroundHint string
 }
 
 func (StoryBuilder) Kind() string    { return "story_generator" }
@@ -42,6 +45,9 @@ func (b StoryBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
 	sys.WriteString("- Every new item must appear at least once, supported by surrounding context (not dropped in).\n")
 	if note := noteOf(b.Assets); note != "" {
 		fmt.Fprintf(&sys, "- Writing system: %s\n", note)
+	}
+	if b.ZeroBackgroundHint != "" {
+		fmt.Fprintf(&sys, "- %s\n", b.ZeroBackgroundHint)
 	}
 	sys.WriteString("Respond with a JSON object: ")
 	sys.WriteString(`{"story": string, "estimated_coverage": number, "glossary": [{"key": string, "gloss": string}]}.`)

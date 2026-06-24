@@ -251,6 +251,22 @@ corpus frequency list (e.g., the 5,000 most common Greek lemmas by frequency in
 the TLG corpus). The plugin provides this as a slice; the selector uses it to
 prefer high-frequency items when picking what to introduce next.
 
+At server startup `seedKnowledgeItems` walks every registered plugin's
+`Frequency()` list and upserts a `knowledge_items` row for each key (type
+`"word"`, frequency rank 1-based). This keeps the shared language catalogue
+in sync with the plugin without any manual seed step. Existing rows are not
+overwritten — only a missing frequency value is filled in — so manually curated
+metadata survives restarts.
+
+**Zero-background story hint** _(optional interface: `ZeroBackgroundProvider`)_
+When a learner has no background vocabulary yet (their very first session), the
+coverage check is vacuously satisfied and the story generator receives an extra
+hard constraint from the plugin: a short instruction to write only in the most
+elementary register possible — basic pronouns, a handful of core verbs, one or two
+common nouns, nothing more. This keeps the first story comprehensible without
+pre-seeding any fake knowledge into the user's record. Plugins that do not
+implement `ZeroBackgroundProvider` fall back to the level label alone.
+
 ---
 
 ## Plugin Registration
