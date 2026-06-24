@@ -71,6 +71,38 @@ func TestStoryResultValidate(t *testing.T) {
 	}
 }
 
+func TestScopeCheckResultValidate(t *testing.T) {
+	yes, no := true, false
+	if err := (ScopeCheckResult{Viable: &yes}).Validate(); err != nil {
+		t.Errorf("viable result rejected: %v", err)
+	}
+	if err := (ScopeCheckResult{Viable: &no, Reason: "too hard"}).Validate(); err != nil {
+		t.Errorf("rejection with reason rejected: %v", err)
+	}
+	if err := (ScopeCheckResult{}).Validate(); err == nil {
+		t.Error("missing verdict accepted")
+	}
+	if err := (ScopeCheckResult{Viable: &no}).Validate(); err == nil {
+		t.Error("rejection without a reason accepted")
+	}
+	if (ScopeCheckResult{}).IsViable() {
+		t.Error("absent verdict should not be viable")
+	}
+}
+
+func TestPhraseSetResultValidate(t *testing.T) {
+	ok := PhraseSetResult{Phrases: []PhraseResult{{TargetText: "γεια"}}}
+	if err := ok.Validate(); err != nil {
+		t.Errorf("valid phrase set rejected: %v", err)
+	}
+	if err := (PhraseSetResult{}).Validate(); err == nil {
+		t.Error("empty phrase set accepted")
+	}
+	if err := (PhraseSetResult{Phrases: []PhraseResult{{TargetText: "  "}}}).Validate(); err == nil {
+		t.Error("phrase without target text accepted")
+	}
+}
+
 func TestAssessmentResultValidate(t *testing.T) {
 	if err := (AssessmentResult{Stage: "acquiring"}).Validate(); err != nil {
 		t.Errorf("valid stage rejected: %v", err)

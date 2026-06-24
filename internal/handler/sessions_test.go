@@ -625,14 +625,22 @@ func TestGenerateTopicGuidedRequiresTopic(t *testing.T) {
 
 func TestGenerateNoBrokerReturns503(t *testing.T) {
 	srv, _ := newServer(t, false)
-	resp, err := http.Post(srv.URL+"/api/v1/sessions/generate", "application/json",
-		strings.NewReader(`{"language":"xx"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("want 503 without a gateway, got %d", resp.StatusCode)
+	// Every session type needs the gateway; with none configured, generation is
+	// 503 regardless of type (no deterministic offline fallback — scope check and
+	// content generation both require the LLM).
+	for _, body := range []string{
+		`{"language":"xx"}`,
+		`{"language":"xx","level":"beginner","session_type":"topic_guided","topic":"the market"}`,
+		`{"language":"xx","level":"beginner","session_type":"expression_guided","expression_output":"phrases","user_expressions":["say hi"]}`,
+	} {
+		resp, err := http.Post(srv.URL+"/api/v1/sessions/generate", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusServiceUnavailable {
+			t.Fatalf("want 503 without a gateway for %s, got %d", body, resp.StatusCode)
+		}
 	}
 }
 
