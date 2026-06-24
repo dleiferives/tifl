@@ -111,6 +111,8 @@ func newServer(t *testing.T, withBroker bool) (*httptest.Server, *db.FakeReposit
 	if withBroker {
 		client = &llm.FakeClient{Func: func(_ context.Context, kind string, _ llm.LLMRequest) (llm.LLMResponse, error) {
 			switch kind {
+			case "scope_check":
+				return llm.LLMResponse{Text: `{"viable":true,"reason":"ok","suggested_topic":""}`}, nil
 			case "story_generator":
 				return llm.LLMResponse{Text: `{"story":"a a a","estimated_coverage":0.9,"glossary":[]}`}, nil
 			case "definition":
@@ -490,6 +492,19 @@ func TestGenerateUnknownLanguage(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("want 400 for unknown language, got %d", resp.StatusCode)
+	}
+}
+
+func TestGenerateTopicGuidedRequiresTopic(t *testing.T) {
+	srv, _ := newServer(t, true)
+	resp, err := http.Post(srv.URL+"/api/v1/sessions/generate", "application/json",
+		strings.NewReader(`{"language":"xx","level":"beginner","session_type":"topic_guided","topic":"  "}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("want 400 for topic-guided with empty topic, got %d", resp.StatusCode)
 	}
 }
 

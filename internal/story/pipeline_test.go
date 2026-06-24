@@ -66,15 +66,28 @@ func (s fixedSelector) Select(context.Context, selector.SelectRequest) (domain.S
 // and which task-type kinds should error (to exercise per-type failure isolation
 // and retry).
 type clientControl struct {
-	stories  []string
-	storyN   int
-	failKind map[string]bool
+	stories     []string
+	storyN      int
+	failKind    map[string]bool
+	scopeReject bool   // when true, scope_check returns viable=false
+	scopeReason string // reason text for a rejection (defaults if empty)
 }
 
 func (c *clientControl) client() *llm.FakeClient {
 	return &llm.FakeClient{Func: func(_ context.Context, kind string, _ llm.LLMRequest) (llm.LLMResponse, error) {
 		if c.failKind[kind] {
 			return llm.LLMResponse{}, errors.New("forced failure: " + kind)
+		}
+		if kind == "scope_check" {
+			viable := !c.scopeReject
+			reason := c.scopeReason
+			if reason == "" && !viable {
+				reason = "topic requires vocabulary beyond this level"
+			}
+			body, _ := json.Marshal(map[string]any{
+				"viable": viable, "reason": reason, "suggested_topic": "a simpler version",
+			})
+			return llm.LLMResponse{Text: string(body)}, nil
 		}
 		if kind == "story_generator" {
 			text := c.stories[min(c.storyN, len(c.stories)-1)]
@@ -330,6 +343,90 @@ func TestPipeline_SystemSessionAvoidsRecentTopic(t *testing.T) {
 	}
 	if first.Topic == second.Topic {
 		t.Fatalf("second session repeated the recent topic %q", first.Topic)
+	}
+}
+
+// topicGuidedSession creates a topic-guided session with a fixed user topic.
+func (h *harness) topicGuidedSession(t *testing.T, topic string) string {
+	t.Helper()
+	sess, err := h.repo.CreateSession(context.Background(), domain.Session{
+		UserID: h.userID, Language: "xx", Level: "beginner",
+		SessionType: domain.SessionTopicGuided, Topic: topic,
+	})
+	must(t, err)
+	return sess.SessionID
+}
+
+func TestPipeline_TopicGuidedViableTopicProceeds(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t, &clientControl{stories: []string{"a a a a"}}, []string{tasks.TypeComprehensionMC})
+	sessID := h.topicGuidedSession(t, "a trip to the market")
+
+	must(t, h.pipeline.Generate(ctx, sessID, nil))
+
+	sess, _ := h.repo.GetSession(ctx, sessID)
+	if sess.Status != domain.StatusReady {
+		t.Fatalf("want ready, got %q", sess.Status)
+	}
+	if sess.Topic != "a trip to the market" {
+		t.Fatalf("user topic should be preserved, got %q", sess.Topic)
+	}
+	if h.stageStatus(t, sessID, domain.StageScopeCheck) != domain.StageComplete {
+		t.Fatal("scope_check stage should be complete")
+	}
+	// The user topic flows into the story prompt.
+	var storyPrompt string
+	for _, call := range h.client.Calls {
+		if call.Kind == "story_generator" {
+			storyPrompt = call.Req.User
+		}
+	}
+	if !strings.Contains(storyPrompt, "Requested topic: a trip to the market") {
+		t.Fatalf("story prompt missing user topic:\n%s", storyPrompt)
+	}
+}
+
+func TestPipeline_TopicGuidedRejectedTopicProducesNoStory(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t, &clientControl{
+		stories: []string{"a a a a"}, scopeReject: true, scopeReason: "too specialized",
+	}, []string{tasks.TypeComprehensionMC})
+	sessID := h.topicGuidedSession(t, "advanced tensor calculus proofs")
+
+	err := h.pipeline.Generate(ctx, sessID, nil)
+	if err == nil {
+		t.Fatal("expected rejection error")
+	}
+
+	sess, _ := h.repo.GetSession(ctx, sessID)
+	if sess.Status != domain.StatusFailed {
+		t.Fatalf("want failed, got %q", sess.Status)
+	}
+	if sess.StoryID != nil {
+		t.Fatal("rejected topic must not produce a story")
+	}
+	// No story-generation call was made — scope check gated it.
+	for _, call := range h.client.Calls {
+		if call.Kind == "story_generator" {
+			t.Fatal("story generator should not run for a rejected topic")
+		}
+	}
+	// Scope-check stage failed with the rejection code and a human reason.
+	all, _ := h.repo.ListStages(ctx, sessID)
+	var found bool
+	for _, s := range all {
+		if s.Stage == domain.StageScopeCheck {
+			found = true
+			if s.Status != domain.StageFailed || s.ErrorCode == nil || *s.ErrorCode != story.ErrCodeScopeRejected {
+				t.Fatalf("scope_check not failed with rejection code: %+v", s)
+			}
+			if s.ErrorDetail == nil || !strings.Contains(*s.ErrorDetail, "too specialized") {
+				t.Fatalf("scope_check missing human reason: %+v", s)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no scope_check stage recorded")
 	}
 }
 

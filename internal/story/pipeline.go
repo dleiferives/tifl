@@ -25,12 +25,14 @@ const topicHistoryWindow = 5
 // failure class, not the underlying message (that goes in error_detail). See
 // context/session-types.md ("Error handling").
 const (
-	ErrCodeSelection    = "GEN_SELECT_001"     // selection layer failed (no LLM stage)
-	ErrCodeStory        = "GEN_STORY_001"      // story generation LLM/parse failure
-	ErrCodeCoverage     = "GEN_STORY_COVERAGE" // coverage below target after retries
-	ErrCodeTokenize     = "GEN_TOKENIZE_001"   // tokenization / persistence failure
-	ErrCodeTaskGenerate = "GEN_TASK_001"       // a task type's generation failed
-	ErrCodePersist      = "GEN_PERSIST_001"    // a non-LLM persistence step failed
+	ErrCodeSelection     = "GEN_SELECT_001"     // selection layer failed (no LLM stage)
+	ErrCodeScopeCheck    = "GEN_SCOPE_001"      // scope-check LLM/parse failure
+	ErrCodeScopeRejected = "GEN_SCOPE_REJECTED" // topic out of scope for the learner level
+	ErrCodeStory         = "GEN_STORY_001"      // story generation LLM/parse failure
+	ErrCodeCoverage      = "GEN_STORY_COVERAGE" // coverage below target after retries
+	ErrCodeTokenize      = "GEN_TOKENIZE_001"   // tokenization / persistence failure
+	ErrCodeTaskGenerate  = "GEN_TASK_001"       // a task type's generation failed
+	ErrCodePersist       = "GEN_PERSIST_001"    // a non-LLM persistence step failed
 )
 
 // Config tunes the pipeline. The defaults encode the 90% comprehensible-input
@@ -127,6 +129,16 @@ func (p *Pipeline) Generate(ctx context.Context, sessionID string, emit emitter)
 
 	if err := p.deps.Repo.UpdateSessionStatus(ctx, sess.SessionID, domain.StatusGenerating); err != nil {
 		return err
+	}
+
+	// Stage 0 — scope check (topic-guided only). An out-of-scope topic is rejected
+	// here with a human reason rather than silently downgraded to a system story,
+	// so the expensive story call never runs. See context/session-types.md.
+	if sess.SessionType == domain.SessionTopicGuided {
+		if err := p.runScopeCheck(ctx, sess, emit); err != nil {
+			p.markSession(ctx, sess.SessionID, domain.StatusFailed)
+			return err
+		}
 	}
 
 	// System-driven sessions arrive with no topic: the hard-system chooser picks
@@ -259,6 +271,50 @@ func (p *Pipeline) stageIndex(ctx context.Context, sessionID string) map[string]
 		idx[s.Stage] = s
 	}
 	return idx
+}
+
+// runScopeCheck is the topic-guided pre-flight, persisted as the scope_check
+// stage so SSE progress, retry, and admin inspection are consistent. A viable
+// topic completes the stage and generation proceeds; an out-of-scope topic fails
+// the stage with ErrCodeScopeRejected and the human-readable reason in
+// error_detail (the client offers a rephrase and creates a new session). An
+// LLM/parse failure fails with ErrCodeScopeCheck and is retryable. See
+// context/session-types.md ("Scope check").
+func (p *Pipeline) runScopeCheck(ctx context.Context, sess domain.Session, emit emitter) error {
+	stage := domain.StageScopeCheck
+	p.beginStage(ctx, sess.SessionID, stage)
+	emit.emit(Event{Stage: stage, Status: string(domain.StageInProgress)})
+
+	lc := domain.LearnerCtx{UserID: sess.UserID, Language: sess.Language, Level: sess.Level}
+	// Skill constraints sharpen the level signal but are not required; ignore a
+	// failure to build them rather than rejecting a topic on an unrelated error.
+	if p.deps.SkillConstraints != nil {
+		if skills, err := p.deps.SkillConstraints.BuildSkillConstraints(ctx, sess.UserID, sess.Language); err == nil {
+			lc.Skills = skills
+		}
+	}
+
+	res, err := llm.CompleteJSON(ctx, p.deps.Client, llm.ScopeCheckBuilder{Topic: sess.Topic}, lc,
+		func(r llm.ScopeCheckResult) error { return r.Validate() })
+	if err != nil {
+		se := fail(ErrCodeScopeCheck, err)
+		p.failStage(ctx, sess.SessionID, stage, se)
+		emit.emit(Event{Stage: stage, Status: string(domain.StageFailed), ErrorCode: se.code})
+		return se
+	}
+	if !res.IsViable() {
+		detail := res.Reason
+		if res.SuggestedTopic != "" {
+			detail += " (try: " + res.SuggestedTopic + ")"
+		}
+		se := fail(ErrCodeScopeRejected, fmt.Errorf("%s", detail))
+		p.failStage(ctx, sess.SessionID, stage, se)
+		emit.emit(Event{Stage: stage, Status: string(domain.StageFailed), ErrorCode: se.code})
+		return se
+	}
+	p.completeStage(ctx, sess.SessionID, stage)
+	emit.emit(Event{Stage: stage, Status: string(domain.StageComplete)})
+	return nil
 }
 
 // runSelection runs the hard-system selector and assembles the LearnerCtx the

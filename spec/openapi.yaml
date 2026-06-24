@@ -290,6 +290,13 @@ paths:
         deterministic level rules; otherwise the current profile level is used.
         Poll progress via /sessions/{id}/events. Returns 503 if no LLM gateway
         is configured.
+
+
+        Topic-guided sessions (session_type=topic_guided) require a non-empty
+        topic (400 otherwise) and run a scope_check stage first: an out-of-scope
+        topic fails generation with error_code GEN_SCOPE_REJECTED and a
+        human-readable error_detail rather than silently producing a
+        system-driven story. System-driven sessions choose a topic automatically.
       operationId: generateSession
       requestBody:
         required: true
@@ -987,7 +994,7 @@ components:
       properties:
         stage:
           type: string
-          description: "selection|story_generation|tokenization|task_<type>|done"
+          description: "scope_check|selection|story_generation|tokenization|task_<type>|done"
         status:
           type: string
           description: "stage status for progress events; final session status for stage=done"
@@ -1001,7 +1008,15 @@ components:
         token_rate: { type: integer, description: "approx upstream tokens/sec" }
         error_code:
           type: string
-          description: "stable code on failed progress events and failed terminal events"
+          description: >
+            stable code on failed progress events and failed terminal events;
+            GEN_SCOPE_REJECTED means a topic-guided topic was out of scope for the
+            learner level
+        error_detail:
+          type: string
+          description: >
+            human-readable failure reason on failed terminal events, e.g. why a
+            topic was rejected and an optional simpler rephrasing to try
         failed_stage:
           type: string
           description: "first failed stage, present on failed terminal events"

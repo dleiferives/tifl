@@ -80,6 +80,7 @@ type generationEventDTO struct {
 	StoryID      *string          `json:"story_id,omitempty"`
 	TokenRate    int              `json:"token_rate,omitempty"`
 	ErrorCode    string           `json:"error_code,omitempty"`
+	ErrorDetail  string           `json:"error_detail,omitempty"`
 	FailedStage  *string          `json:"failed_stage,omitempty"`
 	Tasks        *taskProgressDTO `json:"tasks,omitempty"`
 	StageSummary *stageSummaryDTO `json:"stage_summary,omitempty"`
@@ -211,12 +212,21 @@ func (h *Handler) generateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sessionType := sessionTypeOrDefault(req.SessionType)
+	topic := strings.TrimSpace(req.Topic)
+	// Topic-guided sessions need a topic to scope-check; an empty one is a client
+	// error, not a silent fall-through to a system-driven story.
+	if sessionType == domain.SessionTopicGuided && topic == "" {
+		writeError(w, http.StatusBadRequest, errors.New("topic is required for topic-guided sessions"))
+		return
+	}
+
 	sess, err := h.repo.CreateSession(r.Context(), domain.Session{
 		UserID:           h.currentUserID(r),
 		Language:         language,
 		Level:            level,
-		SessionType:      sessionTypeOrDefault(req.SessionType),
-		Topic:            req.Topic,
+		SessionType:      sessionType,
+		Topic:            topic,
 		UserExpressions:  req.UserExpressions,
 		ExpressionOutput: req.ExpressionOutput,
 	})
@@ -523,8 +533,15 @@ func (h *Handler) terminalGenerationEvent(r *http.Request, sessionID, fallbackSt
 	out.FailedStage = dto.StageSummary.FailedStage
 	if out.FailedStage != nil {
 		for _, st := range dto.Stages {
-			if st.Stage == *out.FailedStage && st.ErrorCode != nil {
-				out.ErrorCode = *st.ErrorCode
+			if st.Stage == *out.FailedStage {
+				if st.ErrorCode != nil {
+					out.ErrorCode = *st.ErrorCode
+				}
+				// The human-readable reason (e.g. why a topic was out of scope) so
+				// the client can show it without a second fetch.
+				if st.ErrorDetail != nil {
+					out.ErrorDetail = *st.ErrorDetail
+				}
 				break
 			}
 		}

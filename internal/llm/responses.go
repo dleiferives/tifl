@@ -91,6 +91,32 @@ func (r AssessmentResult) Validate() error {
 	}
 }
 
+// ScopeCheckResult is the topic-guided scope check's output: whether a requested
+// topic can produce comprehensible input at the learner's level, with a
+// human-readable reason and an optional rephrasing the client can offer. Viable
+// is a pointer so a reply that omits it is rejected rather than silently read as
+// false. See context/session-types.md ("Scope check").
+type ScopeCheckResult struct {
+	Viable         *bool  `json:"viable"`
+	Reason         string `json:"reason"`
+	SuggestedTopic string `json:"suggested_topic"`
+}
+
+// Validate enforces that the verdict is present and that a rejection carries a
+// reason the user can act on.
+func (r ScopeCheckResult) Validate() error {
+	if r.Viable == nil {
+		return errors.New("scope check missing 'viable'")
+	}
+	if !*r.Viable && strings.TrimSpace(r.Reason) == "" {
+		return errors.New("rejected scope check must include a reason")
+	}
+	return nil
+}
+
+// IsViable reports the verdict, treating an absent value as not viable.
+func (r ScopeCheckResult) IsViable() bool { return r.Viable != nil && *r.Viable }
+
 const (
 	SkillTierDecisionPromote = "promote"
 	SkillTierDecisionHold    = "hold"

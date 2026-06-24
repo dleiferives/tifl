@@ -355,6 +355,48 @@ func (b WordBreakdownBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
 	return LLMRequest{System: sys.String(), User: usr.String(), Temperature: gradeTemperature, MaxTokens: 600, ResponseFormat: "json"}
 }
 
+// ScopeCheckBuilder runs the lightweight topic-guided pre-check: can a
+// comprehensible story on this topic be written at the learner's level, or is it
+// too specialized? It is a cheap gate before the expensive story call, returning
+// a verdict plus a human reason and an optional simpler rephrasing. See
+// context/session-types.md ("Scope check").
+type ScopeCheckBuilder struct {
+	Topic string
+}
+
+func (ScopeCheckBuilder) Kind() string    { return "scope_check" }
+func (ScopeCheckBuilder) Version() string { return "scope_check/v1" }
+
+func (b ScopeCheckBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
+	var sys strings.Builder
+	fmt.Fprintf(&sys, "You judge whether a %s learning story on a requested topic is viable at the learner's level.\n", ctx.Language)
+	sys.WriteString("A topic is out of scope when it can only be told with vocabulary far beyond the learner ")
+	sys.WriteString("(dense technical, legal, or specialist terms) such that a comprehensible story is not possible.\n")
+	sys.WriteString("Most everyday topics are viable, possibly with a simpler framing. Be generous but honest.\n")
+	sys.WriteString("Respond with a JSON object: ")
+	sys.WriteString(`{"viable": bool, "reason": string, "suggested_topic": string}.`)
+	sys.WriteString("\nreason is a brief, friendly explanation (always set it when not viable). ")
+	sys.WriteString("suggested_topic is an optional simpler rephrasing the learner could try.")
+	sys.WriteString("\nReturn JSON only — no prose, no markdown.")
+
+	var usr strings.Builder
+	if constraints := serializeSkillConstraints(ctx.Skills); constraints != "" {
+		usr.WriteString("Learner can handle:\n")
+		usr.WriteString(constraints)
+	} else {
+		fmt.Fprintf(&usr, "Learner level: %s\n", levelOrDefault(ctx.Level))
+	}
+	fmt.Fprintf(&usr, "Requested topic: %s\n", b.Topic)
+
+	return LLMRequest{
+		System:         sys.String(),
+		User:           usr.String(),
+		Temperature:    gradeTemperature,
+		MaxTokens:      300,
+		ResponseFormat: "json",
+	}
+}
+
 // compile-time assertions that every builder satisfies PromptBuilder.
 var (
 	_ PromptBuilder = StoryBuilder{}
@@ -364,4 +406,5 @@ var (
 	_ PromptBuilder = DefinitionBuilder{}
 	_ PromptBuilder = SentenceBreakdownBuilder{}
 	_ PromptBuilder = WordBreakdownBuilder{}
+	_ PromptBuilder = ScopeCheckBuilder{}
 )
