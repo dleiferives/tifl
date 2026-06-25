@@ -69,6 +69,12 @@ func TestGetStoryReturnsTokensAndKnowledge(t *testing.T) {
 			Key      string `json:"key"`
 			IsWord   bool   `json:"is_word"`
 		} `json:"tokens"`
+		Sentences []struct {
+			Index         int    `json:"index"`
+			StartPosition int    `json:"start_position"`
+			EndPosition   int    `json:"end_position"`
+			Text          string `json:"text"`
+		} `json:"sentences"`
 		Knowledge map[string]struct {
 			Level       string `json:"level"`
 			LookupCount int    `json:"lookup_count"`
@@ -86,6 +92,12 @@ func TestGetStoryReturnsTokensAndKnowledge(t *testing.T) {
 	}
 	if out.Tokens[1].IsWord || out.Tokens[1].Key != "" {
 		t.Fatalf("middle token should be a non-word space: %+v", out.Tokens[1])
+	}
+	if len(out.Sentences) != 1 {
+		t.Fatalf("want 1 sentence span, got %d", len(out.Sentences))
+	}
+	if s := out.Sentences[0]; s.Index != 0 || s.StartPosition != 0 || s.EndPosition != 3 || s.Text != "a b" {
+		t.Fatalf("wrong sentence span: %+v", s)
 	}
 	k, ok := out.Knowledge["a"]
 	if !ok || k.Level != "3" || k.LookupCount != 2 {

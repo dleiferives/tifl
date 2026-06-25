@@ -424,11 +424,14 @@ paths:
     get:
       summary: Load a story for the reader (tokens + knowledge in one call)
       description: >
-        Returns the server-tokenized story plus the caller's per-item knowledge
-        map (canonical key → level + lookup_count) for the story's language, in a
-        single response — everything the reader needs at load time. Words the user
-        has never interacted with are absent from the map and treated as unseen.
-        Stories are user-scoped; another user's story returns 404.
+        Returns the server-tokenized story, authoritative sentence spans, and
+        the caller's per-item knowledge map (canonical key → level +
+        lookup_count) for the story's language, in a single response —
+        everything the reader needs at load time. Sentence spans use half-open
+        token positions: start_position is included and end_position is one past
+        the final token in the sentence. Words the user has never interacted with
+        are absent from the map and treated as unseen. Stories are user-scoped;
+        another user's story returns 404.
       operationId: getStory
       parameters:
         - name: id
@@ -1143,6 +1146,27 @@ components:
           enum: ["", "1", "2", "3", "4", "5", well_known, ignored]
         lookup_count: { type: integer }
       required: [level, lookup_count]
+    SentenceSpan:
+      type: object
+      description: >
+        Authoritative sentence boundary over story token positions. Positions
+        are half-open: tokens with position >= start_position and < end_position
+        are part of the sentence. Text is exactly the sentence text used by the
+        sentence-breakdown cache key.
+      properties:
+        index:
+          type: integer
+          description: 0-indexed sentence number within the story.
+        start_position:
+          type: integer
+          description: First token position in the sentence, inclusive.
+        end_position:
+          type: integer
+          description: One past the final token position in the sentence.
+        text:
+          type: string
+          description: Readable sentence text reconstructed from story tokens.
+      required: [index, start_position, end_position, text]
     StoryLoad:
       type: object
       description: Everything the reader needs at load time, in one response.
@@ -1152,11 +1176,15 @@ components:
         tokens:
           type: array
           items: { $ref: "#/components/schemas/StoryToken" }
+        sentences:
+          type: array
+          description: Authoritative sentence spans for highlighting and sentence breakdown requests.
+          items: { $ref: "#/components/schemas/SentenceSpan" }
         knowledge:
           type: object
           description: "canonical key → knowledge state; unseen items are absent"
           additionalProperties: { $ref: "#/components/schemas/ReaderKnowledge" }
-      required: [story_id, language, tokens, knowledge]
+      required: [story_id, language, tokens, sentences, knowledge]
     ReaderEvent:
       type: object
       description: One logged reader interaction.
