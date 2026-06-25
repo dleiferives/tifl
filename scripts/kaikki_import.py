@@ -6,6 +6,8 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
+import time
 import urllib.request
 from datetime import datetime
 from pathlib import Path
@@ -98,10 +100,46 @@ def default_db() -> Path:
         for line in config.read_text().splitlines():
             stripped = line.strip()
             if stripped.startswith("db_path:"):
-                val = stripped.split(":", 1)[1].strip().strip('"').strip("'")
+                val = stripped.split(":", 1)[1].split("#")[0].strip().strip('"').strip("'")
                 if val:
                     return Path(__file__).parent.parent / val
     return Path(__file__).parent.parent / "data" / "tifl.db"
+
+
+def run_with_spinner(label: str, cmd: list[str]) -> int:
+    """Run cmd, showing a spinner + elapsed time. Returns exit code."""
+    frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    start = time.monotonic()
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    lines: list[str] = []
+    done = threading.Event()
+
+    def spin() -> None:
+        i = 0
+        while not done.is_set():
+            elapsed = time.monotonic() - start
+            frame = frames[i % len(frames)] if not NO_COLOR else "-"
+            print(f"\r  {c(CYAN, frame)} {label}  {dim(f'{elapsed:.0f}s')}", end="", flush=True)
+            i += 1
+            time.sleep(0.08)
+
+    spinner = threading.Thread(target=spin, daemon=True)
+    spinner.start()
+
+    assert proc.stdout
+    for line in proc.stdout:
+        lines.append(line.rstrip())
+
+    proc.wait()
+    done.set()
+    spinner.join()
+    print("\r" + " " * 60 + "\r", end="")  # clear spinner line
+
+    if lines:
+        for line in lines:
+            print(f"  {dim(line)}")
+
+    return proc.returncode
 
 
 def download(url: str, dest: Path) -> None:
@@ -236,10 +274,10 @@ def run(
         return
 
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    result = subprocess.run(cmd)
-    if result.returncode != 0:
-        err(f"Import failed (exit {result.returncode})")
-        sys.exit(result.returncode)
+    rc = run_with_spinner("Importing…", cmd)
+    if rc != 0:
+        err(f"Import failed (exit {rc})")
+        sys.exit(rc)
     ok("Import complete")
 
 
