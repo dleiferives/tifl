@@ -1,0 +1,145 @@
+{
+  "scored": [
+    {
+      "pipeline": "bigpool_skills",
+      "scenario": "coffee-morning",
+      "level": "early",
+      "model": "google/gemma-4-31b-it:free",
+      "metrics": {
+        "foreign_chars": 0,
+        "foreign_set": [],
+        "vocab_missing": [],
+        "phrases_missing": [
+          "πίνω καφέ"
+        ],
+        "paragraphs": 6,
+        "markdown_leak": 0
+      },
+      "grade": {
+        "status": "ok",
+        "grammaticality": 5,
+        "naturalness": 4,
+        "coherence": 4,
+        "level_fit": 2,
+        "comprehensible_input": 4,
+        "requirements_met": 5,
+        "overall": 3,
+        "errors": [
+          {
+            "span": "τον καφέ της",
+            "problem": "«της» is a genitive-case possessive clitic; genitive is explicitly listed under 'Avoid entirely' for this level",
+            "fix": "drop the possessive entirely: «η γυναίκα πίνει τον καφέ» — context already makes it clear whose coffee it is"
+          }
+        ],
+        "summary": "The single genitive possessive clitic «της» in «τον καφέ της» violates the hard constraint against genitive case and must be removed or rephrased."
+      }
+    },
+    {
+      "pipeline": "bigpool_skills",
+      "scenario": "day-at-the-sea",
+      "level": "early",
+      "model": "google/gemma-4-31b-it:free",
+      "metrics": {
+        "foreign_chars": 0,
+        "foreign_set": [],
+        "vocab_missing": [],
+        "phrases_missing": [],
+        "paragraphs": 6,
+        "markdown_leak": 0
+      },
+      "grade": {
+        "status": "ok",
+        "grammaticality": 4,
+        "naturalness": 4,
+        "coherence": 5,
+        "level_fit": 2,
+        "comprehensible_input": 4,
+        "requirements_met": 5,
+        "overall": 3,
+        "errors": [
+          {
+            "span": "Ο φίλος του είναι εκεί",
+            "problem": "possessive pronoun «του» is genitive case, which is listed under Avoid entirely",
+            "fix": "drop the possessive or rephrase: «Ένας φίλος είναι εκεί» or «Ένα άλλο παιδί είναι εκεί»"
+          },
+          {
+            "span": "Ο φίλος τρέχει μαζί του",
+            "problem": "«μαζί του» uses the genitive pronoun «του», another genitive construction listed under Avoid",
+            "fix": "rephrase without the pronoun, e.g. «Τα δύο παιδιά τρέχουν στην παραλία»"
+          },
+          {
+            "span": "Το παιδί δεν είναι κρύο",
+            "problem": "unnatural: «κρύο» as a predicate adjective applied to a person means the child is cold to the touch, not that the child feels cold; Greeks say «κρυώνει» or «έχει κρύο»",
+            "fix": "«Το παιδί δεν κρυώνει»"
+          }
+        ],
+        "summary": "The two genitive pronoun constructions («Ο φίλος του», «μαζί του») directly violate the explicit constraint to avoid the genitive entirely; remove or rephrase them to bring the story into compliance."
+      }
+    },
+    {
+      "pipeline": "bigpool_skills",
+      "scenario": "dog-and-cat",
+      "level": "early",
+      "model": "google/gemma-4-31b-it:free",
+      "metrics": {
+        "foreign_chars": 0,
+        "foreign_set": [],
+        "vocab_missing": [
+          "μικρός"
+        ],
+        "phrases_missing": [],
+        "paragraphs": 6,
+        "markdown_leak": 0
+      },
+      "grade": {
+        "status": "ok",
+        "grammaticality": 4,
+        "naturalness": 3,
+        "coherence": 4,
+        "level_fit": 2,
+        "comprehensible_input": 4,
+        "requirements_met": 5,
+        "overall": 3,
+        "errors": [
+          {
+            "span": "ο φίλος του σκύλου",
+            "problem": "genitive case ('του σκύλου') is explicitly listed under 'Avoid entirely' for this level",
+            "fix": "rewrite without genitive, e.g. «Η γάτα και ο σκύλος είναι φίλοι»"
+          },
+          {
+            "span": "ο φίλος της γάτας",
+            "problem": "genitive case ('της γάτας') is explicitly listed under 'Avoid entirely' for this level",
+            "fix": "rewrite without genitive, e.g. «Ο σκύλος και η γάτα είναι φίλοι»"
+          },
+          {
+            "span": "Η γάτα είναι ο φίλος",
+            "problem": "predicate nominative 'ο φίλος' (masculine) does not agree in gender with subject 'η γάτα' (feminine); the feminine form exists",
+            "fix": "«Η γάτα είναι η φίλη»"
+          },
+          {
+            "span": "τρέχει για τη μπάλα",
+            "problem": "mildly unnatural phrasing that calques English 'runs for the ball'; comprehensible but not idiomatic",
+            "fix": "«τρέχει προς τη μπάλα» or restructure the sentence"
+          }
+        ],
+        "summary": "The two genitive constructions in the final paragraph ('του σκύλου', 'της γάτας') are explicit violations of the level's hardest constraint and must be eliminated before this story is suitable for the target learner."
+      }
+    }
+  ],
+  "summary": {
+    "bigpool_skills@early": {
+      "n": 3,
+      "foreign_chars": 0.0,
+      "vocab_miss": 0.33,
+      "phr_miss": 0.33,
+      "markdown": 0.0,
+      "grammaticality": 4.33,
+      "naturalness": 3.67,
+      "coherence": 4.33,
+      "level_fit": 2.0,
+      "comprehensible_input": 4.0,
+      "requirements_met": 5.0,
+      "overall": 3.0
+    }
+  }
+}

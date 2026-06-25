@@ -1,0 +1,75 @@
+{
+  "level_note": "μαθητής επιπέδου A2 — απλά αλλά ολοκληρωμένα ελληνικά, ονομαστική/αιτιατική/γενική όπου χρειάζεται, ενεστώτας και απλό παρελθόν, απλοί σύνδεσμοι, μειωμένο κοινό λεξιλόγιο",
+  "length": "μια μεγάλη, πλήρης ιστορία με πολλές σκηνές (τουλάχιστον 6 παραγράφους)",
+  "scenarios": [
+    {
+      "id": "coffee-morning",
+      "topic": "ο καφές το πρωί (coffee in the morning)",
+      "targets": [
+        {"word": "ο καφές", "gloss": "the coffee", "pos": "ουσιαστικό"},
+        {"word": "το πρωί", "gloss": "the morning", "pos": "ουσιαστικό"},
+        {"word": "ζεστός", "gloss": "hot", "pos": "επίθετο"}
+      ],
+      "background": [
+        {"word": "ο άντρας", "gloss": "the man"},
+        {"word": "το σπίτι", "gloss": "the house"},
+        {"word": "καλός", "gloss": "good"},
+        {"word": "μεγάλος", "gloss": "big"}
+      ],
+      "new": [
+        {"word": "η κούπα", "gloss": "the mug", "example": "Πίνω τον καφέ από μια μεγάλη κούπα."},
+        {"word": "ήσυχος", "gloss": "quiet / calm", "example": "Το πρωί το σπίτι είναι ήσυχο."}
+      ],
+      "phrases": [
+        {"text": "καλημέρα", "gloss": "good morning"},
+        {"text": "πίνω καφέ", "gloss": "I drink coffee"}
+      ]
+    },
+    {
+      "id": "dog-and-cat",
+      "topic": "ο σκύλος και η γάτα (the dog and the cat)",
+      "targets": [
+        {"word": "ο σκύλος", "gloss": "the dog", "pos": "ουσιαστικό"},
+        {"word": "η γάτα", "gloss": "the cat", "pos": "ουσιαστικό"},
+        {"word": "μικρός", "gloss": "small", "pos": "επίθετο"}
+      ],
+      "background": [
+        {"word": "το σπίτι", "gloss": "the house"},
+        {"word": "ο κήπος", "gloss": "the garden"},
+        {"word": "άσπρος", "gloss": "white"},
+        {"word": "μαύρος", "gloss": "black"}
+      ],
+      "new": [
+        {"word": "ο φίλος", "gloss": "the friend", "example": "Ο σκύλος είναι ο φίλος της γάτας."},
+        {"word": "χαρούμενος", "gloss": "happy", "example": "Η μικρή γάτα είναι χαρούμενη."}
+      ],
+      "phrases": [
+        {"text": "παίζουν μαζί", "gloss": "they play together"},
+        {"text": "στον κήπο", "gloss": "in the garden"}
+      ]
+    },
+    {
+      "id": "day-at-the-sea",
+      "topic": "μια μέρα στη θάλασσα (a day at the sea)",
+      "targets": [
+        {"word": "η θάλασσα", "gloss": "the sea", "pos": "ουσιαστικό"},
+        {"word": "ο ήλιος", "gloss": "the sun", "pos": "ουσιαστικό"},
+        {"word": "γαλάζιος", "gloss": "blue", "pos": "επίθετο"}
+      ],
+      "background": [
+        {"word": "η μέρα", "gloss": "the day"},
+        {"word": "το νερό", "gloss": "the water"},
+        {"word": "ζεστός", "gloss": "hot"},
+        {"word": "ωραίος", "gloss": "nice / beautiful"}
+      ],
+      "new": [
+        {"word": "η άμμος", "gloss": "the sand", "example": "Τα παιδιά παίζουν στην άμμο."},
+        {"word": "δροσερός", "gloss": "cool / refreshing", "example": "Το νερό είναι δροσερό."}
+      ],
+      "phrases": [
+        {"text": "πάμε στη θάλασσα", "gloss": "let's go to the sea"},
+        {"text": "ο ήλιος λάμπει", "gloss": "the sun shines"}
+      ]
+    }
+  ]
+}

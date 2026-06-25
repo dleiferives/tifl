@@ -1,0 +1,64 @@
+{
+  "level_note": "Write for a reader who is comfortable with everyday Greek and can follow varied tenses, the subjunctive, and abstract or emotional themes. Aim for natural, slightly sophisticated prose — not childish, not academic.",
+  "length": "6-8 sentences",
+  "scenarios": [
+    {
+      "id": "market-encounter",
+      "topic": "μια απρόσμενη συνάντηση στη λαϊκή αγορά (an unexpected meeting at the farmers' market)",
+      "targets": [
+        {"word": "συναντώ", "gloss": "to meet / run into"},
+        {"word": "απρόσμενος", "gloss": "unexpected"},
+        {"word": "παζαρεύω", "gloss": "to haggle over a price"}
+      ],
+      "background": [
+        {"word": "αγορά", "gloss": "market"},
+        {"word": "λαχανικά", "gloss": "vegetables"},
+        {"word": "τιμή", "gloss": "price"},
+        {"word": "χαμογελώ", "gloss": "to smile"},
+        {"word": "φίλος", "gloss": "friend"}
+      ],
+      "new": [
+        {"word": "η γειτόνισσα", "gloss": "the (female) neighbor"},
+        {"word": "φρέσκος", "gloss": "fresh"}
+      ]
+    },
+    {
+      "id": "career-decision",
+      "topic": "η δύσκολη απόφαση να αλλάξει κανείς δουλειά (the hard decision to change jobs)",
+      "targets": [
+        {"word": "αποφασίζω", "gloss": "to decide"},
+        {"word": "επιθυμία", "gloss": "desire / longing"},
+        {"word": "αντιμετωπίζω", "gloss": "to face / deal with"}
+      ],
+      "background": [
+        {"word": "δουλειά", "gloss": "job / work"},
+        {"word": "χρόνια", "gloss": "years"},
+        {"word": "σκέφτομαι", "gloss": "to think"},
+        {"word": "μέλλον", "gloss": "future"}
+      ],
+      "new": [
+        {"word": "η αβεβαιότητα", "gloss": "uncertainty"},
+        {"word": "τολμώ", "gloss": "to dare"}
+      ]
+    },
+    {
+      "id": "passage-of-time",
+      "topic": "σκέψεις για το πέρασμα του χρόνου (reflections on the passage of time)",
+      "targets": [
+        {"word": "ο χρόνος", "gloss": "time"},
+        {"word": "η μνήμη", "gloss": "memory"},
+        {"word": "αλλάζω", "gloss": "to change"}
+      ],
+      "background": [
+        {"word": "ζωή", "gloss": "life"},
+        {"word": "παλιός", "gloss": "old / former"},
+        {"word": "θυμάμαι", "gloss": "to remember"},
+        {"word": "μέρα", "gloss": "day"}
+      ],
+      "new": [
+        {"word": "η νοσταλγία", "gloss": "nostalgia"},
+        {"word": "φευγαλέος", "gloss": "fleeting"}
+      ]
+    }
+  ]
+}

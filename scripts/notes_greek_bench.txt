@@ -1,0 +1,18 @@
+Greek prose benchmark — model notes (2026-06-25)
+
+GOOD
+- google/gemma-4-31b-it: best overall, clean grammatical Greek, fast. One run had "bahagia" (Indonesian) slip in — minor.
+- openai/gpt-oss-120b: solid advanced Greek prose, weaker on beginner (drops articles sometimes).
+- cognitivecomputations/dolphin-mistral-24b-venice-edition: surprisingly good beginner Greek with real dialogue structure.
+
+UNTESTED (429'd, retry later)
+- google/gemma-4-26b-a4b-it, nousresearch/hermes-3-llama-3.1-405b, nvidia/nemotron-3-ultra-550b-a55b,
+  meta-llama/llama-3.3-70b-instruct, qwen/qwen3-next-80b-a3b-instruct
+
+REMOVED — do not use for Greek
+- nvidia/nemotron-3-super-120b-a12b: thinks out loud in English for 5k–10k tokens, Greek output is fragments
+- nvidia/nemotron-3-nano-30b-a3b: same problem, 12k tokens of English reasoning, output is garbage
+- openai/gpt-oss-20b: beginner = articleless fragments, but advanced Greek was actually decent — kept in list
+- meta-llama/llama-3.2-3b-instruct: 3B total params, too small for Greek morphology
+- liquid/lfm-2.5-1.2b-instruct: pure hallucination, invented non-existent Greek words
+- liquid/lfm-2.5-1.2b-thinking: same, 2k tokens of thinking, still hallucinated output

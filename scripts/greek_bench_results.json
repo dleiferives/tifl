@@ -1,0 +1,146 @@
+{
+  "run_at": "2026-06-25T03:37:18.238748Z",
+  "models": [
+    "google/gemma-4-31b-it:free",
+    "google/gemma-4-26b-a4b-it:free",
+    "nousresearch/hermes-3-llama-3.1-405b:free",
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "openai/gpt-oss-120b:free",
+    "openai/gpt-oss-20b:free",
+    "cognitivecomputations/dolphin-mistral-24b-venice-edition:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "qwen/qwen3-next-80b-a3b-instruct:free"
+  ],
+  "prompts": {
+    "beginner": "Level: absolute beginner. Write 4–5 sentences.\nContent words to use: φίλος (friend), αγορά (market), μήλο (apple), πάμε (let's go), βρίσκω (I find), εκεί (there), καλός (good).\n\nExample of the style and quality expected:\nΟ φίλος μου κι εγώ πάμε στην αγορά. Εκεί βρίσκω ένα ωραίο μήλο. «Είναι καλό αυτό;» ρωτά ο φίλος μου. «Ναι, είναι πολύ καλό!» λέω εγώ. Αγοράζουμε το μήλο και φεύγουμε χαρούμενοι.\n\nNow write your own original story using the content words above.",
+    "advanced": "Level: upper-intermediate. Write 6–8 sentences using at least two different verb tenses.\nContent words to use: επιθυμία (desire), αντιμετωπίζω (to face), συνείδηση (conscience), οδηγώ (to lead), ελπίδα (hope), αποφασίζω (to decide), δύσκολος (difficult).\n\nExample of the style and quality expected:\nΗ επιθυμία της Μαρίας για μια καλύτερη ζωή ήταν πάντα δυνατή. Αντιμετώπισε πολλές δύσκολες στιγμές, αλλά η συνείδησή της τη βοηθούσε να μένει δυνατή. Η ελπίδα την οδήγησε μπροστά, ακόμα και στις πιο δύσκολες μέρες. Τελικά, αποφάσισε να αρχίσει από την αρχή με θάρρος.\n\nNow write your own original story using the content words above."
+  },
+  "results": {
+    "google/gemma-4-31b-it:free": {
+      "beginner": {
+        "status": "ok",
+        "text": "Ο φίλος μου και εγώ πάμε στην αγορά. Εκεί βρίσκω ένα κόκκινο μήλο. Το μήλο είναι πολύ καλό. Ο φίλος μου λέει: «Είναι καλό το μήλο!». Πάμε σπίτι μαζί.",
+        "elapsed_s": 2.55,
+        "input_tokens": 430,
+        "output_tokens": 63,
+        "model_used": "google/gemma-4-31b-it-20260402:free"
+      },
+      "advanced": {
+        "status": "ok",
+        "text": "Ο Νίκος είχε μια έντονη επιθυμία να αλλάξει την πορεία της ζωής του. Για χρόνια αντιμετώπιζε δύσκολες προκλήσεις στην εργασία του, οι οποίες τον εξαντλούσαν. Η συνείδησή του του έλεγε ότι έπρεπε να βρει κάτι που πραγματικά τον ευχαριστούσε. Αυτή η εσωτερική φωνή τον οδήγησε σε μια νέα αναζήτηση για την προσωπική του ολοκλήρωση. Παρά τις αμφιβολίες, η ελπίδα για ένα καλύτερο μέλλον παρέμεινε ζωντανή στην καρδιά του. Έτσι, αποφάσισε να εγκαταλείψει την ασφάλεια του παρελθόντος και να ξεκινήσει τη δική του επιχείρηση. Τώρα νιώθει ότι η ζωή του έχει επιτέλους νόημα και χαρά.",
+        "elapsed_s": 8.61,
+        "input_tokens": 469,
+        "output_tokens": 206,
+        "model_used": "google/gemma-4-31b-it-20260402:free"
+      }
+    },
+    "openai/gpt-oss-120b:free": {
+      "beginner": {
+        "status": "ok",
+        "text": "Ο φίλος μου και εγώ λέμε «πάμε στην αγορά». Φτάνουμε εκεί και βλέπω ένα κόκκινο μήλο. Βρίσκω το μήλο και το δείχνω στον φίλο μου. Ο φίλος λέει ότι είναι καλό και το αγοράζουμε. Έπειτα περπατάμε μαζί και γελάμε.",
+        "elapsed_s": 4.89,
+        "input_tokens": 463,
+        "output_tokens": 95,
+        "model_used": "openai/gpt-oss-120b:free"
+      },
+      "advanced": {
+        "status": "ok",
+        "text": "Η επιθυμία του Νίκου να βρει νόημα στη ζωή του ήταν τόσο έντονη, που δεν μπορούσε να την αγνοήσει ούτε για μια στιγμή. Κάθε μέρα αντιμετώπιζε προβλήματα που φαίνονταν ακατόρθωτα, αλλά η συνείδησή του τον έσπρωγε να δράσει με ειλικρίνεια. Όταν η κατάσταση έγινε ιδιαίτερα δύσκολη, η ελπίδα του έσπαγε τα σκοτεινά σύννεφα και του έδειχνε ένα νέο μονοπάτι. Έπειτα, αποφάσισε να ακολουθήσει την καρδιά του και να μην αφήσει το φόβο να τον παγώσει. Η αποφασιστικότητά του τον οδήγησε σε μια μικρή κοινότητα όπου οι άνθρωποι μοιράζονταν τα όνειρά τους. Αυτή η αλλαγή του έδωσε τη δυνατότητα να ξαναβρεί την εσωτερική του γαλήνη. Σήμερα, βλέπει το παρελθόν του ως ένα μάθημα που τον έκανε πιο δυνατό.",
+        "elapsed_s": 14.78,
+        "input_tokens": 509,
+        "output_tokens": 283,
+        "model_used": "openai/gpt-oss-120b:free"
+      }
+    },
+    "openai/gpt-oss-20b:free": {
+      "beginner": {
+        "status": "ok",
+        "text": "Ο φίλος μου και εγώ πάμε στην αγορά. Εκεί βρίσκω ένα καλό μήλο. «Είναι καλό;» ρωτά ο φίλος μου. «Ναι, είναι πολύ καλό» λέω εγώ. Αγοράζουμε το μήλο και φεύγουμε χαρούμενοι.",
+        "elapsed_s": 7.59,
+        "input_tokens": 469,
+        "output_tokens": 355,
+        "model_used": "openai/gpt-oss-20b:free"
+      },
+      "advanced": {
+        "status": "ok",
+        "text": "Η επιθυμία του Αλέξη να γίνει αρχιτέκτονας τον ενθουσιάζει από μικρή ηλικία.  \nΌταν αντιμετωπίζει τις απορρήσεις του, η συνείδηση του του θυμίζει ότι η επιτυχία δεν έρχεται εύκολα.  \nΠριν αποφασίσει να ξεκινήσει το πτυχίο, σκέφτηκε ότι η διαδικασία θα ήταν δύσκολη.  \nΤελικά, αποφασίζει να παρακολουθήσει μαθήματα σχεδίασης, γιατί η ελπίδα του είναι μεγάλη.  \nΗ ελπίδα του τον οδηγεί σε νέες ιδέες, και το μυαλό του γεμίζει με δημιουργικότητα.  \nΠαρόλο που η πορεία είναι δύσκολη, η συνείδησή του τον κρατά πιστό στις αρχές του.  \nΈτσι, ο Αλέξης πιστεύει ότι η επιθυμία του μπορεί να γίνει πραγματικότητα αν δεν αφήνει τη σιωπή να τον ρίξει.",
+        "elapsed_s": 11.29,
+        "input_tokens": 515,
+        "output_tokens": 822,
+        "model_used": "openai/gpt-oss-20b:free"
+      }
+    },
+    "nousresearch/hermes-3-llama-3.1-405b:free": {
+      "beginner": {
+        "status": "error",
+        "error": "HTTP 429: {\"error\":{\"message\":\"Provider returned error\",\"code\":429,\"metadata\":{\"raw\":\"nousresearch/hermes-3-llama-3.1-405b:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to",
+        "elapsed_s": 0.23
+      },
+      "advanced": {
+        "status": "error",
+        "error": "HTTP 429: {\"error\":{\"message\":\"Provider returned error\",\"code\":429,\"metadata\":{\"raw\":\"nousresearch/hermes-3-llama-3.1-405b:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to",
+        "elapsed_s": 0.3
+      }
+    },
+    "cognitivecomputations/dolphin-mistral-24b-venice-edition:free": {
+      "advanced": {
+        "status": "error",
+        "error": "HTTP 429: {\"error\":{\"message\":\"Provider returned error\",\"code\":429,\"metadata\":{\"raw\":\"cognitivecomputations/dolphin-mistral-24b-venice-edition:free is temporarily rate-limited upstream. Please retry shortly, or",
+        "elapsed_s": 0.26
+      },
+      "beginner": {
+        "status": "error",
+        "error": "HTTP 429: {\"error\":{\"message\":\"Provider returned error\",\"code\":429,\"metadata\":{\"raw\":\"cognitivecomputations/dolphin-mistral-24b-venice-edition:free is temporarily rate-limited upstream. Please retry shortly, or",
+        "elapsed_s": 0.29
+      }
+    },
+    "meta-llama/llama-3.3-70b-instruct:free": {
+      "advanced": {
+        "status": "error",
+        "error": "HTTP 429: {\"error\":{\"message\":\"Provider returned error\",\"code\":429,\"metadata\":{\"raw\":\"meta-llama/llama-3.3-70b-instruct:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to ac",
+        "elapsed_s": 0.26
+      },
+      "beginner": {
+        "status": "error",
+        "error": "HTTP 429: {\"error\":{\"message\":\"Provider returned error\",\"code\":429,\"metadata\":{\"raw\":\"meta-llama/llama-3.3-70b-instruct:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to ac",
+        "elapsed_s": 0.39
+      }
+    },
+    "qwen/qwen3-next-80b-a3b-instruct:free": {
+      "advanced": {
+        "status": "error",
+        "error": "HTTP 429: {\"error\":{\"message\":\"Provider returned error\",\"code\":429,\"metadata\":{\"raw\":\"qwen/qwen3-next-80b-a3b-instruct:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to acc",
+        "elapsed_s": 0.28
+      },
+      "beginner": {
+        "status": "error",
+        "error": "HTTP 429: {\"error\":{\"message\":\"Provider returned error\",\"code\":429,\"metadata\":{\"raw\":\"qwen/qwen3-next-80b-a3b-instruct:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to acc",
+        "elapsed_s": 0.31
+      }
+    },
+    "google/gemma-4-26b-a4b-it:free": {
+      "advanced": {
+        "status": "error",
+        "error": "HTTP 429: {\"error\":{\"message\":\"Provider returned error\",\"code\":429,\"metadata\":{\"raw\":\"google/gemma-4-26b-a4b-it:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate",
+        "elapsed_s": 0.43
+      },
+      "beginner": {
+        "status": "error",
+        "error": "HTTP 429: {\"error\":{\"message\":\"Provider returned error\",\"code\":429,\"metadata\":{\"raw\":\"google/gemma-4-26b-a4b-it:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate",
+        "elapsed_s": 0.45
+      }
+    },
+    "nvidia/nemotron-3-ultra-550b-a55b:free": {
+      "beginner": {
+        "status": "error",
+        "error": "'choices'",
+        "elapsed_s": 300.59
+      },
+      "advanced": {
+        "status": "error",
+        "error": "'choices'",
+        "elapsed_s": 300.63
+      }
+    }
+  }
+}

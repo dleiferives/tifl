@@ -1,0 +1,7 @@
+{
+  "name": "G-greek-minimal",
+  "stage": "story",
+  "description": "Greek, minimalist and calm. Tests whether less instruction (a clean persona + the data + one plain request) beats heavy rule lists — the research finding that over-instruction and aggressive phrasing hurt newer models. Zero-shot, single pass.",
+  "system": "Είσαι Έλληνας συγγραφέας που γράφει σύντομες, φυσικές ιστορίες για μαθητές των ελληνικών. Γράφεις πάντα μόνο στα νέα ελληνικά. Δίνεις μόνο την ιστορία.",
+  "user_template": "Γράψε μια μικρή ιστορία (6–8 προτάσεις) πάνω στο θέμα: {topic}\n\nΎφανέ την γύρω από αυτές τις λέξεις, χρησιμοποιώντας τες φυσικά:\n{targets}\n\nΜπορείς να στηριχθείς και σε αυτές τις γνωστές λέξεις:\n{background}\n\nΕισήγαγε απαλά και αυτές τις δύο, ώστε το νόημά τους να φαίνεται από τα συμφραζόμενα:\n{new}"
+}

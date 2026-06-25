@@ -21,3 +21,5 @@ coverage.txt
 # Editors / OS
 .DS_Store
 *.swp
+/scripts/__pycache__
+/greek_bench_out.txt

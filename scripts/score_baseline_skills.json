@@ -1,0 +1,200 @@
+{
+  "scored": [
+    {
+      "pipeline": "bigpool_skills",
+      "scenario": "city-encounter",
+      "level": "developing",
+      "model": "openai/gpt-oss-120b:free",
+      "metrics": {
+        "greek_only": true,
+        "foreign_chars": 0,
+        "foreign_set": [],
+        "vocab_missing": [],
+        "phrases_missing": [],
+        "target_repetition": {
+          "per_target": {
+            "συναντώ": 4,
+            "απρόσμενος": 2,
+            "η ανάμνηση": 3
+          },
+          "min": 2,
+          "median": 3
+        },
+        "paragraphs": 6,
+        "chars": 1948,
+        "markdown_leak": 0
+      },
+      "judge": {
+        "status": "ok",
+        "grammaticality": 4,
+        "naturalness": 3,
+        "coherence": 4,
+        "level_fit": 3,
+        "comprehensible_input": 4,
+        "requirements_met": 2,
+        "overall": 3,
+        "errors": [
+          "Λείπει η ακριβής λέξη «συναντώ» (παρουσιάζεται μόνο η κλ. «συναντάς»).",
+          "Η φράση «δεν πέρασε χρόνος» λείπει το άρθρο – σωστό: «δεν πέρασε χρόνος» ή «δεν πέρασε κανένας χρόνος».",
+          "Η έκφραση «η φωνή του ήξερε το ίδιο τόνο που άκουγα» είναι αόμαλη· καλύτερα «η φωνή του είχε τον ίδιο τόνο που άκουγα».",
+          "«ξυπνούν» πρέπει να είναι «ξυπνά» (απώλειας συμφωνίας χρόνου/προσωπικού).",
+          "«Από τότε που φύγαμε από το σχολείο» είναι αποδεκτό αλλά ελαφρώς περίπλοκο για το ζητούμενο επίπεδο."
+        ]
+      }
+    },
+    {
+      "pipeline": "bigpool_skills",
+      "scenario": "city-encounter",
+      "level": "early",
+      "model": "openai/gpt-oss-120b:free",
+      "metrics": {
+        "greek_only": true,
+        "foreign_chars": 0,
+        "foreign_set": [],
+        "vocab_missing": [],
+        "phrases_missing": [],
+        "target_repetition": {
+          "per_target": {
+            "συναντώ": 2,
+            "απρόσμενος": 1,
+            "η ανάμνηση": 2
+          },
+          "min": 1,
+          "median": 2
+        },
+        "paragraphs": 6,
+        "chars": 1709,
+        "markdown_leak": 0
+      },
+      "judge": {
+        "status": "ok",
+        "grammaticality": 3,
+        "naturalness": 3,
+        "coherence": 4,
+        "level_fit": 1,
+        "comprehensible_input": 4,
+        "requirements_met": 1,
+        "overall": 2,
+        "errors": [
+          "Χρήση αορίστου (π.χ. \"πέρασα\", \"αναπολώ\") – απαγορευμένο.",
+          "Χρήση μέλλοντα με \"θα\" (π.χ. \"θα πάει\", \"Θα με περιμένεις;\") – απαγορευμένο.",
+          "Χρήση προτάσεων με \"να\" (π.χ. \"να σε δω\", \"να χορεύει\") – απαγορευμένο.",
+          "Χρήση γενικής πτώσης (π.χ. \"της πόλης\", \"του παρελθόντος\") – απαγορευμένο.",
+          "Λέξη \"συνάντηση\" δεν ικανοποιεί την απαιτούμενη λέξη \"συναντώ\".",
+          "Η φράση \"πάει καιρός\" εμφανίζεται, αλλά δεν ακολουθεί σαφές συμφραζόμενο που να την υποστηρίζει ως \"πάει καιρός\" (π.χ. χωρίς άρθρο ή αντικείμενο).",
+          "Η φράση \"τι σύμπτωση\" εμφανίζεται, αλλά δεν είναι ακριβώς η απαιτούμενη φράση \"τι σύμπτωση\" (π.χ. με κόμμα ή ερωτηματικό).",
+          "Λάθος ορθογραφία: \"απρόσμενος\" είναι σωστό, αλλά εμφανίζεται ως \"απρόσμενοι\" σε κάποια σημεία.",
+          "Λάθος τόνωση σε \"παιχνίδια\" (πρέπει να είναι \"παιχνίδια\" – σωστό).",
+          "Η φράση \"η ανάμνηση δεν λησμονάται\" χρησιμοποιεί αόριστο παθητικό («λησμονάται») που είναι ακατάλληλο για το επίπεδο."
+        ]
+      }
+    },
+    {
+      "pipeline": "bigpool_skills",
+      "scenario": "city-encounter",
+      "level": "fluent",
+      "model": "openai/gpt-oss-120b:free",
+      "metrics": {
+        "greek_only": true,
+        "foreign_chars": 0,
+        "foreign_set": [],
+        "vocab_missing": [],
+        "phrases_missing": [],
+        "target_repetition": {
+          "per_target": {
+            "συναντώ": 4,
+            "απρόσμενος": 3,
+            "η ανάμνηση": 5
+          },
+          "min": 3,
+          "median": 4
+        },
+        "paragraphs": 7,
+        "chars": 2750,
+        "markdown_leak": 120
+      },
+      "judge": {
+        "status": "ok",
+        "grammaticality": 1,
+        "naturalness": 1,
+        "coherence": 2,
+        "level_fit": 1,
+        "comprehensible_input": 2,
+        "requirements_met": 5,
+        "overall": 2,
+        "errors": [
+          "συμπτωση → σύμπτωση (missing accent)",
+          "αναπολώ used where past tense required (should be αθροίζω ή θυμάμαι)",
+          "απρόσμενος used as noun (should be απρόσμενο άτομο)",
+          "πάει καιρός – idiomatic but context unclear",
+          "αναμνήσεις vs required η ανάμνηση (plural form ok but later uses inconsistent forms)",
+          "άγγισα – non‑existent word, probably meant «ένα γλυκό» ή «ένα άγγιγμα»",
+          "άηχος – uncommon, better «αθόρυβος»",
+          "αγκύρες των σκηνών – meaningless in this context",
+          "συμβίωση – inappropriate word choice",
+          "άδειου χρόνου – incorrect case/agreement; should be «απ' τον άδειο χρόνο»",
+          "άξιος – wrong gender/agreement",
+          "έβρισε ο καιρός – wrong verb, should be «έβγαλε» ή «έσπαγε»",
+          "έβγαλε το παρελθόν – non‑standard construction",
+          "συναντήσω → συνάντησα already used, later «συναντήσω» should be «συναντήσω» but context tense mismatched",
+          "συμπτωση appears many times without accent",
+          "αναπολούσε – wrong form, should be «αναπολούσε» but context past vs present inconsistent",
+          "μας φέρνουν – agreement error, should be «μας φέρνουν» is fine but earlier verbs mismatched",
+          "να» before infinitive sometimes missing verb (e.g., «να» alone)",
+          "το ίδιο μέρος – missing article before «μέρος» in some places",
+          "στη ίδιο μέρος – should be «στο ίδιο μέρος»",
+          "απρόσμενες στιγμές – gender mismatch with «στιγμές» (feminine) ok but earlier adjective form inconsistent",
+          "μεταξύ «να» και «θυμάμαι» missing infinitive marker",
+          "χρησιμοποιούνται άσχετες ή σπάνιες λέξεις (άδηυ, άξιος, αγκύρες, συμβίωση) που δεν ανήκουν στις 2000 πιο συχνές"
+        ]
+      }
+    }
+  ],
+  "summary": {
+    "bigpool_skills@developing": {
+      "n": 1,
+      "foreign_chars": 0.0,
+      "vocab_miss": 0.0,
+      "phr_miss": 0.0,
+      "rep_min": 2.0,
+      "markdown": 0.0,
+      "grammaticality": 4.0,
+      "naturalness": 3.0,
+      "coherence": 4.0,
+      "level_fit": 3.0,
+      "comprehensible_input": 4.0,
+      "requirements_met": 2.0,
+      "overall": 3.0
+    },
+    "bigpool_skills@early": {
+      "n": 1,
+      "foreign_chars": 0.0,
+      "vocab_miss": 0.0,
+      "phr_miss": 0.0,
+      "rep_min": 1.0,
+      "markdown": 0.0,
+      "grammaticality": 3.0,
+      "naturalness": 3.0,
+      "coherence": 4.0,
+      "level_fit": 1.0,
+      "comprehensible_input": 4.0,
+      "requirements_met": 1.0,
+      "overall": 2.0
+    },
+    "bigpool_skills@fluent": {
+      "n": 1,
+      "foreign_chars": 0.0,
+      "vocab_miss": 0.0,
+      "phr_miss": 0.0,
+      "rep_min": 3.0,
+      "markdown": 120.0,
+      "grammaticality": 1.0,
+      "naturalness": 1.0,
+      "coherence": 2.0,
+      "level_fit": 1.0,
+      "comprehensible_input": 2.0,
+      "requirements_met": 5.0,
+      "overall": 2.0
+    }
+  }
+}
