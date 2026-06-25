@@ -716,6 +716,46 @@ func (r *PostgresRepository) UpsertDefinition(ctx context.Context, d domain.Defi
 	return err
 }
 
+func (r *PostgresRepository) UpsertDefinitionImport(ctx context.Context, imp domain.DefinitionImport) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO definition_imports(import_id, language, source, source_path, dataset_version,
+		   started_at, completed_at, status, entries_read, entries_matched, definitions_written, error)
+		 VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		 ON CONFLICT(import_id) DO UPDATE SET
+		   language = excluded.language, source = excluded.source, source_path = excluded.source_path,
+		   dataset_version = excluded.dataset_version, started_at = excluded.started_at,
+		   completed_at = excluded.completed_at, status = excluded.status,
+		   entries_read = excluded.entries_read, entries_matched = excluded.entries_matched,
+		   definitions_written = excluded.definitions_written, error = excluded.error`,
+		imp.ImportID, imp.Language, imp.Source, imp.SourcePath, nullStr(imp.DatasetVersion),
+		imp.StartedAt, imp.CompletedAt, imp.Status, imp.EntriesRead, imp.EntriesMatched,
+		imp.DefinitionsWritten, nullStr(imp.Error))
+	return err
+}
+
+func (r *PostgresRepository) GetDefinitionImport(ctx context.Context, importID string) (domain.DefinitionImport, error) {
+	var (
+		imp                          domain.DefinitionImport
+		datasetVersion, errorMessage *string
+		completedAt                  *float64
+	)
+	err := r.pool.QueryRow(ctx,
+		`SELECT import_id, language, source, source_path, dataset_version, started_at,
+		   completed_at, status, entries_read, entries_matched, definitions_written, error
+		 FROM definition_imports WHERE import_id = $1`, importID).Scan(
+		&imp.ImportID, &imp.Language, &imp.Source, &imp.SourcePath, &datasetVersion, &imp.StartedAt,
+		&completedAt, &imp.Status, &imp.EntriesRead, &imp.EntriesMatched, &imp.DefinitionsWritten, &errorMessage)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.DefinitionImport{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.DefinitionImport{}, err
+	}
+	imp.DatasetVersion, imp.Error = derefStr(datasetVersion), derefStr(errorMessage)
+	imp.CompletedAt = completedAt
+	return imp, nil
+}
+
 func (r *PostgresRepository) GetBreakdown(ctx context.Context, scope domain.BreakdownScope, language, cacheKey string) (domain.Breakdown, error) {
 	var (
 		content   []byte

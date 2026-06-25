@@ -24,6 +24,32 @@ type Definition struct {
 	CreatedAt       float64
 }
 
+const (
+	DefinitionImportSourceKaikki = "kaikki-wiktextract"
+
+	DefinitionImportRunning  = "running"
+	DefinitionImportComplete = "complete"
+	DefinitionImportFailed   = "failed"
+)
+
+// DefinitionImport records one offline dictionary import run. The definitions
+// table stores only the resolved lookup rows; this audit row keeps refresh
+// metadata such as the source file and dataset version.
+type DefinitionImport struct {
+	ImportID           string
+	Language           string
+	Source             string
+	SourcePath         string
+	DatasetVersion     string
+	StartedAt          float64
+	CompletedAt        *float64
+	Status             string
+	EntriesRead        int
+	EntriesMatched     int
+	DefinitionsWritten int
+	Error              string
+}
+
 // BreakdownScope distinguishes the two cached, LLM-backed breakdown kinds.
 type BreakdownScope string
 

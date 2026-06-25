@@ -31,11 +31,12 @@ type FakeRepository struct {
 	readerEvts []domain.ReaderEvent            // append-only reader signal log
 	readerIDs  map[string]bool                 // event_id set, for idempotent insert
 	defs       map[string]domain.Definition    // language\x00key\x00source -> definition
-	breakdowns map[string]domain.Breakdown     // scope\x00language\x00cacheKey -> breakdown
-	skills     map[string]domain.Skill         // skill_id -> skill
-	itemSkills map[string]map[string]bool      // item_id -> skill_id set
-	userSkills map[string]domain.UserSkillXP   // user_id\x00skill_id -> state
-	skillLogs  []domain.TaskSkillXPLog         // append-only skill XP log
+	defImports map[string]domain.DefinitionImport
+	breakdowns map[string]domain.Breakdown   // scope\x00language\x00cacheKey -> breakdown
+	skills     map[string]domain.Skill       // skill_id -> skill
+	itemSkills map[string]map[string]bool    // item_id -> skill_id set
+	userSkills map[string]domain.UserSkillXP // user_id\x00skill_id -> state
+	skillLogs  []domain.TaskSkillXPLog       // append-only skill XP log
 
 	// Generation-pipeline state.
 	sessions   map[string]domain.Session                    // session_id -> session
@@ -63,6 +64,7 @@ func NewFake() *FakeRepository {
 		knowledge:  make(map[string]domain.UserKnowledge),
 		readerIDs:  make(map[string]bool),
 		defs:       make(map[string]domain.Definition),
+		defImports: make(map[string]domain.DefinitionImport),
 		breakdowns: make(map[string]domain.Breakdown),
 		skills:     make(map[string]domain.Skill),
 		itemSkills: make(map[string]map[string]bool),
@@ -455,6 +457,23 @@ func (r *FakeRepository) UpsertDefinition(_ context.Context, d domain.Definition
 	return nil
 }
 
+func (r *FakeRepository) UpsertDefinitionImport(_ context.Context, imp domain.DefinitionImport) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.defImports[imp.ImportID] = cloneDefinitionImport(imp)
+	return nil
+}
+
+func (r *FakeRepository) GetDefinitionImport(_ context.Context, importID string) (domain.DefinitionImport, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	imp, ok := r.defImports[importID]
+	if !ok {
+		return domain.DefinitionImport{}, ErrNotFound
+	}
+	return cloneDefinitionImport(imp), nil
+}
+
 func (r *FakeRepository) GetBreakdown(_ context.Context, scope domain.BreakdownScope, language, cacheKey string) (domain.Breakdown, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -612,6 +631,11 @@ func cloneLLMCall(c domain.LLMCall) domain.LLMCall {
 	c.LatencyMs = cloneInt(c.LatencyMs)
 	c.ErrorDetail = cloneStr(c.ErrorDetail)
 	return c
+}
+
+func cloneDefinitionImport(imp domain.DefinitionImport) domain.DefinitionImport {
+	imp.CompletedAt = cloneFloat(imp.CompletedAt)
+	return imp
 }
 
 func cloneUK(uk domain.UserKnowledge) domain.UserKnowledge {
