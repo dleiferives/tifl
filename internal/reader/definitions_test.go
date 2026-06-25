@@ -2,6 +2,7 @@ package reader_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/dleiferives/tifl/internal/db"
@@ -115,6 +116,9 @@ func TestSentenceBreakdownCaches(t *testing.T) {
 	}
 	if len(client.Calls) != 1 {
 		t.Fatalf("first breakdown should call the LLM once, got %d", len(client.Calls))
+	}
+	if got := client.Calls[0].Req.User; !strings.Contains(got, "Sentence:\na b.\n") {
+		t.Fatalf("breakdown prompt used wrong sentence text: %q", got)
 	}
 	// Same sentence again → served from cache, no second call.
 	if _, err := svc.SentenceBreakdown(ctx, userID, storyID, 2); err != nil {

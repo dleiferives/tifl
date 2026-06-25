@@ -170,6 +170,22 @@ text without making it interactive.
 The cursor only lands on `is_word = true` tokens. Arrow key navigation skips
 non-word tokens automatically.
 
+### Sentence spans
+
+`GET /api/v1/stories/{id}` also returns an authoritative `sentences` array. Each
+span has `index`, `start_position`, `end_position`, and `text`. Positions are
+half-open: tokens with `position >= start_position` and
+`position < end_position` are part of the sentence. The client uses these spans
+for sentence highlighting and for choosing the position sent to the sentence
+breakdown endpoint; it does not duplicate sentence-boundary heuristics.
+
+The v0 boundary algorithm is centralized in the backend and uses punctuation
+heuristics over `story_tokens`: `.`, `!`, `?`, the Greek question mark `;`, the
+Greek ano teleia `·`, and ellipsis `…` close a sentence; paragraph breaks split
+spans; a final sentence without terminal punctuation is still returned. The span
+`text` is the same reconstructed sentence text used for the sentence-breakdown
+cache key.
+
 ---
 
 ## Signal Collection: What the Reader Logs
@@ -263,8 +279,5 @@ detail page. The reader receives a story_id via the URL and loads from there.
   `3` moves to the next word automatically)? Arguably yes for flow; debatable.
 - Should there be a "reading mode" with no word highlighting, for users who just
   want to read without being reminded of what they don't know?
-- Sentence boundaries: how are they determined for the sentence breakdown feature?
-  Punctuation heuristics, or does the server mark sentence boundaries in
-  story_tokens?
 - Should the reader support touch navigation (swipe left/right) for mobile use
   within the Capacitor shell?

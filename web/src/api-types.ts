@@ -315,7 +315,7 @@ export interface paths {
         };
         /**
          * Load a story for the reader (tokens + knowledge in one call)
-         * @description Returns the server-tokenized story plus the caller's per-item knowledge map (canonical key → level + lookup_count) for the story's language, in a single response — everything the reader needs at load time. Words the user has never interacted with are absent from the map and treated as unseen. Stories are user-scoped; another user's story returns 404.
+         * @description Returns the server-tokenized story, authoritative sentence spans, and the caller's per-item knowledge map (canonical key → level + lookup_count) for the story's language, in a single response — everything the reader needs at load time. Sentence spans use half-open token positions: start_position is included and end_position is one past the final token in the sentence. Words the user has never interacted with are absent from the map and treated as unseen. Stories are user-scoped; another user's story returns 404.
          */
         get: operations["getStory"];
         put?: never;
@@ -759,11 +759,24 @@ export interface components {
             level: "" | "1" | "2" | "3" | "4" | "5" | "well_known" | "ignored";
             lookup_count: number;
         };
+        /** @description Authoritative sentence boundary over story token positions. Positions are half-open: tokens with position >= start_position and < end_position are part of the sentence. Text is exactly the sentence text used by the sentence-breakdown cache key. */
+        SentenceSpan: {
+            /** @description 0-indexed sentence number within the story. */
+            index: number;
+            /** @description First token position in the sentence, inclusive. */
+            start_position: number;
+            /** @description One past the final token position in the sentence. */
+            end_position: number;
+            /** @description Readable sentence text reconstructed from story tokens. */
+            text: string;
+        };
         /** @description Everything the reader needs at load time, in one response. */
         StoryLoad: {
             story_id: string;
             language: string;
             tokens: components["schemas"]["StoryToken"][];
+            /** @description Authoritative sentence spans for highlighting and sentence breakdown requests. */
+            sentences: components["schemas"]["SentenceSpan"][];
             /** @description canonical key → knowledge state; unseen items are absent */
             knowledge: {
                 [key: string]: components["schemas"]["ReaderKnowledge"];
