@@ -183,9 +183,16 @@ func (h *Handler) submitTask(w http.ResponseWriter, r *http.Request) {
 
 	grade, gradedBy, err := h.grader.Grade(gradeCtx, gr)
 	if err != nil {
-		// A grading failure on the LLM path is an upstream problem (the gateway or
-		// model), not a client error.
-		writeError(w, http.StatusBadGateway, fmt.Errorf("grading failed: %w", err))
+		switch {
+		case errors.Is(err, tasks.ErrBadResponse):
+			writeError(w, http.StatusBadRequest, err)
+		case errors.Is(err, tasks.ErrBadContent):
+			// Malformed stored content is a server-side data problem, not a gateway issue.
+			writeError(w, http.StatusInternalServerError, fmt.Errorf("task content is malformed: %w", err))
+		default:
+			// LLM path failure — gateway or model unreachable.
+			writeError(w, http.StatusBadGateway, fmt.Errorf("grading failed: %w", err))
+		}
 		return
 	}
 

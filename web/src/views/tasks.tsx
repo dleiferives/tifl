@@ -360,6 +360,9 @@ function submitErrorMessage(error: unknown): string {
     if (error.status === 502) {
       return "The AI grader is unavailable right now. Please try again.";
     }
+    if (error.status === 500) {
+      return "This task has a problem and can't be graded. Try generating a new session.";
+    }
     if (error.status === 400) {
       return "That response wasn't accepted. Check your answer and try again.";
     }
