@@ -3,6 +3,7 @@ package acquire_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/dleiferives/tifl/internal/acquire"
 	"github.com/dleiferives/tifl/internal/db"
@@ -112,6 +113,40 @@ func TestEngineRefreshPersistsConfidenceAndStage(t *testing.T) {
 	must(t, err)
 	if stored.ConfidenceScore == nil || stored.AcquisitionStage != domain.StageRecognizing {
 		t.Fatalf("Refresh did not persist derived fields: %+v", stored)
+	}
+}
+
+func TestEngineRefreshRecomputesPredictionCache(t *testing.T) {
+	ctx := context.Background()
+	repo := db.NewFake()
+	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "X", KeyStrategy: "surface", Enabled: true}))
+	user, err := repo.CreateUser(ctx, domain.User{Email: "cache@a.com"})
+	must(t, err)
+	itemID, err := repo.UpsertKnowledgeItem(ctx, domain.KnowledgeItem{Language: "xx", ItemType: "word", Key: "w"})
+	must(t, err)
+	must(t, repo.UpsertKnowledgePredictions(ctx, []domain.KnowledgePrediction{{
+		UserID: user.UserID, ItemID: itemID, PredictedProb: 0.99,
+		PredictorVersion: predictor.AlgorithmicVersion, ComputedAt: 1,
+	}}))
+
+	eng := acquire.NewEngine(repo, predictor.DefaultConfig(), acquire.Config{})
+	_, err = eng.Refresh(ctx, domain.UserKnowledge{
+		UserID: user.UserID, ItemID: itemID,
+		ExposureCount: 3, ContextVariety: 2, LookupCount: 1,
+	})
+	must(t, err)
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		rows, err := repo.ListKnowledgePredictions(ctx, user.UserID, []string{itemID})
+		must(t, err)
+		if len(rows) == 1 && rows[0].ComputedAt > 1 && rows[0].PredictorVersion == predictor.AlgorithmicVersion && rows[0].PredictedProb != 0.99 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("prediction cache was not recomputed, rows=%+v", rows)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

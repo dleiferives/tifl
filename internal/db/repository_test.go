@@ -29,6 +29,7 @@ func testRepository(t *testing.T, newRepo repoFactory) {
 	t.Run("Languages", func(t *testing.T) { testLanguages(t, newRepo(t)) })
 	t.Run("KnowledgeItems", func(t *testing.T) { testKnowledgeItems(t, newRepo(t)) })
 	t.Run("UserKnowledge", func(t *testing.T) { testUserKnowledge(t, newRepo(t)) })
+	t.Run("KnowledgePredictions", func(t *testing.T) { testKnowledgePredictions(t, newRepo(t)) })
 	t.Run("Skills", func(t *testing.T) { testSkills(t, newRepo(t)) })
 	t.Run("TenantIsolation", func(t *testing.T) { testTenantIsolation(t, newRepo(t)) })
 	t.Run("LLMCalls", func(t *testing.T) { testLLMCalls(t, newRepo(t)) })
@@ -816,6 +817,81 @@ func testUserKnowledge(t *testing.T, repo db.Repository) {
 	// Foreign-key enforcement: an unknown item must be rejected.
 	if err := repo.UpsertUserKnowledge(ctx, domain.UserKnowledge{UserID: user.UserID, ItemID: "missing"}); err == nil {
 		t.Fatal("expected FK violation for unknown item")
+	}
+}
+
+func testKnowledgePredictions(t *testing.T, repo db.Repository) {
+	ctx := context.Background()
+	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "grc", Name: "Ancient Greek", KeyStrategy: "lemma", Enabled: true}))
+	alice, err := repo.CreateUser(ctx, domain.User{Email: "pred-a@u.com"})
+	must(t, err)
+	bob, err := repo.CreateUser(ctx, domain.User{Email: "pred-b@u.com"})
+	must(t, err)
+	logos, err := repo.UpsertKnowledgeItem(ctx, domain.KnowledgeItem{Language: "grc", ItemType: "word", Key: "λόγος"})
+	must(t, err)
+	kai, err := repo.UpsertKnowledgeItem(ctx, domain.KnowledgeItem{Language: "grc", ItemType: "word", Key: "καί"})
+	must(t, err)
+
+	must(t, repo.UpsertKnowledgePredictions(ctx, []domain.KnowledgePrediction{
+		{UserID: alice.UserID, ItemID: logos, PredictedProb: 0.25, PredictorVersion: "algorithmic-v1", ComputedAt: 1000},
+		{UserID: alice.UserID, ItemID: kai, PredictedProb: 0.80, PredictorVersion: "algorithmic-v1", ComputedAt: 1001},
+		{UserID: bob.UserID, ItemID: logos, PredictedProb: 0.99, PredictorVersion: "algorithmic-v1", ComputedAt: 1002},
+	}))
+
+	rows, err := repo.ListKnowledgePredictions(ctx, alice.UserID, nil)
+	must(t, err)
+	if len(rows) != 2 {
+		t.Fatalf("want 2 cached predictions for alice, got %d", len(rows))
+	}
+	gotByItem := map[string]domain.KnowledgePrediction{}
+	for _, row := range rows {
+		if row.UserID != alice.UserID {
+			t.Fatalf("prediction leaked across tenant: %+v", rows)
+		}
+		gotByItem[row.ItemID] = row
+	}
+	if gotByItem[logos].PredictedProb != 0.25 || gotByItem[kai].PredictedProb != 0.80 {
+		t.Fatalf("unexpected prediction rows: %+v", rows)
+	}
+
+	rows, err = repo.ListKnowledgePredictions(ctx, alice.UserID, []string{logos})
+	must(t, err)
+	if len(rows) != 1 || rows[0].ItemID != logos || rows[0].PredictedProb != 0.25 {
+		t.Fatalf("filtered prediction mismatch: %+v", rows)
+	}
+
+	must(t, repo.UpsertKnowledgePredictions(ctx, []domain.KnowledgePrediction{
+		{UserID: alice.UserID, ItemID: logos, PredictedProb: 0.40, PredictorVersion: "algorithmic-v2", ComputedAt: 2000},
+	}))
+	rows, err = repo.ListKnowledgePredictions(ctx, alice.UserID, []string{logos})
+	must(t, err)
+	if len(rows) != 1 || rows[0].PredictedProb != 0.40 || rows[0].PredictorVersion != "algorithmic-v2" || rows[0].ComputedAt != 2000 {
+		t.Fatalf("upsert did not replace prediction: %+v", rows)
+	}
+
+	must(t, repo.DeleteKnowledgePredictions(ctx, alice.UserID, []string{logos}))
+	rows, err = repo.ListKnowledgePredictions(ctx, alice.UserID, nil)
+	must(t, err)
+	if len(rows) != 1 || rows[0].ItemID != kai {
+		t.Fatalf("delete should remove only selected alice row, got %+v", rows)
+	}
+	rows, err = repo.ListKnowledgePredictions(ctx, bob.UserID, nil)
+	must(t, err)
+	if len(rows) != 1 || rows[0].ItemID != logos || rows[0].PredictedProb != 0.99 {
+		t.Fatalf("delete leaked across tenant: %+v", rows)
+	}
+
+	must(t, repo.DeleteKnowledgePredictions(ctx, alice.UserID, nil))
+	rows, err = repo.ListKnowledgePredictions(ctx, alice.UserID, nil)
+	must(t, err)
+	if len(rows) != 1 {
+		t.Fatalf("empty delete filter should be a no-op, got %+v", rows)
+	}
+
+	if err := repo.UpsertKnowledgePredictions(ctx, []domain.KnowledgePrediction{
+		{UserID: alice.UserID, ItemID: "missing", PredictedProb: 0.1, PredictorVersion: "algorithmic-v1", ComputedAt: 1},
+	}); err == nil {
+		t.Fatal("expected FK violation for unknown prediction item")
 	}
 }
 

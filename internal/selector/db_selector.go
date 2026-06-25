@@ -15,18 +15,20 @@ import (
 // algorithmic knowledge predictor. It implements the full three-bucket model
 // described in context/selection-layer.md.
 type DBSelector struct {
-	repo db.Repository
-	algo *predictor.Algorithmic
-	rng  *rand.Rand
+	repo  db.Repository
+	algo  *predictor.Algorithmic
+	cache predictor.CacheConfig
+	rng   *rand.Rand
 }
 
 // NewDBSelector creates a selector using the given repository and predictor
 // config. Each instance has its own RNG seeded from the current time.
 func NewDBSelector(repo db.Repository, cfg predictor.Config) *DBSelector {
 	return &DBSelector{
-		repo: repo,
-		algo: predictor.NewAlgorithmic(cfg),
-		rng:  rand.New(rand.NewSource(time.Now().UnixNano())),
+		repo:  repo,
+		algo:  predictor.NewAlgorithmic(cfg),
+		cache: predictor.DefaultCacheConfig(),
+		rng:   rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
 
@@ -49,15 +51,37 @@ func (s *DBSelector) Select(ctx context.Context, req SelectRequest) (domain.Sele
 		return domain.SelectedItems{}, err
 	}
 
-	// ── 2. Score everything with the algorithmic predictor ───────────────────
-	preds := s.algo.ScoreAll(allUK, now)
-	predByID := make(map[string]predictor.Prediction, len(preds))
-	for _, p := range preds {
-		predByID[p.ItemID] = p
-	}
 	ukByID := make(map[string]domain.UserKnowledge, len(allUK))
+	itemIDs := make([]string, 0, len(allUK))
 	for _, uk := range allUK {
 		ukByID[uk.ItemID] = uk
+		itemIDs = append(itemIDs, uk.ItemID)
+	}
+
+	// ── 2. Resolve predictions: cache → persisted confidence → on-the-fly ────
+	cachedByID := map[string]domain.KnowledgePrediction{}
+	if len(itemIDs) > 0 {
+		rows, err := s.repo.ListKnowledgePredictions(ctx, req.UserID, itemIDs)
+		if err != nil {
+			return domain.SelectedItems{}, err
+		}
+		for _, row := range rows {
+			if s.cache.Fresh(row, now) {
+				cachedByID[row.ItemID] = row
+			}
+		}
+	}
+	predByID := make(map[string]predictor.Prediction, len(allUK))
+	for _, uk := range allUK {
+		if cached, ok := cachedByID[uk.ItemID]; ok {
+			predByID[uk.ItemID] = predictor.Prediction{ItemID: uk.ItemID, Probability: cached.PredictedProb}
+			continue
+		}
+		if uk.ConfidenceScore != nil {
+			predByID[uk.ItemID] = predictor.Prediction{ItemID: uk.ItemID, Probability: *uk.ConfidenceScore}
+			continue
+		}
+		predByID[uk.ItemID] = s.algo.Score(uk, now)
 	}
 
 	// ── 3. Load all knowledge items for this language ─────────────────────────
