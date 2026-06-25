@@ -119,13 +119,13 @@ func (s *DefinitionService) SentenceBreakdown(ctx context.Context, userID, story
 	if err != nil {
 		return domain.Breakdown{}, err
 	}
-	sentence := sentenceAt(tokens, position)
-	if sentence == "" {
+	span, ok := SentenceAt(tokens, position)
+	if !ok {
 		return domain.Breakdown{}, errors.New("reader: no sentence at position")
 	}
-	cacheKey := hashSentence(sentence)
+	cacheKey := hashSentence(span.Text)
 	return s.cachedBreakdown(ctx, domain.BreakdownSentence, language, cacheKey,
-		llm.SentenceBreakdownBuilder{Sentence: sentence})
+		llm.SentenceBreakdownBuilder{Sentence: span.Text})
 }
 
 // WordBreakdown returns the deep breakdown of a word, from the cache or a fresh
@@ -228,44 +228,6 @@ func metaString(m map[string]any, key string) string {
 		return s
 	}
 	return ""
-}
-
-// sentenceTerminators are the characters that end a sentence for the segmentation
-// heuristic. Includes the Greek question mark ";". A token whose surface contains
-// any of these closes the sentence. Structure-aware segmentation is future (#42).
-const sentenceTerminators = ".!?;…"
-
-func isSentenceEnd(surface string) bool {
-	return strings.ContainsAny(surface, sentenceTerminators)
-}
-
-// sentenceAt returns the text of the sentence containing the given token
-// position, by walking out to the nearest sentence terminators. tokens are in
-// position order. Returns "" if the position is not present.
-func sentenceAt(tokens []domain.StoryToken, position int) string {
-	idx := -1
-	for i, t := range tokens {
-		if t.Position == position {
-			idx = i
-			break
-		}
-	}
-	if idx == -1 {
-		return ""
-	}
-	start := idx
-	for start > 0 && !isSentenceEnd(tokens[start-1].Surface) {
-		start--
-	}
-	end := idx
-	for end < len(tokens)-1 && !isSentenceEnd(tokens[end].Surface) {
-		end++
-	}
-	var sb strings.Builder
-	for i := start; i <= end; i++ {
-		sb.WriteString(tokens[i].Surface)
-	}
-	return strings.TrimSpace(sb.String())
 }
 
 // hashSentence is the global cache key for a sentence breakdown: a hash over the

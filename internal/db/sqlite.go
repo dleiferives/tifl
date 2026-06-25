@@ -722,6 +722,48 @@ func (r *SQLiteRepository) UpsertDefinition(ctx context.Context, d domain.Defini
 	return err
 }
 
+func (r *SQLiteRepository) UpsertDefinitionImport(ctx context.Context, imp domain.DefinitionImport) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO definition_imports(import_id, language, source, source_path, dataset_version,
+		   started_at, completed_at, status, entries_read, entries_matched, definitions_written, error)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(import_id) DO UPDATE SET
+		   language = excluded.language, source = excluded.source, source_path = excluded.source_path,
+		   dataset_version = excluded.dataset_version, started_at = excluded.started_at,
+		   completed_at = excluded.completed_at, status = excluded.status,
+		   entries_read = excluded.entries_read, entries_matched = excluded.entries_matched,
+		   definitions_written = excluded.definitions_written, error = excluded.error`,
+		imp.ImportID, imp.Language, imp.Source, imp.SourcePath, emptyToNull(imp.DatasetVersion),
+		imp.StartedAt, nullFloat(imp.CompletedAt), imp.Status, imp.EntriesRead, imp.EntriesMatched,
+		imp.DefinitionsWritten, emptyToNull(imp.Error))
+	return err
+}
+
+func (r *SQLiteRepository) GetDefinitionImport(ctx context.Context, importID string) (domain.DefinitionImport, error) {
+	var (
+		imp                          domain.DefinitionImport
+		datasetVersion, errorMessage sql.NullString
+		completedAt                  sql.NullFloat64
+	)
+	err := r.db.QueryRowContext(ctx,
+		`SELECT import_id, language, source, source_path, dataset_version, started_at,
+		   completed_at, status, entries_read, entries_matched, definitions_written, error
+		 FROM definition_imports WHERE import_id = ?`, importID).Scan(
+		&imp.ImportID, &imp.Language, &imp.Source, &imp.SourcePath, &datasetVersion, &imp.StartedAt,
+		&completedAt, &imp.Status, &imp.EntriesRead, &imp.EntriesMatched, &imp.DefinitionsWritten, &errorMessage)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.DefinitionImport{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.DefinitionImport{}, err
+	}
+	imp.DatasetVersion, imp.Error = datasetVersion.String, errorMessage.String
+	if completedAt.Valid {
+		imp.CompletedAt = &completedAt.Float64
+	}
+	return imp, nil
+}
+
 func (r *SQLiteRepository) GetBreakdown(ctx context.Context, scope domain.BreakdownScope, language, cacheKey string) (domain.Breakdown, error) {
 	var (
 		content   sql.NullString

@@ -29,10 +29,18 @@ type readerKnowledgeDTO struct {
 	LookupCount int    `json:"lookup_count"`
 }
 
+type sentenceSpanDTO struct {
+	Index         int    `json:"index"`
+	StartPosition int    `json:"start_position"`
+	EndPosition   int    `json:"end_position"` // half-open: one past the last token position
+	Text          string `json:"text"`
+}
+
 type storyLoadResponse struct {
 	StoryID          string                        `json:"story_id"`
 	Language         string                        `json:"language"`
 	Tokens           []storyTokenDTO               `json:"tokens"`
+	Sentences        []sentenceSpanDTO             `json:"sentences"`
 	Knowledge        map[string]readerKnowledgeDTO `json:"knowledge"`
 	SurfaceKnowledge map[string]readerLevelDTO     `json:"surface_knowledge"`
 }
@@ -80,6 +88,7 @@ func (h *Handler) getStory(w http.ResponseWriter, r *http.Request) {
 		StoryID:          story.StoryID,
 		Language:         story.Language,
 		Tokens:           make([]storyTokenDTO, len(tokens)),
+		Sentences:        make([]sentenceSpanDTO, 0),
 		Knowledge:        make(map[string]readerKnowledgeDTO, len(knowledge)),
 		SurfaceKnowledge: make(map[string]readerLevelDTO, len(surfaceLevels)),
 	}
@@ -90,6 +99,11 @@ func (h *Handler) getStory(w http.ResponseWriter, r *http.Request) {
 			SurfaceKey: surfaceKey, FormKey: readerFormKey(t.ItemKey, surfaceKey),
 			IsWord: t.IsWord,
 		}
+	}
+	for _, s := range reader.SentenceSpans(tokens) {
+		resp.Sentences = append(resp.Sentences, sentenceSpanDTO{
+			Index: s.Index, StartPosition: s.StartPosition, EndPosition: s.EndPosition, Text: s.Text,
+		})
 	}
 	for _, k := range knowledge {
 		resp.Knowledge[k.ItemKey] = readerKnowledgeDTO{Level: string(k.Level), LookupCount: k.LookupCount}

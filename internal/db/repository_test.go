@@ -252,6 +252,19 @@ func testDefinitionsBreakdowns(t *testing.T, repo db.Repository) {
 		t.Fatalf("upsert should not add a row, got %d", len(defs))
 	}
 
+	completed := 1800.0
+	must(t, repo.UpsertDefinitionImport(ctx, domain.DefinitionImport{
+		ImportID: "imp_1", Language: "grc", Source: domain.DefinitionImportSourceKaikki,
+		SourcePath: "grc-extract.jsonl.gz", DatasetVersion: "2026-06-01",
+		StartedAt: 1700, CompletedAt: &completed, Status: domain.DefinitionImportComplete,
+		EntriesRead: 10, EntriesMatched: 7, DefinitionsWritten: 6,
+	}))
+	imp, err := repo.GetDefinitionImport(ctx, "imp_1")
+	must(t, err)
+	if imp.Status != domain.DefinitionImportComplete || imp.DefinitionsWritten != 6 || imp.CompletedAt == nil {
+		t.Fatalf("definition import not round-tripped: %+v", imp)
+	}
+
 	// Breakdown cache: miss → ErrNotFound, then round-trip the JSON content.
 	if _, err := repo.GetBreakdown(ctx, domain.BreakdownSentence, "grc", "h1"); !errors.Is(err, db.ErrNotFound) {
 		t.Fatalf("want ErrNotFound on cache miss, got %v", err)
