@@ -76,6 +76,11 @@ type Repository interface {
 	// load time. Items the user has never interacted with have no row and are
 	// "unseen" by absence.
 	LoadReaderKnowledge(ctx context.Context, userID, language string) ([]domain.ReaderKnowledge, error)
+	// LoadReaderSurfaceLevels returns per-displayed-form reader ratings for a
+	// language. These rows control visual word colours for inflected forms without
+	// changing canonical acquisition signals.
+	LoadReaderSurfaceLevels(ctx context.Context, userID, language string) ([]domain.ReaderSurfaceLevel, error)
+	UpsertReaderSurfaceLevel(ctx context.Context, userID string, row domain.ReaderSurfaceLevel) error
 
 	// LLM calls — the audit/cost log written by the gateway client after every
 	// outbound model call. Append-only; the call_id is the caller's idempotency key.

@@ -32,11 +32,11 @@ func fixture(t *testing.T) (context.Context, *reader.Service, *db.FakeRepository
 	story, err := repo.CreateStory(ctx, domain.Story{UserID: user.UserID, Language: "xx", Text: "a a b", Level: "beginner"})
 	must(t, err)
 	must(t, repo.ReplaceStoryTokens(ctx, story.StoryID, []domain.StoryToken{
-		{StoryID: story.StoryID, Position: 0, Surface: "a", ItemKey: "a", IsWord: true},
+		{StoryID: story.StoryID, Position: 0, Surface: "a", ItemKey: "a", SurfaceKey: "a", IsWord: true},
 		{StoryID: story.StoryID, Position: 1, Surface: " ", IsWord: false},
-		{StoryID: story.StoryID, Position: 2, Surface: "a", ItemKey: "a", IsWord: true},
+		{StoryID: story.StoryID, Position: 2, Surface: "a", ItemKey: "a", SurfaceKey: "a", IsWord: true},
 		{StoryID: story.StoryID, Position: 3, Surface: " ", IsWord: false},
-		{StoryID: story.StoryID, Position: 4, Surface: "b", ItemKey: "b", IsWord: true},
+		{StoryID: story.StoryID, Position: 4, Surface: "b", ItemKey: "b", SurfaceKey: "b", IsWord: true},
 	}))
 	svc := reader.NewService(repo, acquire.NewEngine(repo, predictor.DefaultConfig(), acquire.Config{}))
 	return ctx, svc, repo, user.UserID, story.StoryID
@@ -50,6 +50,19 @@ func knowledge(t *testing.T, ctx context.Context, repo *db.FakeRepository, userI
 	uk, err := repo.GetUserKnowledgeItem(ctx, userID, itemID)
 	must(t, err)
 	return uk
+}
+
+func surfaceLevel(t *testing.T, ctx context.Context, repo *db.FakeRepository, userID, language, key, surface string) domain.ReaderLevel {
+	t.Helper()
+	rows, err := repo.LoadReaderSurfaceLevels(ctx, userID, language)
+	must(t, err)
+	for _, row := range rows {
+		if row.ItemKey == key && row.SurfaceKey == surface {
+			return row.Level
+		}
+	}
+	t.Fatalf("missing surface level for %s/%s", key, surface)
+	return ""
 }
 
 func TestIngestExposureLookupAndRating(t *testing.T) {
@@ -71,8 +84,11 @@ func TestIngestExposureLookupAndRating(t *testing.T) {
 		t.Fatalf("word 'a' signals wrong: %+v", a)
 	}
 	b := knowledge(t, ctx, repo, userID, "b")
-	if b.ExposureCount != 1 || b.ContextVariety != 1 || b.Level != domain.Level3 {
+	if b.ExposureCount != 1 || b.ContextVariety != 1 || b.Level != domain.LevelUnseen {
 		t.Fatalf("word 'b' signals wrong: %+v", b)
+	}
+	if got := surfaceLevel(t, ctx, repo, userID, "xx", "b", "b"); got != domain.Level3 {
+		t.Fatalf("surface 'b' level = %q, want 3", got)
 	}
 	// Derivation ran: confidence_score is populated, no longer NULL.
 	if a.ConfidenceScore == nil {
@@ -124,15 +140,15 @@ func TestRateShorthandWellKnownIgnored(t *testing.T) {
 		{EventID: "e2", StoryID: storyID, EventType: domain.ReaderEventRate, Position: &pos4, Value: &i},
 	})
 	must(t, err)
-	if got := knowledge(t, ctx, repo, userID, "a").Level; got != domain.LevelWellKnown {
-		t.Fatalf("'w' should map to well_known, got %q", got)
+	if got := surfaceLevel(t, ctx, repo, userID, "xx", "a", "a"); got != domain.LevelWellKnown {
+		t.Fatalf("'w' should map to surface well_known, got %q", got)
 	}
-	if got := knowledge(t, ctx, repo, userID, "b").Level; got != domain.LevelIgnored {
-		t.Fatalf("'i' should map to ignored, got %q", got)
+	if got := surfaceLevel(t, ctx, repo, userID, "xx", "b", "b"); got != domain.LevelIgnored {
+		t.Fatalf("'i' should map to surface ignored, got %q", got)
 	}
 }
 
-func TestSetLevel(t *testing.T) {
+func TestSetLevelWritesCanonicalLevel(t *testing.T) {
 	ctx, svc, repo, userID, _ := fixture(t)
 	must(t, svc.SetLevel(ctx, userID, "xx", "a", domain.Level4))
 	if got := knowledge(t, ctx, repo, userID, "a").Level; got != domain.Level4 {
@@ -141,6 +157,21 @@ func TestSetLevel(t *testing.T) {
 	// An invalid level is rejected without writing.
 	if err := svc.SetLevel(ctx, userID, "xx", "a", domain.ReaderLevel("9")); err == nil {
 		t.Fatal("expected invalid level to be rejected")
+	}
+}
+
+func TestSetSurfaceLevelWritesExactForm(t *testing.T) {
+	ctx, svc, repo, userID, _ := fixture(t)
+	must(t, svc.SetSurfaceLevel(ctx, userID, domain.ReaderSurfaceLevel{
+		Language: "xx", ItemKey: "go", SurfaceKey: "went", Level: domain.Level2,
+	}))
+	if got := surfaceLevel(t, ctx, repo, userID, "xx", "go", "went"); got != domain.Level2 {
+		t.Fatalf("surface level = %q, want 2", got)
+	}
+	if err := svc.SetSurfaceLevel(ctx, userID, domain.ReaderSurfaceLevel{
+		Language: "xx", ItemKey: "go", SurfaceKey: "goes", Level: domain.ReaderLevel("9"),
+	}); err == nil {
+		t.Fatal("expected invalid surface level to be rejected")
 	}
 }
 

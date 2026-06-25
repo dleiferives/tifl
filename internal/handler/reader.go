@@ -16,10 +16,12 @@ import (
 // behavioural signals back in batches. See context/reader-mode.md.
 
 type storyTokenDTO struct {
-	Position int    `json:"position"`
-	Surface  string `json:"surface"`
-	Key      string `json:"key,omitempty"` // canonical knowledge key; omitted for non-word tokens
-	IsWord   bool   `json:"is_word"`
+	Position   int    `json:"position"`
+	Surface    string `json:"surface"`
+	Key        string `json:"key,omitempty"`         // canonical knowledge key; omitted for non-word tokens
+	SurfaceKey string `json:"surface_key,omitempty"` // per-form rating key; omitted for non-word tokens
+	FormKey    string `json:"form_key,omitempty"`    // opaque key for surface_knowledge lookup
+	IsWord     bool   `json:"is_word"`
 }
 
 type readerKnowledgeDTO struct {
@@ -28,10 +30,15 @@ type readerKnowledgeDTO struct {
 }
 
 type storyLoadResponse struct {
-	StoryID   string                        `json:"story_id"`
-	Language  string                        `json:"language"`
-	Tokens    []storyTokenDTO               `json:"tokens"`
-	Knowledge map[string]readerKnowledgeDTO `json:"knowledge"`
+	StoryID          string                        `json:"story_id"`
+	Language         string                        `json:"language"`
+	Tokens           []storyTokenDTO               `json:"tokens"`
+	Knowledge        map[string]readerKnowledgeDTO `json:"knowledge"`
+	SurfaceKnowledge map[string]readerLevelDTO     `json:"surface_knowledge"`
+}
+
+type readerLevelDTO struct {
+	Level string `json:"level"` // "" = unseen; "1".."5" | "well_known" | "ignored"
 }
 
 // getStory returns the tokenized story plus the reader's per-item knowledge map
@@ -63,20 +70,51 @@ func (h *Handler) getStory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	surfaceLevels, err := h.repo.LoadReaderSurfaceLevels(r.Context(), userID, story.Language)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
 
 	resp := storyLoadResponse{
-		StoryID:   story.StoryID,
-		Language:  story.Language,
-		Tokens:    make([]storyTokenDTO, len(tokens)),
-		Knowledge: make(map[string]readerKnowledgeDTO, len(knowledge)),
+		StoryID:          story.StoryID,
+		Language:         story.Language,
+		Tokens:           make([]storyTokenDTO, len(tokens)),
+		Knowledge:        make(map[string]readerKnowledgeDTO, len(knowledge)),
+		SurfaceKnowledge: make(map[string]readerLevelDTO, len(surfaceLevels)),
 	}
 	for i, t := range tokens {
-		resp.Tokens[i] = storyTokenDTO{Position: t.Position, Surface: t.Surface, Key: t.ItemKey, IsWord: t.IsWord}
+		surfaceKey := readerTokenSurfaceKey(t)
+		resp.Tokens[i] = storyTokenDTO{
+			Position: t.Position, Surface: t.Surface, Key: t.ItemKey,
+			SurfaceKey: surfaceKey, FormKey: readerFormKey(t.ItemKey, surfaceKey),
+			IsWord: t.IsWord,
+		}
 	}
 	for _, k := range knowledge {
 		resp.Knowledge[k.ItemKey] = readerKnowledgeDTO{Level: string(k.Level), LookupCount: k.LookupCount}
 	}
+	for _, s := range surfaceLevels {
+		resp.SurfaceKnowledge[readerFormKey(s.ItemKey, s.SurfaceKey)] = readerLevelDTO{Level: string(s.Level)}
+	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func readerTokenSurfaceKey(t domain.StoryToken) string {
+	if !t.IsWord || t.ItemKey == "" {
+		return ""
+	}
+	if t.SurfaceKey != "" {
+		return t.SurfaceKey
+	}
+	return t.Surface
+}
+
+func readerFormKey(itemKey, surfaceKey string) string {
+	if itemKey == "" || surfaceKey == "" {
+		return ""
+	}
+	return fmt.Sprintf("%d:%s%s", len(itemKey), itemKey, surfaceKey)
 }
 
 func (h *Handler) writeStoryLookupError(w http.ResponseWriter, err error) {
@@ -145,9 +183,36 @@ type wordKnowledgeRequest struct {
 	Level    string `json:"level"`
 }
 
+type readerSurfaceKnowledgeRequest struct {
+	Language   string `json:"language"`
+	ItemKey    string `json:"item_key"`
+	SurfaceKey string `json:"surface_key"`
+	Level      string `json:"level"`
+}
+
+// putReaderSurfaceKnowledge applies the learner's optimistic rating for one
+// rendered form of a canonical word. The exact form controls reader colour; the
+// canonical item remains the acquisition/predictor row.
+func (h *Handler) putReaderSurfaceKnowledge(w http.ResponseWriter, r *http.Request) {
+	var req readerSurfaceKnowledgeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
+		return
+	}
+	err := h.reader.SetSurfaceLevel(r.Context(), h.currentUserID(r), domain.ReaderSurfaceLevel{
+		Language: req.Language, ItemKey: req.ItemKey, SurfaceKey: req.SurfaceKey,
+		Level: domain.ReaderLevel(req.Level),
+	})
+	if err != nil {
+		h.writeReaderError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // putWordKnowledge applies the learner's optimistic knowledge rating for one word
-// key (the {token} path segment). Fire-and-forget from the client's perspective;
-// the response is a bare 204.
+// canonical key (the {token} path segment). This is the explicit lemma/root
+// override path, distinct from ordinary per-surface ratings.
 func (h *Handler) putWordKnowledge(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
 	if token == "" {

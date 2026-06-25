@@ -51,6 +51,18 @@ type ReaderKnowledge struct {
 	LookupCount int
 }
 
+// ReaderSurfaceLevel is the learner's self-rating for one displayed form of a
+// canonical item. ItemKey points at the lemma/root/stem acquisition row;
+// SurfaceKey is language-owned and preserves inflection-level distinctions.
+type ReaderSurfaceLevel struct {
+	UserID     string
+	Language   string
+	ItemKey    string
+	SurfaceKey string
+	Level      ReaderLevel
+	UpdatedAt  float64
+}
+
 // ReaderEvent is one logged reader interaction. The reader batches these
 // client-side and flushes them (on a debounce and on visibilitychange /
 // beforeunload); the server appends them append-only and derives signals from

@@ -35,6 +35,10 @@ func (Greek) KeyStrategy() lang.KeyStrategy { return lang.KeyLemma }
 // purpose — in Greek a missing accent is usually a different word.
 func (Greek) Normalize(s string) string { return lang.DefaultNormalize(s) }
 
+// ReaderSurfaceKey keeps Modern Greek inflections separate while folding the
+// casing and final-sigma details that should not create distinct reader ratings.
+func (Greek) ReaderSurfaceKey(surface string) string { return normalizeKey(surface) }
+
 // SupportedTaskTypes returns the task type IDs meaningful for Greek learners.
 func (Greek) SupportedTaskTypes() []string {
 	return []string{"comprehension_mc", "fill_blank", "production"}
@@ -60,10 +64,11 @@ func (g Greek) Tokenize(text string) []lang.Token {
 			surface := string(runes[i:j])
 			key, _ := g.ResolveKey(surface)
 			tokens = append(tokens, lang.Token{
-				Surface:  surface,
-				Key:      key,
-				IsWord:   true,
-				Position: pos,
+				Surface:    surface,
+				Key:        key,
+				SurfaceKey: g.ReaderSurfaceKey(surface),
+				IsWord:     true,
+				Position:   pos,
 			})
 			pos++
 			i = j

@@ -315,7 +315,7 @@ export interface paths {
         };
         /**
          * Load a story for the reader (tokens + knowledge in one call)
-         * @description Returns the server-tokenized story plus the caller's per-item knowledge map (canonical key → level + lookup_count) for the story's language, in a single response — everything the reader needs at load time. Words the user has never interacted with are absent from the map and treated as unseen. Stories are user-scoped; another user's story returns 404.
+         * @description Returns the server-tokenized story plus the caller's per-item knowledge map (canonical key → explicit lemma/root level + lookup_count) and per-surface level map for the story's language, in a single response. Ordinary reader ratings are keyed to the token's exact form_key; explicit lemma/root well-known/ignored actions use the canonical knowledge map. Stories are user-scoped; another user's story returns 404.
          */
         get: operations["getStory"];
         put?: never;
@@ -406,6 +406,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/reader/surface_knowledge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Optimistic reader rating write for one displayed word form
+         * @description Sets the learner's visual reader level for one displayed surface form of a canonical word. This controls the colour of that inflected form only; it does not change canonical acquisition signals or the explicit lemma/root override stored through /word_knowledge/{token}.
+         */
+        put: operations["putReaderSurfaceKnowledge"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/word_knowledge/{token}": {
         parameters: {
             query?: never;
@@ -415,8 +435,8 @@ export interface paths {
         };
         get?: never;
         /**
-         * Optimistic knowledge-rating write for one word key
-         * @description Sets the learner's level for the word whose canonical key is {token}. Fire-and-forget from the client (the reader updates local state instantly); the response is a bare 204. Idempotent — safe to race a later rate event in a flushed batch.
+         * Explicit canonical lemma/root knowledge-rating write
+         * @description Sets the learner's canonical level for the word whose lemma/root/stem key is {token}. The reader uses this only for explicit higher-effort lemma/root actions such as marking the underlying item well-known or ignored. Ordinary 1–5 ratings use /reader/surface_knowledge instead.
          */
         put: operations["putWordKnowledge"];
         post?: never;
@@ -748,25 +768,41 @@ export interface components {
             surface: string;
             /** @description canonical knowledge key; omitted for non-word tokens */
             key?: string;
+            /** @description language-owned exact-form rating key; omitted for non-word tokens */
+            surface_key?: string;
+            /** @description opaque key used to look up this form in surface_knowledge */
+            form_key?: string;
             is_word: boolean;
         };
-        /** @description The reader's per-item view, keyed by canonical key. */
+        /** @description The reader's canonical per-item view, keyed by lemma/root/stem key. */
         ReaderKnowledge: {
             /**
-             * @description learner self-rating; '' (omitted)=unseen
+             * @description explicit canonical learner mark; '' (omitted)=none
              * @enum {string}
              */
             level: "" | "1" | "2" | "3" | "4" | "5" | "well_known" | "ignored";
             lookup_count: number;
+        };
+        /** @description The reader's per-displayed-form level, keyed by StoryToken.form_key. */
+        ReaderSurfaceKnowledge: {
+            /**
+             * @description learner self-rating for this exact form; ''=unseen
+             * @enum {string}
+             */
+            level: "" | "1" | "2" | "3" | "4" | "5" | "well_known" | "ignored";
         };
         /** @description Everything the reader needs at load time, in one response. */
         StoryLoad: {
             story_id: string;
             language: string;
             tokens: components["schemas"]["StoryToken"][];
-            /** @description canonical key → knowledge state; unseen items are absent */
+            /** @description canonical key → canonical knowledge state; unseen items are absent */
             knowledge: {
                 [key: string]: components["schemas"]["ReaderKnowledge"];
+            };
+            /** @description StoryToken.form_key → exact-form level; unseen forms are absent */
+            surface_knowledge: {
+                [key: string]: components["schemas"]["ReaderSurfaceKnowledge"];
             };
         };
         /** @description One logged reader interaction. */
@@ -791,6 +827,18 @@ export interface components {
             language: string;
             /**
              * @description '' clears to unseen
+             * @enum {string}
+             */
+            level: "" | "1" | "2" | "3" | "4" | "5" | "well_known" | "ignored";
+        };
+        ReaderSurfaceKnowledgeRequest: {
+            language: string;
+            /** @description canonical lemma/root/stem key for the token */
+            item_key: string;
+            /** @description StoryToken.surface_key for the displayed form */
+            surface_key: string;
+            /**
+             * @description '' clears to unseen for this exact form
              * @enum {string}
              */
             level: "" | "1" | "2" | "3" | "4" | "5" | "well_known" | "ignored";
@@ -1520,6 +1568,31 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    putReaderSurfaceKnowledge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReaderSurfaceKnowledgeRequest"];
+            };
+        };
+        responses: {
+            /** @description Applied */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
             500: components["responses"]["InternalError"];
         };
     };

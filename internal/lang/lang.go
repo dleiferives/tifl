@@ -30,10 +30,11 @@ const (
 // punctuation) are included so the reader can reconstruct the text faithfully
 // without doing any text processing itself.
 type Token struct {
-	Surface  string // exact string as it appears, including punctuation
-	Key      string // resolved knowledge key; empty for non-word tokens
-	IsWord   bool   // false for whitespace / punctuation
-	Position int    // stable index in the token array
+	Surface    string // exact string as it appears, including punctuation
+	Key        string // resolved canonical knowledge key; empty for non-word tokens
+	SurfaceKey string // reader per-form rating key; empty for non-word tokens
+	IsWord     bool   // false for whitespace / punctuation
+	Position   int    // stable index in the token array
 }
 
 // Language is implemented by each language plugin.
@@ -54,6 +55,16 @@ type Language interface {
 	// not in the language-agnostic task types. Most languages can return
 	// DefaultNormalize(s).
 	Normalize(s string) string
+}
+
+// ReaderSurfaceKeyProvider is optionally implemented by languages that want to
+// canonicalize the reader's per-surface rating key differently from the raw
+// rendered token. The key should preserve inflection/form distinctions while
+// applying language-owned normalization such as Unicode composition, case folding,
+// or script quirks. Languages that do not implement it use the NFC-normalized
+// token surface exactly as rendered.
+type ReaderSurfaceKeyProvider interface {
+	ReaderSurfaceKey(surface string) string
 }
 
 // SkillProvider is optionally implemented by language plugins that ship a
@@ -138,6 +149,17 @@ type LevelRequirement struct {
 // not safe for concurrent use, so a fresh one is built per call.
 func DefaultNormalize(s string) string {
 	return strings.TrimSpace(cases.Fold().String(norm.NFC.String(s)))
+}
+
+// ReaderSurfaceKey returns the language-owned key used for reader per-surface
+// ratings. It deliberately differs from ResolveKey: ResolveKey maps a surface
+// token to the canonical acquisition item (lemma/root/stem), while this keeps the
+// displayed form granular enough for inflection-specific reader colours.
+func ReaderSurfaceKey(l Language, surface string) string {
+	if provider, ok := l.(ReaderSurfaceKeyProvider); ok {
+		return provider.ReaderSurfaceKey(surface)
+	}
+	return norm.NFC.String(surface)
 }
 
 // Registry maps language code -> plugin. Populated at startup. Missing languages

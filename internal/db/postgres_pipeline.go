@@ -264,9 +264,9 @@ func (r *PostgresRepository) ReplaceStoryTokens(ctx context.Context, storyID str
 		}
 		for _, t := range tokens {
 			if _, err := tx.Exec(ctx,
-				`INSERT INTO story_tokens(story_id, position, surface, item_key, is_word)
-				 VALUES($1, $2, $3, $4, $5)`,
-				storyID, t.Position, t.Surface, pgText(t.ItemKey), boolToInt(t.IsWord)); err != nil {
+				`INSERT INTO story_tokens(story_id, position, surface, item_key, surface_key, is_word)
+				 VALUES($1, $2, $3, $4, $5, $6)`,
+				storyID, t.Position, t.Surface, pgText(t.ItemKey), pgText(t.SurfaceKey), boolToInt(t.IsWord)); err != nil {
 				return err
 			}
 		}
@@ -276,7 +276,7 @@ func (r *PostgresRepository) ReplaceStoryTokens(ctx context.Context, storyID str
 
 func (r *PostgresRepository) ListStoryTokens(ctx context.Context, storyID string) ([]domain.StoryToken, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT story_id, position, surface, item_key, is_word
+		`SELECT story_id, position, surface, item_key, surface_key, is_word
 		 FROM story_tokens WHERE story_id = $1 ORDER BY position`, storyID)
 	if err != nil {
 		return nil, err
@@ -288,13 +288,17 @@ func (r *PostgresRepository) ListStoryTokens(ctx context.Context, storyID string
 		var (
 			t       domain.StoryToken
 			itemKey *string
+			surfKey *string
 			isWord  int
 		)
-		if err := rows.Scan(&t.StoryID, &t.Position, &t.Surface, &itemKey, &isWord); err != nil {
+		if err := rows.Scan(&t.StoryID, &t.Position, &t.Surface, &itemKey, &surfKey, &isWord); err != nil {
 			return nil, err
 		}
 		if itemKey != nil {
 			t.ItemKey = *itemKey
+		}
+		if surfKey != nil {
+			t.SurfaceKey = *surfKey
 		}
 		t.IsWord = isWord != 0
 		out = append(out, t)

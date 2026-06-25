@@ -27,15 +27,16 @@ type FakeRepository struct {
 	items      map[string]domain.KnowledgeItem // item_id -> item
 	itemKeys   map[string]string               // language\x00type\x00key -> item_id
 	knowledge  map[string]domain.UserKnowledge // user_id\x00item_id -> state
-	llmCalls   []domain.LLMCall                // append-only audit log
-	readerEvts []domain.ReaderEvent            // append-only reader signal log
-	readerIDs  map[string]bool                 // event_id set, for idempotent insert
-	defs       map[string]domain.Definition    // language\x00key\x00source -> definition
-	breakdowns map[string]domain.Breakdown     // scope\x00language\x00cacheKey -> breakdown
-	skills     map[string]domain.Skill         // skill_id -> skill
-	itemSkills map[string]map[string]bool      // item_id -> skill_id set
-	userSkills map[string]domain.UserSkillXP   // user_id\x00skill_id -> state
-	skillLogs  []domain.TaskSkillXPLog         // append-only skill XP log
+	surface    map[string]domain.ReaderSurfaceLevel
+	llmCalls   []domain.LLMCall              // append-only audit log
+	readerEvts []domain.ReaderEvent          // append-only reader signal log
+	readerIDs  map[string]bool               // event_id set, for idempotent insert
+	defs       map[string]domain.Definition  // language\x00key\x00source -> definition
+	breakdowns map[string]domain.Breakdown   // scope\x00language\x00cacheKey -> breakdown
+	skills     map[string]domain.Skill       // skill_id -> skill
+	itemSkills map[string]map[string]bool    // item_id -> skill_id set
+	userSkills map[string]domain.UserSkillXP // user_id\x00skill_id -> state
+	skillLogs  []domain.TaskSkillXPLog       // append-only skill XP log
 
 	// Generation-pipeline state.
 	sessions   map[string]domain.Session                    // session_id -> session
@@ -61,6 +62,7 @@ func NewFake() *FakeRepository {
 		items:      make(map[string]domain.KnowledgeItem),
 		itemKeys:   make(map[string]string),
 		knowledge:  make(map[string]domain.UserKnowledge),
+		surface:    make(map[string]domain.ReaderSurfaceLevel),
 		readerIDs:  make(map[string]bool),
 		defs:       make(map[string]domain.Definition),
 		breakdowns: make(map[string]domain.Breakdown),
@@ -430,6 +432,41 @@ func (r *FakeRepository) LoadReaderKnowledge(_ context.Context, userID, language
 	return out, nil
 }
 
+func (r *FakeRepository) LoadReaderSurfaceLevels(_ context.Context, userID, language string) ([]domain.ReaderSurfaceLevel, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []domain.ReaderSurfaceLevel
+	for _, row := range r.surface {
+		if row.UserID == userID && row.Language == language {
+			out = append(out, row)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ItemKey != out[j].ItemKey {
+			return out[i].ItemKey < out[j].ItemKey
+		}
+		return out[i].SurfaceKey < out[j].SurfaceKey
+	})
+	return out, nil
+}
+
+func (r *FakeRepository) UpsertReaderSurfaceLevel(_ context.Context, userID string, row domain.ReaderSurfaceLevel) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.users[userID]; !ok {
+		return errFakeFK("reader_surface_levels.user_id")
+	}
+	if _, ok := r.languages[row.Language]; !ok {
+		return errFakeFK("reader_surface_levels.language")
+	}
+	if row.UpdatedAt == 0 {
+		row.UpdatedAt = float64(time.Now().Unix())
+	}
+	row.UserID = userID
+	r.surface[surfaceLevelKey(userID, row.Language, row.ItemKey, row.SurfaceKey)] = row
+	return nil
+}
+
 // --- definitions & breakdowns ----------------------------------------------
 
 func (r *FakeRepository) ListDefinitions(_ context.Context, language, itemKey string) ([]domain.Definition, error) {
@@ -536,6 +573,10 @@ func (r *FakeRepository) ReaderEvents() []domain.ReaderEvent {
 		out[i] = cloneReaderEvent(e)
 	}
 	return out
+}
+
+func surfaceLevelKey(userID, language, itemKey, surfaceKey string) string {
+	return userID + "\x00" + language + "\x00" + itemKey + "\x00" + surfaceKey
 }
 
 // LLMCalls returns a copy of the recorded calls, for test inspection. It is not

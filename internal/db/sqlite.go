@@ -566,6 +566,46 @@ func (r *SQLiteRepository) LoadReaderKnowledge(ctx context.Context, userID, lang
 	return out, rows.Err()
 }
 
+func (r *SQLiteRepository) LoadReaderSurfaceLevels(ctx context.Context, userID, language string) ([]domain.ReaderSurfaceLevel, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT user_id, language, item_key, surface_key, level, updated_at
+		 FROM reader_surface_levels
+		 WHERE user_id = ? AND language = ?
+		 ORDER BY item_key, surface_key`, userID, language)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domain.ReaderSurfaceLevel
+	for rows.Next() {
+		var (
+			row   domain.ReaderSurfaceLevel
+			level sql.NullString
+		)
+		if err := rows.Scan(&row.UserID, &row.Language, &row.ItemKey, &row.SurfaceKey, &level, &row.UpdatedAt); err != nil {
+			return nil, err
+		}
+		row.Level = domain.ReaderLevel(level.String)
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func (r *SQLiteRepository) UpsertReaderSurfaceLevel(ctx context.Context, userID string, row domain.ReaderSurfaceLevel) error {
+	if row.UpdatedAt == 0 {
+		row.UpdatedAt = float64(time.Now().Unix())
+	}
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO reader_surface_levels(user_id, language, item_key, surface_key, level, updated_at)
+		 VALUES(?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(user_id, language, item_key, surface_key) DO UPDATE SET
+		   level = excluded.level,
+		   updated_at = excluded.updated_at`,
+		userID, row.Language, row.ItemKey, row.SurfaceKey, nullLevel(row.Level), row.UpdatedAt)
+	return err
+}
+
 // --- llm calls -------------------------------------------------------------
 
 func (r *SQLiteRepository) InsertLLMCall(ctx context.Context, c domain.LLMCall) error {

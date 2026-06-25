@@ -1196,6 +1196,12 @@ select {
   font-weight: 700;
 }
 
+.reader-canonical-actions {
+  display: grid;
+  gap: 0.35rem;
+  margin-bottom: 0.55rem;
+}
+
 .reader-deep {
   width: 100%;
   padding: 0.4rem;
@@ -1203,6 +1209,11 @@ select {
   border-radius: 0.3rem;
   background: var(--surface-subtle);
   cursor: pointer;
+}
+
+.reader-deep[data-active] {
+  border-color: var(--reader-cursor);
+  box-shadow: 0 0 0 1px var(--reader-cursor);
 }
 
 .reader-popup-meta {

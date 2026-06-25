@@ -25,9 +25,9 @@ func seedStory(t *testing.T, repo interface {
 		t.Fatal(err)
 	}
 	tokens := []domain.StoryToken{
-		{StoryID: story.StoryID, Position: 0, Surface: "a", ItemKey: "a", IsWord: true},
+		{StoryID: story.StoryID, Position: 0, Surface: "a", ItemKey: "a", SurfaceKey: "a", IsWord: true},
 		{StoryID: story.StoryID, Position: 1, Surface: " ", IsWord: false},
-		{StoryID: story.StoryID, Position: 2, Surface: "b", ItemKey: "b", IsWord: true},
+		{StoryID: story.StoryID, Position: 2, Surface: "b", ItemKey: "b", SurfaceKey: "b", IsWord: true},
 	}
 	if err := repo.ReplaceStoryTokens(ctx, story.StoryID, tokens); err != nil {
 		t.Fatal(err)
@@ -64,15 +64,20 @@ func TestGetStoryReturnsTokensAndKnowledge(t *testing.T) {
 		StoryID  string `json:"story_id"`
 		Language string `json:"language"`
 		Tokens   []struct {
-			Position int    `json:"position"`
-			Surface  string `json:"surface"`
-			Key      string `json:"key"`
-			IsWord   bool   `json:"is_word"`
+			Position   int    `json:"position"`
+			Surface    string `json:"surface"`
+			Key        string `json:"key"`
+			SurfaceKey string `json:"surface_key"`
+			FormKey    string `json:"form_key"`
+			IsWord     bool   `json:"is_word"`
 		} `json:"tokens"`
 		Knowledge map[string]struct {
 			Level       string `json:"level"`
 			LookupCount int    `json:"lookup_count"`
 		} `json:"knowledge"`
+		SurfaceKnowledge map[string]struct {
+			Level string `json:"level"`
+		} `json:"surface_knowledge"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatal(err)
@@ -86,6 +91,9 @@ func TestGetStoryReturnsTokensAndKnowledge(t *testing.T) {
 	}
 	if out.Tokens[1].IsWord || out.Tokens[1].Key != "" {
 		t.Fatalf("middle token should be a non-word space: %+v", out.Tokens[1])
+	}
+	if out.Tokens[0].SurfaceKey != "a" || out.Tokens[0].FormKey == "" {
+		t.Fatalf("word token should include form keys: %+v", out.Tokens[0])
 	}
 	k, ok := out.Knowledge["a"]
 	if !ok || k.Level != "3" || k.LookupCount != 2 {
@@ -123,16 +131,20 @@ func TestPostReaderEventsDerivesSignals(t *testing.T) {
 	}
 
 	// The GET load should now reflect the lookup on "a" and the level on "b".
-	k := loadKnowledge(t, srv.URL, storyID)
-	if k["a"].LookupCount != 1 {
-		t.Fatalf("'a' lookup_count = %d, want 1", k["a"].LookupCount)
+	state := loadReaderState(t, srv.URL, storyID)
+	if state.Knowledge["a"].LookupCount != 1 {
+		t.Fatalf("'a' lookup_count = %d, want 1", state.Knowledge["a"].LookupCount)
 	}
-	if k["b"].Level != "4" {
-		t.Fatalf("'b' level = %q, want 4", k["b"].Level)
+	formKey := state.Tokens[2].FormKey
+	if state.SurfaceKnowledge[formKey].Level != "4" {
+		t.Fatalf("'b' surface level = %q, want 4", state.SurfaceKnowledge[formKey].Level)
+	}
+	if state.Knowledge["b"].Level != "" {
+		t.Fatalf("'b' canonical level = %q, want empty", state.Knowledge["b"].Level)
 	}
 }
 
-func TestPutWordKnowledge(t *testing.T) {
+func TestPutWordKnowledgeWritesCanonicalLevel(t *testing.T) {
 	srv, repo := newServer(t, false)
 	storyID := seedStory(t, repo)
 
@@ -150,7 +162,34 @@ func TestPutWordKnowledge(t *testing.T) {
 		t.Fatalf("want 204, got %d", resp.StatusCode)
 	}
 	if k := loadKnowledge(t, srv.URL, storyID); k["a"].Level != "well_known" {
-		t.Fatalf("'a' level = %q, want well_known", k["a"].Level)
+		t.Fatalf("'a' canonical level = %q, want well_known", k["a"].Level)
+	}
+}
+
+func TestPutReaderSurfaceKnowledge(t *testing.T) {
+	srv, repo := newServer(t, false)
+	storyID := seedStory(t, repo)
+
+	req, err := http.NewRequest(http.MethodPut, srv.URL+"/api/v1/reader/surface_knowledge",
+		strings.NewReader(`{"language":"xx","item_key":"a","surface_key":"a","level":"2"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("want 204, got %d", resp.StatusCode)
+	}
+	state := loadReaderState(t, srv.URL, storyID)
+	formKey := state.Tokens[0].FormKey
+	if got := state.SurfaceKnowledge[formKey].Level; got != "2" {
+		t.Fatalf("surface level = %q, want 2", got)
+	}
+	if got := state.Knowledge["a"].Level; got != "" {
+		t.Fatalf("canonical level = %q, want empty", got)
 	}
 }
 
@@ -250,21 +289,45 @@ func loadKnowledge(t *testing.T, baseURL, storyID string) map[string]struct {
 	LookupCount int    `json:"lookup_count"`
 } {
 	t.Helper()
+	return loadReaderState(t, baseURL, storyID).Knowledge
+}
+
+func loadReaderState(t *testing.T, baseURL, storyID string) struct {
+	Tokens []struct {
+		Position int    `json:"position"`
+		FormKey  string `json:"form_key"`
+	} `json:"tokens"`
+	Knowledge map[string]struct {
+		Level       string `json:"level"`
+		LookupCount int    `json:"lookup_count"`
+	} `json:"knowledge"`
+	SurfaceKnowledge map[string]struct {
+		Level string `json:"level"`
+	} `json:"surface_knowledge"`
+} {
+	t.Helper()
 	resp, err := http.Get(baseURL + "/api/v1/stories/" + storyID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
 	var out struct {
+		Tokens []struct {
+			Position int    `json:"position"`
+			FormKey  string `json:"form_key"`
+		} `json:"tokens"`
 		Knowledge map[string]struct {
 			Level       string `json:"level"`
 			LookupCount int    `json:"lookup_count"`
 		} `json:"knowledge"`
+		SurfaceKnowledge map[string]struct {
+			Level string `json:"level"`
+		} `json:"surface_knowledge"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatal(err)
 	}
-	return out.Knowledge
+	return out
 }
 
 func TestGetStoryUnknownReturns404(t *testing.T) {

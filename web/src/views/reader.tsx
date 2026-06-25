@@ -5,6 +5,7 @@ import {
   getDefinition,
   getStory,
   postReaderEvents,
+  setReaderSurfaceKnowledge,
   sentenceBreakdown,
   setWordKnowledge,
   wordBreakdown,
@@ -15,6 +16,7 @@ import { appStore } from "../store";
 
 type StoryToken = APISchema<"StoryToken">;
 type ReaderKnowledge = APISchema<"ReaderKnowledge">;
+type ReaderSurfaceKnowledge = APISchema<"ReaderSurfaceKnowledge">;
 type KnowledgeLevel = ReaderKnowledge["level"];
 type Definition = APISchema<"Definition">;
 type ReaderEvent = APISchema<"ReaderEvent">;
@@ -41,6 +43,7 @@ export function ReaderView(props: { storyId: string }) {
   const [tokens, setTokens] = createSignal<StoryToken[]>([]);
   const [language, setLanguage] = createSignal("");
   const [knowledge, setKnowledge] = createStore<Record<string, ReaderKnowledge>>({});
+  const [surfaceKnowledge, setSurfaceKnowledge] = createStore<Record<string, ReaderSurfaceKnowledge>>({});
   const [cursor, setCursor] = createSignal(0);
   const [popupVisible, setPopupVisible] = createSignal(false);
   const [popupPos, setPopupPos] = createSignal<{ top: number; left: number } | null>(null);
@@ -78,15 +81,18 @@ export function ReaderView(props: { storyId: string }) {
   async function load() {
     try {
       const story = await getStory(props.storyId);
-      // Seed every word key so the per-span knowledge subscription is fine-grained
-      // from the first render; words the user never touched stay unseen ("").
+      // Seed every canonical key and exact-form key so per-span subscriptions are
+      // fine-grained from the first render; untouched words stay unseen ("").
       const seeded: Record<string, ReaderKnowledge> = {};
+      const seededSurface: Record<string, ReaderSurfaceKnowledge> = {};
       for (const token of story.tokens) {
-        if (token.is_word && token.key) {
+        if (token.is_word && token.key && token.form_key) {
           seeded[token.key] = story.knowledge[token.key] ?? { level: "", lookup_count: 0 };
+          seededSurface[token.form_key] = story.surface_knowledge[token.form_key] ?? { level: "" };
         }
       }
       setKnowledge(seeded);
+      setSurfaceKnowledge(seededSurface);
       setTokens(story.tokens);
       setLanguage(story.language);
       const first = story.tokens.findIndex((token) => token.is_word && token.key);
@@ -185,17 +191,44 @@ export function ReaderView(props: { storyId: string }) {
 
   function rate(level: KnowledgeLevel, eventValue: string) {
     const token = currentToken();
+    if (!token?.key || !token.form_key || !token.surface_key) {
+      return;
+    }
+    const formKey = token.form_key;
+    const previous = surfaceKnowledge[formKey]?.level ?? "";
+    setSurfaceKnowledge(formKey, "level", level); // optimistic; cursor stays put
+    void setReaderSurfaceKnowledge({
+      language: language(),
+      item_key: token.key,
+      surface_key: token.surface_key,
+      level,
+    }).catch(() => {
+      setSurfaceKnowledge(formKey, "level", previous);
+      appStore.showToast("That rating could not be saved.", "error");
+    });
+    enqueue({ event_type: "rate", position: token.position, value: eventValue });
+  }
+
+  function surfaceLevel(token: StoryToken): KnowledgeLevel {
+    return token.form_key ? surfaceKnowledge[token.form_key]?.level ?? "" : "";
+  }
+
+  function displayLevel(token: StoryToken): KnowledgeLevel {
+    return displayLevelFor(token, knowledge, surfaceKnowledge);
+  }
+
+  function markCanonical(level: "well_known" | "ignored" | "") {
+    const token = currentToken();
     if (!token?.key) {
       return;
     }
     const key = token.key;
     const previous = knowledge[key]?.level ?? "";
-    setKnowledge(key, "level", level); // optimistic; cursor stays put
+    setKnowledge(key, "level", level);
     void setWordKnowledge(key, { language: language(), level }).catch(() => {
       setKnowledge(key, "level", previous);
-      appStore.showToast("That rating could not be saved.", "error");
+      appStore.showToast("That mark could not be saved.", "error");
     });
-    enqueue({ event_type: "rate", position: token.position, value: eventValue });
   }
 
   function openSentenceBreakdown() {
@@ -389,7 +422,7 @@ export function ReaderView(props: { storyId: string }) {
                 >
                   <span
                     class="reader-word"
-                    data-level={dataLevel(knowledge[token.key as string]?.level)}
+                    data-level={dataLevel(displayLevel(token))}
                     ref={(el) => (wordEls[token.position] = el)}
                     onClick={() => setCursor(token.position)}
                   >
@@ -420,7 +453,7 @@ export function ReaderView(props: { storyId: string }) {
                         type="button"
                         class="reader-level"
                         data-level={dataLevel(level.value)}
-                        data-active={knowledge[key()]?.level === level.value ? "" : undefined}
+                        data-active={surfaceLevel(token()) === level.value ? "" : undefined}
                         title={level.hint}
                         onClick={(event) => {
                           rate(level.value, level.event);
@@ -431,6 +464,42 @@ export function ReaderView(props: { storyId: string }) {
                       </button>
                     )}
                   </For>
+                </div>
+                <div class="reader-canonical-actions" role="group" aria-label="Lemma/root knowledge">
+                  <button
+                    type="button"
+                    class="reader-deep"
+                    data-active={knowledge[key()]?.level === "well_known" ? "" : undefined}
+                    onClick={(event) => {
+                      markCanonical("well_known");
+                      event.currentTarget.blur();
+                    }}
+                  >
+                    Mark lemma known
+                  </button>
+                  <button
+                    type="button"
+                    class="reader-deep"
+                    data-active={knowledge[key()]?.level === "ignored" ? "" : undefined}
+                    onClick={(event) => {
+                      markCanonical("ignored");
+                      event.currentTarget.blur();
+                    }}
+                  >
+                    Ignore lemma
+                  </button>
+                  <Show when={knowledge[key()]?.level === "well_known" || knowledge[key()]?.level === "ignored"}>
+                    <button
+                      type="button"
+                      class="reader-deep"
+                      onClick={(event) => {
+                        markCanonical("");
+                        event.currentTarget.blur();
+                      }}
+                    >
+                      Clear lemma mark
+                    </button>
+                  </Show>
                 </div>
                 <button
                   type="button"
@@ -533,6 +602,18 @@ function renderJSON(value: unknown): JSX.Element {
 
 function humanize(key: string): string {
   return key.replace(/[_-]+/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function displayLevelFor(
+  token: StoryToken,
+  canonical: Record<string, ReaderKnowledge>,
+  forms: Record<string, ReaderSurfaceKnowledge>,
+): KnowledgeLevel {
+  const canonicalLevel = token.key ? canonical[token.key]?.level : "";
+  if (canonicalLevel === "well_known" || canonicalLevel === "ignored") {
+    return canonicalLevel;
+  }
+  return token.form_key ? forms[token.form_key]?.level ?? "" : "";
 }
 
 // Maps the API knowledge level onto the CSS data-level vocabulary used by the

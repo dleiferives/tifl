@@ -150,13 +150,17 @@ type Story struct {
 
 // StoryToken is one element of a tokenized story: every token (including
 // whitespace/punctuation) so the reader can reconstruct the text faithfully.
-// ItemKey is the resolved lookup key for word tokens, empty otherwise.
+// ItemKey is the resolved canonical lookup key for word tokens, empty otherwise.
+// SurfaceKey is the language-owned per-form key used for reader self-ratings; it
+// preserves inflection-level distinctions without changing canonical acquisition
+// signals.
 type StoryToken struct {
-	StoryID  string
-	Position int
-	Surface  string
-	ItemKey  string
-	IsWord   bool
+	StoryID    string
+	Position   int
+	Surface    string
+	ItemKey    string
+	SurfaceKey string
+	IsWord     bool
 }
 
 // StoryGlossaryEntry is one key->gloss the generator returned alongside the

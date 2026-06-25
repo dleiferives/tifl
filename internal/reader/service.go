@@ -82,6 +82,21 @@ func (s *Service) SetLevel(ctx context.Context, userID, language, key string, le
 	return err
 }
 
+// SetSurfaceLevel applies the learner's rating to one rendered form of a
+// canonical item. This controls reader colour for that inflected/displayed form
+// only; it does not change the canonical user_knowledge level used for
+// acquisition signals and explicit lemma/root overrides.
+func (s *Service) SetSurfaceLevel(ctx context.Context, userID string, row domain.ReaderSurfaceLevel) error {
+	if row.Language == "" || row.ItemKey == "" || row.SurfaceKey == "" {
+		return fmt.Errorf("%w: language, item_key, and surface_key are required", ErrInvalidEvent)
+	}
+	if !domain.ValidReaderLevel(row.Level) {
+		return fmt.Errorf("%w: invalid reader level %q", ErrInvalidEvent, row.Level)
+	}
+	row.UpdatedAt = s.now()
+	return s.repo.UpsertReaderSurfaceLevel(ctx, userID, row)
+}
+
 // Ingest persists a flushed batch of reader events and derives signals from the
 // newly-inserted ones (so a re-sent flush does not double-count). Story exposure
 // and context variety are counted once, on the first read of a (user, story).
@@ -155,7 +170,15 @@ func (s *Service) Ingest(ctx context.Context, userID string, events []domain.Rea
 		case domain.ReaderEventRate:
 			if e.Value != nil {
 				if lvl, ok := parseEventLevel(*e.Value); ok {
-					uk.Level = lvl
+					if err := s.repo.UpsertReaderSurfaceLevel(ctx, userID, domain.ReaderSurfaceLevel{
+						Language:   sc.language,
+						ItemKey:    key,
+						SurfaceKey: sc.posSurfaceKey[*e.Position],
+						Level:      lvl,
+						UpdatedAt:  s.now(),
+					}); err != nil {
+						return 0, err
+					}
 				}
 			}
 		}
@@ -171,10 +194,11 @@ func (s *Service) Ingest(ctx context.Context, userID string, events []domain.Rea
 // position→key map for word tokens, the word-key list (with repeats, for
 // exposure), and whether this is the user's first read of the story.
 type storyCtx struct {
-	language  string
-	posKey    map[int]string
-	wordKeys  []string
-	firstRead bool
+	language      string
+	posKey        map[int]string
+	posSurfaceKey map[int]string
+	wordKeys      []string
+	firstRead     bool
 }
 
 func (s *Service) loadStoryCtx(ctx context.Context, userID, storyID string) (*storyCtx, error) {
@@ -193,14 +217,27 @@ func (s *Service) loadStoryCtx(ctx context.Context, userID, storyID string) (*st
 	if err != nil {
 		return nil, err
 	}
-	sc := &storyCtx{language: story.Language, posKey: map[int]string{}, firstRead: !has}
+	sc := &storyCtx{
+		language:      story.Language,
+		posKey:        map[int]string{},
+		posSurfaceKey: map[int]string{},
+		firstRead:     !has,
+	}
 	for _, t := range tokens {
 		if t.IsWord && t.ItemKey != "" {
 			sc.posKey[t.Position] = t.ItemKey
+			sc.posSurfaceKey[t.Position] = tokenSurfaceKey(t)
 			sc.wordKeys = append(sc.wordKeys, t.ItemKey)
 		}
 	}
 	return sc, nil
+}
+
+func tokenSurfaceKey(t domain.StoryToken) string {
+	if t.SurfaceKey != "" {
+		return t.SurfaceKey
+	}
+	return t.Surface
 }
 
 // parseEventLevel maps a rate event's value to a reader level. The reader emits
