@@ -51,6 +51,26 @@ func TestResolvePrefersGlossary(t *testing.T) {
 	}
 }
 
+func TestResolvePrefersUserDictionary(t *testing.T) {
+	ctx, svc, repo, client, userID, storyID := defFixture(t, `{"gloss":"from llm"}`)
+	must(t, repo.ReplaceStoryGlossary(ctx, storyID, []domain.StoryGlossaryEntry{
+		{StoryID: storyID, ItemKey: "a", Gloss: "the first letter"},
+	}))
+	_, err := repo.UpsertUserDefinition(ctx, domain.UserDefinition{
+		UserID: userID, Language: "xx", ItemKey: "a", Gloss: "my custom gloss", Notes: "personal mnemonic",
+	})
+	must(t, err)
+
+	d, err := svc.Resolve(ctx, userID, storyID, "a")
+	must(t, err)
+	if d.Source != domain.DefinitionSourceUser || d.Gloss != "my custom gloss" || d.Notes != "personal mnemonic" {
+		t.Fatalf("expected user dictionary hit, got %+v", d)
+	}
+	if len(client.Calls) != 0 {
+		t.Fatalf("user dictionary hit must not call the LLM, got %d calls", len(client.Calls))
+	}
+}
+
 func TestResolveFallsBackToMetadata(t *testing.T) {
 	ctx, svc, repo, client, userID, storyID := defFixture(t, `{"gloss":"from llm"}`)
 	if _, err := repo.UpsertKnowledgeItem(ctx, domain.KnowledgeItem{

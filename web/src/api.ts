@@ -265,6 +265,25 @@ export async function getDefinition(storyID: string, key: string): Promise<APIRe
   );
 }
 
+export async function getDictionaryEntry(
+  language: string,
+  key: string,
+): Promise<APIResponse<"getDictionaryEntry", 200>> {
+  return apiFetch<APIResponse<"getDictionaryEntry", 200>>(
+    `/dictionary/entry?${new URLSearchParams({ language, key })}`,
+  );
+}
+
+export async function putDictionaryEntry(
+  request: APIRequest<"putDictionaryEntry">,
+): Promise<APIResponse<"putDictionaryEntry", 200>> {
+  return apiFetch<APIResponse<"putDictionaryEntry", 200>>("/dictionary/entry", jsonRequest("PUT", request));
+}
+
+export async function deleteDictionaryEntry(language: string, key: string): Promise<void> {
+  await apiFetch<void>(`/dictionary/entry?${new URLSearchParams({ language, key })}`, { method: "DELETE" });
+}
+
 export async function sentenceBreakdown(
   storyID: string,
   request: APIRequest<"postSentenceBreakdown">,

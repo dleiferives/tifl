@@ -335,12 +335,40 @@ export interface paths {
         };
         /**
          * Resolve a word definition for the reader popup
-         * @description Walks the resolution chain for one word key: per-story glossary → knowledge_items.metadata → global shared cache → live (Wiktionary, then LLM). A live result is written to the shared cache so the next learner gets it free. Returns 503 if a live LLM lookup is needed but no gateway is configured.
+         * @description Walks the resolution chain for one word key: per-user dictionary → per-story glossary → knowledge_items.metadata → global shared cache → live (Wiktionary, then LLM). A live result is written to the shared cache so the next learner gets it free. Returns 503 if a live LLM lookup is needed but no gateway is configured.
          */
         get: operations["getDefinition"];
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dictionary/entry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get one user dictionary entry
+         * @description Returns the caller's custom dictionary entry for a canonical word key. Entries are user-scoped and override glossary/shared/live definitions only for that user.
+         */
+        get: operations["getDictionaryEntry"];
+        /**
+         * Add or update one user dictionary entry
+         * @description Upserts the caller's custom gloss and optional notes for a canonical word key. This does not create or modify shared knowledge_items rows.
+         */
+        put: operations["putDictionaryEntry"];
+        post?: never;
+        /**
+         * Delete one user dictionary entry
+         * @description Hard-deletes the caller's custom dictionary entry. Future definition lookups fall back to glossary, metadata, shared cache, and live sources.
+         */
+        delete: operations["deleteDictionaryEntry"];
         options?: never;
         head?: never;
         patch?: never;
@@ -802,11 +830,26 @@ export interface components {
              * @description where the definition came from
              * @enum {string}
              */
-            source: "glossary" | "metadata" | "wiktionary" | "llm";
+            source: "user" | "glossary" | "metadata" | "wiktionary" | "llm";
             gloss: string;
             grammatical_note?: string;
             example?: string;
             etymology?: string;
+            notes?: string;
+        };
+        /** @description A caller-owned dictionary override for one canonical word key. */
+        DictionaryEntry: {
+            language: string;
+            key: string;
+            gloss: string;
+            notes?: string;
+        };
+        DictionaryEntryRequest: {
+            language: string;
+            /** @description canonical knowledge key */
+            key: string;
+            gloss: string;
+            notes?: string;
         };
         /** @description The outcome of grading one task response. */
         Grade: {
@@ -1421,6 +1464,86 @@ export interface operations {
             404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
             503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getDictionaryEntry: {
+        parameters: {
+            query: {
+                language: string;
+                /** @description canonical knowledge key */
+                key: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description User dictionary entry */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DictionaryEntry"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    putDictionaryEntry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DictionaryEntryRequest"];
+            };
+        };
+        responses: {
+            /** @description User dictionary entry */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DictionaryEntry"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteDictionaryEntry: {
+        parameters: {
+            query: {
+                language: string;
+                /** @description canonical knowledge key */
+                key: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted or already absent */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            500: components["responses"]["InternalError"];
         };
     };
     postSentenceBreakdown: {

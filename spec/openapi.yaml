@@ -452,11 +452,11 @@ paths:
     get:
       summary: Resolve a word definition for the reader popup
       description: >
-        Walks the resolution chain for one word key: per-story glossary →
-        knowledge_items.metadata → global shared cache → live (Wiktionary, then
-        LLM). A live result is written to the shared cache so the next learner
-        gets it free. Returns 503 if a live LLM lookup is needed but no gateway is
-        configured.
+        Walks the resolution chain for one word key: per-user dictionary →
+        per-story glossary → knowledge_items.metadata → global shared cache →
+        live (Wiktionary, then LLM). A live result is written to the shared cache
+        so the next learner gets it free. Returns 503 if a live LLM lookup is
+        needed but no gateway is configured.
       operationId: getDefinition
       parameters:
         - name: id
@@ -483,6 +483,88 @@ paths:
           $ref: "#/components/responses/NotFound"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /dictionary/entry:
+    get:
+      summary: Get one user dictionary entry
+      description: >
+        Returns the caller's custom dictionary entry for a canonical word key.
+        Entries are user-scoped and override glossary/shared/live definitions
+        only for that user.
+      operationId: getDictionaryEntry
+      parameters:
+        - name: language
+          in: query
+          required: true
+          schema: { type: string }
+        - name: key
+          in: query
+          required: true
+          description: canonical knowledge key
+          schema: { type: string }
+      responses:
+        "200":
+          description: User dictionary entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DictionaryEntry"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      summary: Add or update one user dictionary entry
+      description: >
+        Upserts the caller's custom gloss and optional notes for a canonical word
+        key. This does not create or modify shared knowledge_items rows.
+      operationId: putDictionaryEntry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DictionaryEntryRequest"
+      responses:
+        "200":
+          description: User dictionary entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DictionaryEntry"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      summary: Delete one user dictionary entry
+      description: >
+        Hard-deletes the caller's custom dictionary entry. Future definition
+        lookups fall back to glossary, metadata, shared cache, and live sources.
+      operationId: deleteDictionaryEntry
+      parameters:
+        - name: language
+          in: query
+          required: true
+          schema: { type: string }
+        - name: key
+          in: query
+          required: true
+          description: canonical knowledge key
+          schema: { type: string }
+      responses:
+        "204": { description: Deleted or already absent }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "500":
           $ref: "#/components/responses/InternalError"
   /stories/{id}/sentence:
@@ -1195,12 +1277,32 @@ components:
         source:
           type: string
           description: where the definition came from
-          enum: [glossary, metadata, wiktionary, llm]
+          enum: [user, glossary, metadata, wiktionary, llm]
         gloss: { type: string }
         grammatical_note: { type: string }
         example: { type: string }
         etymology: { type: string }
+        notes: { type: string }
       required: [key, source, gloss]
+    DictionaryEntry:
+      type: object
+      description: A caller-owned dictionary override for one canonical word key.
+      properties:
+        language: { type: string }
+        key: { type: string }
+        gloss: { type: string }
+        notes: { type: string }
+      required: [language, key, gloss]
+    DictionaryEntryRequest:
+      type: object
+      properties:
+        language: { type: string }
+        key:
+          type: string
+          description: canonical knowledge key
+        gloss: { type: string }
+        notes: { type: string }
+      required: [language, key, gloss]
     Grade:
       type: object
       description: The outcome of grading one task response.

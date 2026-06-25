@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
@@ -195,11 +196,12 @@ type definitionDTO struct {
 	GrammaticalNote string `json:"grammatical_note,omitempty"`
 	Example         string `json:"example,omitempty"`
 	Etymology       string `json:"etymology,omitempty"`
+	Notes           string `json:"notes,omitempty"`
 }
 
 // getDefinition resolves a word's definition for the reader popup, walking
-// glossary → item metadata → shared cache → live (Wiktionary, then LLM). The word
-// key is the required `key` query parameter.
+// user dictionary → glossary → item metadata → shared cache → live (Wiktionary,
+// then LLM). The word key is the required `key` query parameter.
 func (h *Handler) getDefinition(w http.ResponseWriter, r *http.Request) {
 	storyID := r.PathValue("id")
 	key := r.URL.Query().Get("key")
@@ -214,8 +216,109 @@ func (h *Handler) getDefinition(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, definitionDTO{
 		Key: d.ItemKey, Source: d.Source, Gloss: d.Gloss,
-		GrammaticalNote: d.GrammaticalNote, Example: d.Example, Etymology: d.Etymology,
+		GrammaticalNote: d.GrammaticalNote, Example: d.Example, Etymology: d.Etymology, Notes: d.Notes,
 	})
+}
+
+type dictionaryEntryDTO struct {
+	Language string `json:"language"`
+	Key      string `json:"key"`
+	Gloss    string `json:"gloss"`
+	Notes    string `json:"notes,omitempty"`
+}
+
+type dictionaryEntryRequest struct {
+	Language string `json:"language"`
+	Key      string `json:"key"`
+	Gloss    string `json:"gloss"`
+	Notes    string `json:"notes"`
+}
+
+func (h *Handler) getDictionaryEntry(w http.ResponseWriter, r *http.Request) {
+	language, key, ok := dictionaryQuery(w, r)
+	if !ok {
+		return
+	}
+	d, err := h.repo.GetUserDefinition(r.Context(), h.currentUserID(r), language, key)
+	if err != nil {
+		h.writeDictionaryError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, dictionaryEntryDTO{Language: d.Language, Key: d.ItemKey, Gloss: d.Gloss, Notes: d.Notes})
+}
+
+func (h *Handler) putDictionaryEntry(w http.ResponseWriter, r *http.Request) {
+	var req dictionaryEntryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
+		return
+	}
+	language := strings.TrimSpace(req.Language)
+	key := strings.TrimSpace(req.Key)
+	gloss := strings.TrimSpace(req.Gloss)
+	if language == "" {
+		writeError(w, http.StatusBadRequest, errors.New("language is required"))
+		return
+	}
+	if key == "" {
+		writeError(w, http.StatusBadRequest, errors.New("key is required"))
+		return
+	}
+	if gloss == "" {
+		writeError(w, http.StatusBadRequest, errors.New("gloss is required"))
+		return
+	}
+	if _, err := h.repo.GetLanguage(r.Context(), language); err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			writeError(w, http.StatusBadRequest, errors.New("unknown language"))
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	d, err := h.repo.UpsertUserDefinition(r.Context(), domain.UserDefinition{
+		UserID: h.currentUserID(r), Language: language, ItemKey: key, Gloss: gloss, Notes: strings.TrimSpace(req.Notes),
+	})
+	if err != nil {
+		h.writeDictionaryError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, dictionaryEntryDTO{Language: d.Language, Key: d.ItemKey, Gloss: d.Gloss, Notes: d.Notes})
+}
+
+func (h *Handler) deleteDictionaryEntry(w http.ResponseWriter, r *http.Request) {
+	language, key, ok := dictionaryQuery(w, r)
+	if !ok {
+		return
+	}
+	if err := h.repo.DeleteUserDefinition(r.Context(), h.currentUserID(r), language, key); err != nil {
+		h.writeDictionaryError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func dictionaryQuery(w http.ResponseWriter, r *http.Request) (string, string, bool) {
+	language := strings.TrimSpace(r.URL.Query().Get("language"))
+	key := strings.TrimSpace(r.URL.Query().Get("key"))
+	if language == "" {
+		writeError(w, http.StatusBadRequest, errors.New("language query parameter is required"))
+		return "", "", false
+	}
+	if key == "" {
+		writeError(w, http.StatusBadRequest, errors.New("key query parameter is required"))
+		return "", "", false
+	}
+	return language, key, true
+}
+
+func (h *Handler) writeDictionaryError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, db.ErrNotFound):
+		writeError(w, http.StatusNotFound, errors.New("dictionary entry not found"))
+	default:
+		writeError(w, http.StatusInternalServerError, err)
+	}
 }
 
 type sentenceBreakdownRequest struct {
