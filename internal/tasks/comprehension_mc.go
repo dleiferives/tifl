@@ -64,3 +64,7 @@ func (ComprehensionMC) Targets(content map[string]any) []string {
 func (ComprehensionMC) Present(content map[string]any) map[string]any {
 	return pick(content, "question", "options")
 }
+
+func (ComprehensionMC) ContentSchema() string {
+	return `{"question": string, "options": [string, string, ...], "correct_index": number, "target_item_ids": [string]}`
+}

@@ -72,3 +72,7 @@ func (FillBlank) Targets(content map[string]any) []string {
 func (FillBlank) Present(content map[string]any) map[string]any {
 	return pick(content, "sentence")
 }
+
+func (FillBlank) ContentSchema() string {
+	return `{"sentence": string, "target_item_id": string, "acceptable_forms": [string]}`
+}

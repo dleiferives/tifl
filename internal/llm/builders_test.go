@@ -218,7 +218,7 @@ func TestBuilders_VersionsStable(t *testing.T) {
 		want string
 	}{
 		{StoryBuilder{}, "story/v1"},
-		{TaskBuilder{TaskTypeID: "x"}, "task/v1"},
+		{TaskBuilder{TaskTypeID: "x"}, "task/v2"},
 		{GraderBuilder{}, "grader/v1"},
 		{AssessorBuilder{}, "assessor/v1"},
 		{SkillTierVerifierBuilder{}, "skill_tier_verifier/v1"},

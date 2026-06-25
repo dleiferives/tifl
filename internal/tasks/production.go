@@ -62,3 +62,7 @@ func (Production) Targets(content map[string]any) []string {
 func (Production) Present(content map[string]any) map[string]any {
 	return pick(content, "prompt_l1")
 }
+
+func (Production) ContentSchema() string {
+	return `{"prompt_l1": string, "target_construction_id": string, "target_item_ids": [string]}`
+}

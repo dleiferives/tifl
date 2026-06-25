@@ -609,13 +609,36 @@ func (p *Pipeline) runTaskType(ctx context.Context, sess domain.Session, lc doma
 	if count < 1 {
 		count = 1
 	}
+	var priorQuestions []string
 	for i := 0; i < count; i++ {
-		content, err := p.generateTaskContent(ctx, spec.TaskTypeID, sourceText, lc)
+		content, err := p.generateTaskContent(ctx, spec.TaskTypeID, sourceText, lc, priorQuestions)
 		if err != nil {
 			se := fail(ErrCodeTaskGenerate, err)
 			p.failStage(ctx, sess.SessionID, stage, se)
 			emit.emit(Event{Stage: stage, Status: string(domain.StageFailed), ErrorCode: se.code})
 			return se
+		}
+		// Deduplicate: if the LLM produced the same question again, retry once.
+		if qt := taskPrimaryText(spec.TaskTypeID, content); qt != "" {
+			dup := false
+			for _, prior := range priorQuestions {
+				if prior == qt {
+					dup = true
+					break
+				}
+			}
+			if dup {
+				content, err = p.generateTaskContent(ctx, spec.TaskTypeID, sourceText, lc, priorQuestions)
+				if err != nil {
+					se := fail(ErrCodeTaskGenerate, err)
+					p.failStage(ctx, sess.SessionID, stage, se)
+					emit.emit(Event{Stage: stage, Status: string(domain.StageFailed), ErrorCode: se.code})
+					return se
+				}
+			}
+			if qt2 := taskPrimaryText(spec.TaskTypeID, content); qt2 != "" {
+				priorQuestions = append(priorQuestions, qt2)
+			}
 		}
 		injectTargets(content, spec.TaskTypeID, lc.Selected.Targets)
 		if _, err := p.deps.Repo.CreateTask(ctx, domain.Task{
@@ -669,14 +692,39 @@ func (p *Pipeline) generatePhrases(ctx context.Context, lc domain.LearnerCtx) (l
 
 // generateTaskContent builds and sends the task-content prompt for one type,
 // decoding the reply into an opaque content map the task type owns.
-func (p *Pipeline) generateTaskContent(ctx context.Context, taskTypeID, storyText string, lc domain.LearnerCtx) (map[string]any, error) {
-	b := llm.TaskBuilder{Story: storyText, TaskTypeID: taskTypeID}
+// priorQuestions are question texts already generated this session, passed to
+// the builder so the model avoids repeating them.
+func (p *Pipeline) generateTaskContent(ctx context.Context, taskTypeID, storyText string, lc domain.LearnerCtx, priorQuestions []string) (map[string]any, error) {
+	b := llm.TaskBuilder{Story: storyText, TaskTypeID: taskTypeID, PriorQuestions: priorQuestions}
+	if tt, ok := p.deps.Tasks.Get(taskTypeID); ok {
+		b.ContentSchema = tt.ContentSchema()
+	}
 	return llm.CompleteJSON(ctx, p.deps.Client, b, lc, func(m map[string]any) error {
 		if len(m) == 0 {
 			return fmt.Errorf("empty task content")
 		}
 		return nil
 	})
+}
+
+// taskPrimaryText extracts the primary question/sentence text from a content
+// map for deduplication purposes. Returns empty string if not applicable.
+func taskPrimaryText(taskTypeID string, content map[string]any) string {
+	switch taskTypeID {
+	case tasks.TypeComprehensionMC:
+		if q, _ := content["question"].(string); q != "" {
+			return q
+		}
+	case tasks.TypeFillBlank:
+		if s, _ := content["sentence"].(string); s != "" {
+			return s
+		}
+	case tasks.TypeProduction:
+		if p, _ := content["prompt_l1"].(string); p != "" {
+			return p
+		}
+	}
+	return ""
 }
 
 func (p *Pipeline) persistGlossary(ctx context.Context, storyID string, entries []llm.GlossaryEntry) error {

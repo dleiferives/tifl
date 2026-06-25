@@ -58,6 +58,11 @@ type TaskType interface {
 	// the browser. Presentation is default-deny — a field is shown only if the
 	// type opts it in.
 	Present(content map[string]any) map[string]any
+
+	// ContentSchema returns the exact JSON schema string the LLM task builder
+	// should produce for this type. It is injected into the TaskBuilder system
+	// prompt so the model knows what fields to generate.
+	ContentSchema() string
 }
 
 // Registry maps task type id -> implementation. Populated at startup.
