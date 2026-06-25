@@ -19,7 +19,8 @@ type SentenceSpan struct {
 // sentenceTerminators are the characters that end a sentence for the
 // segmentation heuristic. Includes the Greek question mark ";" and ano teleia
 // "·". A token whose surface contains any of these closes the sentence.
-// Structure-aware segmentation is future (#42).
+// Syntax graph caching (#42) consumes these spans but does not replace boundary
+// detection yet.
 const sentenceTerminators = ".!?;·…"
 
 // SentenceSpans returns the v0 reader sentence segmentation over ordered story

@@ -575,9 +575,13 @@ paths:
       summary: Sentence breakdown for the sentence containing a position
       description: >
         Returns the LLM-backed breakdown of the sentence containing the given
-        token position, served from a global cache keyed by the hash of the
-        normalized sentence (so the same sentence in any story reuses it). The
-        response body is the breakdown JSON (shape owned by the prompt builder).
+        token position. Exact normalized-sentence matches are served from the
+        global breakdown cache. Fresh analyses include graph-shaped syntax data
+        (token/phrase/clause/sentence nodes plus dependency-style edges) and
+        materialize reusable sentence-structure and phrase/subtree cache rows;
+        similar future sentences use those rows as prompt context rather than
+        blindly returning another sentence's answer. The response body is the
+        breakdown JSON (shape owned by the prompt builder).
       operationId: postSentenceBreakdown
       parameters:
         - name: id

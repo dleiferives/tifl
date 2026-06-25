@@ -4,9 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
@@ -117,9 +120,11 @@ func (s *DefinitionService) Resolve(ctx context.Context, userID, storyID, key st
 	return d, nil
 }
 
-// SentenceBreakdown returns the breakdown of the sentence containing position,
-// from the cache or a fresh LLM call (then cached). The cache key is the hash of
-// the normalized sentence, so the same sentence in any story reuses it.
+// SentenceBreakdown returns the breakdown of the sentence containing position.
+// Exact sentence cache hits return without an LLM call. On a miss, graph-backed
+// sentence-structure and phrase-cache rows are used as prompt context, then the
+// fresh breakdown is cached exactly and materialized as reusable syntax graph
+// data for future composition/visualization.
 func (s *DefinitionService) SentenceBreakdown(ctx context.Context, userID, storyID string, position int) (domain.Breakdown, error) {
 	_, language, err := s.story(ctx, userID, storyID)
 	if err != nil {
@@ -134,8 +139,38 @@ func (s *DefinitionService) SentenceBreakdown(ctx context.Context, userID, story
 		return domain.Breakdown{}, errors.New("reader: no sentence at position")
 	}
 	cacheKey := hashSentence(span.Text)
-	return s.cachedBreakdown(ctx, domain.BreakdownSentence, language, cacheKey,
-		llm.SentenceBreakdownBuilder{Sentence: span.Text})
+	if b, err := s.repo.GetBreakdown(ctx, domain.BreakdownSentence, language, cacheKey); err == nil {
+		return b, nil
+	} else if !errors.Is(err, db.ErrNotFound) {
+		return domain.Breakdown{}, err
+	}
+	if s.client == nil {
+		return domain.Breakdown{}, ErrLLMUnavailable
+	}
+
+	spanTokens := tokensForSpan(tokens, span)
+	structureKey, template := sentenceStructureKey(spanTokens)
+	var structureHint *domain.SentenceStructure
+	if st, err := s.repo.GetSentenceStructure(ctx, language, structureKey); err == nil {
+		structureHint = &st
+	} else if !errors.Is(err, db.ErrNotFound) {
+		return domain.Breakdown{}, err
+	}
+	phrases, err := s.matchPhrases(ctx, language, spanTokens)
+	if err != nil {
+		return domain.Breakdown{}, err
+	}
+
+	content, err := llm.CompleteJSON(ctx, s.client,
+		llm.SentenceBreakdownBuilder{Sentence: span.Text, StructureHint: structureHint, Phrases: phrases},
+		domain.LearnerCtx{Language: language}, validateSentenceBreakdown)
+	if err != nil {
+		return domain.Breakdown{}, err
+	}
+	b := domain.Breakdown{Scope: domain.BreakdownSentence, Language: language, CacheKey: cacheKey, Content: content, CreatedAt: s.now()}
+	_ = s.repo.UpsertBreakdown(ctx, b)
+	_ = s.persistSentenceAnalysis(ctx, language, cacheKey, structureKey, template, spanTokens, content)
+	return b, nil
 }
 
 // WordBreakdown returns the deep breakdown of a word, from the cache or a fresh
@@ -172,6 +207,330 @@ func (s *DefinitionService) cachedBreakdown(ctx context.Context, scope domain.Br
 	b := domain.Breakdown{Scope: scope, Language: language, CacheKey: cacheKey, Content: content, CreatedAt: s.now()}
 	_ = s.repo.UpsertBreakdown(ctx, b)
 	return b, nil
+}
+
+// matchPhrases finds cached phrase/subtree rows whose normalized text appears as
+// a contiguous word-token span in this sentence. It is a hint path only: phrase
+// rows never replace an exact sentence analysis.
+func (s *DefinitionService) matchPhrases(ctx context.Context, language string, tokens []domain.StoryToken) ([]domain.CachedPhrase, error) {
+	return s.repo.FindPhrases(ctx, language, phraseCandidates(tokens))
+}
+
+func (s *DefinitionService) persistSentenceAnalysis(ctx context.Context, language, breakdownKey, structureKey, template string, tokens []domain.StoryToken, content map[string]any) error {
+	graph, ok, err := syntaxGraphFromContent(content)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		graph = fallbackSyntaxGraph(tokens)
+	}
+	now := s.now()
+	phrases := phrasesFromBreakdown(language, breakdownKey, content, graph, now)
+	phraseKeys := make([]string, 0, len(phrases))
+	for _, p := range phrases {
+		phraseKeys = append(phraseKeys, p.PhraseKey)
+		if err := s.repo.UpsertPhrase(ctx, p); err != nil {
+			return err
+		}
+	}
+	return s.repo.UpsertSentenceStructure(ctx, domain.SentenceStructure{
+		Language: language, StructureKey: structureKey, Template: template,
+		Graph: graph, PhraseKeys: phraseKeys, SourceBreakdownKey: breakdownKey,
+		CreatedAt: now, UpdatedAt: now,
+	})
+}
+
+func validateSentenceBreakdown(content map[string]any) error {
+	if len(content) == 0 {
+		return errors.New("empty breakdown")
+	}
+	graph, ok, err := syntaxGraphFromContent(content)
+	if err != nil {
+		return err
+	}
+	if !ok || len(graph.Nodes) == 0 {
+		return errors.New("sentence breakdown missing syntax_graph nodes")
+	}
+	return nil
+}
+
+func syntaxGraphFromContent(content map[string]any) (domain.SyntaxGraph, bool, error) {
+	raw, ok := content["syntax_graph"]
+	if !ok || raw == nil {
+		return domain.SyntaxGraph{}, false, nil
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return domain.SyntaxGraph{}, false, err
+	}
+	var graph domain.SyntaxGraph
+	if err := json.Unmarshal(b, &graph); err != nil {
+		return domain.SyntaxGraph{}, false, err
+	}
+	return graph, true, nil
+}
+
+type breakdownPhrase struct {
+	Text   string `json:"text"`
+	Kind   string `json:"kind"`
+	Gloss  string `json:"gloss"`
+	NodeID string `json:"node_id"`
+	Notes  string `json:"notes"`
+}
+
+func phrasesFromBreakdown(language, breakdownKey string, content map[string]any, graph domain.SyntaxGraph, now float64) []domain.CachedPhrase {
+	seen := make(map[string]bool)
+	var out []domain.CachedPhrase
+	for _, p := range phraseListFromContent(content) {
+		text := strings.TrimSpace(p.Text)
+		if text == "" {
+			continue
+		}
+		out = appendPhrase(out, seen, domain.CachedPhrase{
+			Language: language, Text: text, NormalizedText: normalizeText(text), Kind: defaultString(p.Kind, "phrase"),
+			Gloss: p.Gloss, Notes: p.Notes, Graph: subgraphForNode(graph, p.NodeID),
+			Metadata: map[string]any{"node_id": p.NodeID}, SourceBreakdownKey: breakdownKey,
+			CreatedAt: now, UpdatedAt: now,
+		})
+	}
+	for _, n := range graph.Nodes {
+		if n.Kind != "phrase" && n.Kind != "clause" {
+			continue
+		}
+		text := strings.TrimSpace(n.Surface)
+		if text == "" {
+			continue
+		}
+		out = appendPhrase(out, seen, domain.CachedPhrase{
+			Language: language, Text: text, NormalizedText: normalizeText(text), Kind: defaultString(n.Kind, "phrase"),
+			Gloss: n.Gloss, Graph: subgraphForNode(graph, n.ID),
+			Metadata: map[string]any{"node_id": n.ID, "label": n.Label}, SourceBreakdownKey: breakdownKey,
+			CreatedAt: now, UpdatedAt: now,
+		})
+	}
+	return out
+}
+
+func phraseListFromContent(content map[string]any) []breakdownPhrase {
+	raw, ok := content["phrases"]
+	if !ok || raw == nil {
+		return nil
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	var phrases []breakdownPhrase
+	if err := json.Unmarshal(b, &phrases); err != nil {
+		return nil
+	}
+	return phrases
+}
+
+func appendPhrase(out []domain.CachedPhrase, seen map[string]bool, p domain.CachedPhrase) []domain.CachedPhrase {
+	if p.NormalizedText == "" {
+		return out
+	}
+	p.PhraseKey = phraseKey(p.Language, p.Kind, p.NormalizedText)
+	if seen[p.PhraseKey] {
+		return out
+	}
+	seen[p.PhraseKey] = true
+	if len(p.Graph.Nodes) == 0 {
+		p.Graph = phraseOnlyGraph(p)
+	}
+	return append(out, p)
+}
+
+func subgraphForNode(graph domain.SyntaxGraph, nodeID string) domain.SyntaxGraph {
+	if nodeID == "" {
+		return domain.SyntaxGraph{Version: "syntax-graph/v1"}
+	}
+	var anchor *domain.SyntaxNode
+	for i := range graph.Nodes {
+		if graph.Nodes[i].ID == nodeID {
+			anchor = &graph.Nodes[i]
+			break
+		}
+	}
+	if anchor == nil {
+		return domain.SyntaxGraph{Version: graph.Version}
+	}
+	include := map[string]bool{nodeID: true}
+	for _, n := range graph.Nodes {
+		if n.ID == nodeID {
+			continue
+		}
+		if n.SpanStart >= anchor.SpanStart && n.SpanEnd <= anchor.SpanEnd {
+			include[n.ID] = true
+		}
+	}
+	sub := domain.SyntaxGraph{Version: graph.Version, Roots: []string{nodeID}}
+	for _, n := range graph.Nodes {
+		if include[n.ID] {
+			sub.Nodes = append(sub.Nodes, n)
+		}
+	}
+	for _, e := range graph.Edges {
+		if include[e.Source] && include[e.Target] {
+			sub.Edges = append(sub.Edges, e)
+		}
+	}
+	return sub
+}
+
+func phraseOnlyGraph(p domain.CachedPhrase) domain.SyntaxGraph {
+	return domain.SyntaxGraph{
+		Version: "syntax-graph/v1",
+		Roots:   []string{"p0"},
+		Nodes: []domain.SyntaxNode{{
+			ID: "p0", Kind: defaultString(p.Kind, "phrase"), Label: p.Kind,
+			Surface: p.Text, Gloss: p.Gloss, SpanEnd: len(strings.Fields(p.Text)),
+		}},
+	}
+}
+
+func phraseKey(language, kind, normalized string) string {
+	sum := sha256.Sum256([]byte(language + "\x00" + kind + "\x00" + normalized))
+	return hex.EncodeToString(sum[:])
+}
+
+func tokensForSpan(tokens []domain.StoryToken, span SentenceSpan) []domain.StoryToken {
+	var out []domain.StoryToken
+	for _, t := range tokens {
+		if t.Position >= span.StartPosition && t.Position < span.EndPosition {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func sentenceStructureKey(tokens []domain.StoryToken) (string, string) {
+	template := sentenceTemplate(tokens)
+	sum := sha256.Sum256([]byte(template))
+	return hex.EncodeToString(sum[:]), template
+}
+
+func sentenceTemplate(tokens []domain.StoryToken) string {
+	var b strings.Builder
+	for _, t := range tokens {
+		if t.IsWord && t.ItemKey != "" {
+			b.WriteString(wordTemplate(t.Surface))
+			continue
+		}
+		b.WriteString(normalizeNonWord(t.Surface))
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+func wordTemplate(surface string) string {
+	runes := []rune(surface)
+	start, end := -1, -1
+	for i, r := range runes {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			if start == -1 {
+				start = i
+			}
+			end = i
+		}
+	}
+	if start == -1 {
+		return "{word}"
+	}
+	return string(runes[:start]) + "{word}" + string(runes[end+1:])
+}
+
+func phraseCandidates(tokens []domain.StoryToken) []string {
+	words := make([]string, 0)
+	for _, t := range tokens {
+		if !t.IsWord || t.ItemKey == "" {
+			continue
+		}
+		if w := normalizeWord(t.Surface); w != "" {
+			words = append(words, w)
+		}
+	}
+	seen := make(map[string]bool)
+	var out []string
+	for start := range words {
+		for end := start + 2; end <= len(words) && end <= start+6; end++ {
+			candidate := strings.Join(words[start:end], " ")
+			if !seen[candidate] {
+				seen[candidate] = true
+				out = append(out, candidate)
+			}
+		}
+	}
+	return out
+}
+
+func fallbackSyntaxGraph(tokens []domain.StoryToken) domain.SyntaxGraph {
+	graph := domain.SyntaxGraph{
+		Version: "syntax-graph/v1",
+		Roots:   []string{"s0"},
+		Nodes:   []domain.SyntaxNode{{ID: "s0", Kind: "sentence", SpanStart: 0, SpanEnd: countWordTokens(tokens)}},
+	}
+	wordIndex := 0
+	for _, t := range tokens {
+		if !t.IsWord || t.ItemKey == "" {
+			continue
+		}
+		id := "t" + strconv.Itoa(wordIndex)
+		graph.Nodes = append(graph.Nodes, domain.SyntaxNode{
+			ID: id, Kind: "token", Surface: strings.TrimSpace(t.Surface), ItemKey: t.ItemKey,
+			SpanStart: wordIndex, SpanEnd: wordIndex + 1,
+		})
+		graph.Edges = append(graph.Edges, domain.SyntaxEdge{Source: "s0", Target: id, Relation: "token"})
+		wordIndex++
+	}
+	return graph
+}
+
+func countWordTokens(tokens []domain.StoryToken) int {
+	n := 0
+	for _, t := range tokens {
+		if t.IsWord && t.ItemKey != "" {
+			n++
+		}
+	}
+	return n
+}
+
+func normalizeText(s string) string {
+	parts := strings.Fields(strings.ToLower(s))
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if w := normalizeWord(p); w != "" {
+			out = append(out, w)
+		}
+	}
+	return strings.Join(out, " ")
+}
+
+func normalizeWord(s string) string {
+	return strings.TrimFunc(strings.ToLower(strings.TrimSpace(s)), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+	})
+}
+
+func normalizeNonWord(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case unicode.IsSpace(r):
+			b.WriteRune(' ')
+		case unicode.IsPunct(r), unicode.IsSymbol(r):
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func defaultString(s, fallback string) string {
+	if strings.TrimSpace(s) == "" {
+		return fallback
+	}
+	return s
 }
 
 // story loads a story and enforces tenant ownership, returning its language.

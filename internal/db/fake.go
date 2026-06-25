@@ -35,10 +35,12 @@ type FakeRepository struct {
 	defImports map[string]domain.DefinitionImport
 	userDefs   map[string]domain.UserDefinition // user_id\x00language\x00key -> user definition
 	breakdowns map[string]domain.Breakdown      // scope\x00language\x00cacheKey -> breakdown
-	skills     map[string]domain.Skill          // skill_id -> skill
-	itemSkills map[string]map[string]bool       // item_id -> skill_id set
-	userSkills map[string]domain.UserSkillXP    // user_id\x00skill_id -> state
-	skillLogs  []domain.TaskSkillXPLog          // append-only skill XP log
+	structures map[string]domain.SentenceStructure
+	phrases    map[string]domain.CachedPhrase
+	skills     map[string]domain.Skill       // skill_id -> skill
+	itemSkills map[string]map[string]bool    // item_id -> skill_id set
+	userSkills map[string]domain.UserSkillXP // user_id\x00skill_id -> state
+	skillLogs  []domain.TaskSkillXPLog       // append-only skill XP log
 
 	// Generation-pipeline state.
 	sessions   map[string]domain.Session                    // session_id -> session
@@ -70,6 +72,8 @@ func NewFake() *FakeRepository {
 		defImports: make(map[string]domain.DefinitionImport),
 		userDefs:   make(map[string]domain.UserDefinition),
 		breakdowns: make(map[string]domain.Breakdown),
+		structures: make(map[string]domain.SentenceStructure),
+		phrases:    make(map[string]domain.CachedPhrase),
 		skills:     make(map[string]domain.Skill),
 		itemSkills: make(map[string]map[string]bool),
 		userSkills: make(map[string]domain.UserSkillXP),
@@ -571,6 +575,64 @@ func (r *FakeRepository) UpsertBreakdown(_ context.Context, b domain.Breakdown) 
 	return nil
 }
 
+func (r *FakeRepository) GetSentenceStructure(_ context.Context, language, structureKey string) (domain.SentenceStructure, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st, ok := r.structures[language+"\x00"+structureKey]
+	if !ok {
+		return domain.SentenceStructure{}, ErrNotFound
+	}
+	return cloneSentenceStructure(st), nil
+}
+
+func (r *FakeRepository) UpsertSentenceStructure(_ context.Context, st domain.SentenceStructure) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if st.CreatedAt == 0 {
+		st.CreatedAt = float64(time.Now().Unix())
+	}
+	if st.UpdatedAt == 0 {
+		st.UpdatedAt = st.CreatedAt
+	}
+	r.structures[st.Language+"\x00"+st.StructureKey] = cloneSentenceStructure(st)
+	return nil
+}
+
+func (r *FakeRepository) FindPhrases(_ context.Context, language string, normalizedTexts []string) ([]domain.CachedPhrase, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	wanted := make(map[string]bool, len(normalizedTexts))
+	for _, text := range normalizedTexts {
+		wanted[text] = true
+	}
+	var out []domain.CachedPhrase
+	for _, p := range r.phrases {
+		if p.Language == language && wanted[p.NormalizedText] {
+			out = append(out, cloneCachedPhrase(p))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].NormalizedText == out[j].NormalizedText {
+			return out[i].PhraseKey < out[j].PhraseKey
+		}
+		return out[i].NormalizedText < out[j].NormalizedText
+	})
+	return out, nil
+}
+
+func (r *FakeRepository) UpsertPhrase(_ context.Context, p domain.CachedPhrase) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if p.CreatedAt == 0 {
+		p.CreatedAt = float64(time.Now().Unix())
+	}
+	if p.UpdatedAt == 0 {
+		p.UpdatedAt = p.CreatedAt
+	}
+	r.phrases[p.Language+"\x00"+p.PhraseKey] = cloneCachedPhrase(p)
+	return nil
+}
+
 // --- llm calls -------------------------------------------------------------
 
 func (r *FakeRepository) InsertLLMCall(_ context.Context, c domain.LLMCall) error {
@@ -715,6 +777,31 @@ func cloneLLMCall(c domain.LLMCall) domain.LLMCall {
 func cloneDefinitionImport(imp domain.DefinitionImport) domain.DefinitionImport {
 	imp.CompletedAt = cloneFloat(imp.CompletedAt)
 	return imp
+}
+
+func cloneSentenceStructure(st domain.SentenceStructure) domain.SentenceStructure {
+	st.Graph = cloneSyntaxGraph(st.Graph)
+	st.PhraseKeys = append([]string(nil), st.PhraseKeys...)
+	return st
+}
+
+func cloneCachedPhrase(p domain.CachedPhrase) domain.CachedPhrase {
+	p.Graph = cloneSyntaxGraph(p.Graph)
+	p.Metadata = cloneMeta(p.Metadata)
+	return p
+}
+
+func cloneSyntaxGraph(g domain.SyntaxGraph) domain.SyntaxGraph {
+	g.Roots = append([]string(nil), g.Roots...)
+	g.Nodes = append([]domain.SyntaxNode(nil), g.Nodes...)
+	for i := range g.Nodes {
+		g.Nodes[i].Features = cloneMeta(g.Nodes[i].Features)
+	}
+	g.Edges = append([]domain.SyntaxEdge(nil), g.Edges...)
+	for i := range g.Edges {
+		g.Edges[i].Features = cloneMeta(g.Edges[i].Features)
+	}
+	return g
 }
 
 func cloneUK(uk domain.UserKnowledge) domain.UserKnowledge {

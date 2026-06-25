@@ -16,6 +16,9 @@ CREATE TABLE definitions (
     PRIMARY KEY (language, item_key, source)
 );
 
+-- Exact cached sentence/word breakdowns. scope='sentence' is keyed by the hash
+-- of normalized sentence text; graph-backed structure/phrase reuse is
+-- materialized in later syntax cache tables.
 CREATE TABLE breakdowns (
     scope      TEXT NOT NULL,              -- 'sentence' | 'word'
     language   TEXT NOT NULL REFERENCES languages(code),

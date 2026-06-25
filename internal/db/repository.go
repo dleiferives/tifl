@@ -164,12 +164,14 @@ type Repository interface {
 	InsertTaskSkillXPLog(ctx context.Context, row domain.TaskSkillXPLog) error
 	ListTaskSkillXPLog(ctx context.Context, userID string, limit int) ([]domain.TaskSkillXPLog, error)
 
-	// Definitions & breakdowns — the global, shared, cached reader resources (not
-	// user-scoped). ListDefinitions returns every source's entry for a (language,
-	// key); UpsertDefinition is keyed by (language, key, source) so Wiktionary and
-	// LLM entries coexist. Get/UpsertBreakdown cache the LLM-backed sentence/word
-	// breakdowns by (scope, language, cache_key). GetBreakdown returns ErrNotFound
-	// on a cache miss.
+	// Definitions, breakdowns, and syntax resources — global, shared reader
+	// resources (not user-scoped). ListDefinitions returns every source's entry
+	// for a (language, key); UpsertDefinition is keyed by (language, key, source)
+	// so Wiktionary and LLM entries coexist. Get/UpsertBreakdown cache the
+	// LLM-backed sentence/word breakdowns by (scope, language, cache_key).
+	// Sentence structures and cached phrases are graph-backed reusable linguistic
+	// units derived from sentence breakdowns; they prime future breakdown calls and
+	// give a future UI stable syntax nodes/edges to visualize.
 	ListDefinitions(ctx context.Context, language, itemKey string) ([]domain.Definition, error)
 	UpsertDefinition(ctx context.Context, d domain.Definition) error
 	UpsertDefinitionImport(ctx context.Context, imp domain.DefinitionImport) error
@@ -179,6 +181,10 @@ type Repository interface {
 	DeleteUserDefinition(ctx context.Context, userID, language, itemKey string) error
 	GetBreakdown(ctx context.Context, scope domain.BreakdownScope, language, cacheKey string) (domain.Breakdown, error)
 	UpsertBreakdown(ctx context.Context, b domain.Breakdown) error
+	GetSentenceStructure(ctx context.Context, language, structureKey string) (domain.SentenceStructure, error)
+	UpsertSentenceStructure(ctx context.Context, st domain.SentenceStructure) error
+	FindPhrases(ctx context.Context, language string, normalizedTexts []string) ([]domain.CachedPhrase, error)
+	UpsertPhrase(ctx context.Context, p domain.CachedPhrase) error
 }
 
 func normalizeListSessionsOptions(opts domain.ListSessionsOptions) domain.ListSessionsOptions {
