@@ -594,6 +594,48 @@ func (r *PostgresRepository) LoadReaderKnowledge(ctx context.Context, userID, la
 	return out, rows.Err()
 }
 
+func (r *PostgresRepository) LoadReaderSurfaceLevels(ctx context.Context, userID, language string) ([]domain.ReaderSurfaceLevel, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT user_id, language, item_key, surface_key, level, updated_at
+		 FROM reader_surface_levels
+		 WHERE user_id = $1 AND language = $2
+		 ORDER BY item_key, surface_key`, userID, language)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domain.ReaderSurfaceLevel
+	for rows.Next() {
+		var (
+			row   domain.ReaderSurfaceLevel
+			level *string
+		)
+		if err := rows.Scan(&row.UserID, &row.Language, &row.ItemKey, &row.SurfaceKey, &level, &row.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if level != nil {
+			row.Level = domain.ReaderLevel(*level)
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func (r *PostgresRepository) UpsertReaderSurfaceLevel(ctx context.Context, userID string, row domain.ReaderSurfaceLevel) error {
+	if row.UpdatedAt == 0 {
+		row.UpdatedAt = float64(time.Now().Unix())
+	}
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO reader_surface_levels(user_id, language, item_key, surface_key, level, updated_at)
+		 VALUES($1, $2, $3, $4, $5, $6)
+		 ON CONFLICT(user_id, language, item_key, surface_key) DO UPDATE SET
+		   level = excluded.level,
+		   updated_at = excluded.updated_at`,
+		userID, row.Language, row.ItemKey, row.SurfaceKey, nullLevelPG(row.Level), row.UpdatedAt)
+	return err
+}
+
 // --- llm calls -------------------------------------------------------------
 
 func (r *PostgresRepository) InsertLLMCall(ctx context.Context, c domain.LLMCall) error {

@@ -425,13 +425,13 @@ paths:
       summary: Load a story for the reader (tokens + knowledge in one call)
       description: >
         Returns the server-tokenized story, authoritative sentence spans, and
-        the caller's per-item knowledge map (canonical key → level +
-        lookup_count) for the story's language, in a single response —
-        everything the reader needs at load time. Sentence spans use half-open
-        token positions: start_position is included and end_position is one past
-        the final token in the sentence. Words the user has never interacted with
-        are absent from the map and treated as unseen. Stories are user-scoped;
-        another user's story returns 404.
+        the caller's canonical knowledge map plus per-surface level map for the
+        story's language, in a single response. Sentence spans use half-open token
+        positions: start_position is included and end_position is one past the
+        final token in the sentence. Ordinary reader ratings are keyed to the
+        token's exact form_key; explicit lemma/root well-known/ignored actions
+        use the canonical knowledge map. Stories are user-scoped; another user's
+        story returns 404.
       operationId: getStory
       parameters:
         - name: id
@@ -599,14 +599,37 @@ paths:
           $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
+  /reader/surface_knowledge:
+    put:
+      summary: Optimistic reader rating write for one displayed word form
+      description: >
+        Sets the learner's visual reader level for one displayed surface form of
+        a canonical word. This controls the colour of that inflected form only;
+        it does not change canonical acquisition signals or the explicit
+        lemma/root override stored through /word_knowledge/{token}.
+      operationId: putReaderSurfaceKnowledge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReaderSurfaceKnowledgeRequest"
+      responses:
+        "204": { description: Applied }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /word_knowledge/{token}:
     put:
-      summary: Optimistic knowledge-rating write for one word key
+      summary: Explicit canonical lemma/root knowledge-rating write
       description: >
-        Sets the learner's level for the word whose canonical key is {token}.
-        Fire-and-forget from the client (the reader updates local state instantly);
-        the response is a bare 204. Idempotent — safe to race a later rate event in
-        a flushed batch.
+        Sets the learner's canonical level for the word whose lemma/root/stem key
+        is {token}. The reader uses this only for explicit higher-effort
+        lemma/root actions such as marking the underlying item well-known or
+        ignored. Ordinary 1–5 ratings use /reader/surface_knowledge instead.
       operationId: putWordKnowledge
       parameters:
         - name: token
@@ -1134,18 +1157,29 @@ components:
         position: { type: integer, description: "0-indexed, stable identifier" }
         surface: { type: string, description: "display form incl. punctuation" }
         key: { type: string, description: "canonical knowledge key; omitted for non-word tokens" }
+        surface_key: { type: string, description: "language-owned exact-form rating key; omitted for non-word tokens" }
+        form_key: { type: string, description: "opaque key used to look up this form in surface_knowledge" }
         is_word: { type: boolean }
       required: [position, surface, is_word]
     ReaderKnowledge:
       type: object
-      description: The reader's per-item view, keyed by canonical key.
+      description: The reader's canonical per-item view, keyed by lemma/root/stem key.
       properties:
         level:
           type: string
-          description: "learner self-rating; '' (omitted)=unseen"
+          description: "explicit canonical learner mark; '' (omitted)=none"
           enum: ["", "1", "2", "3", "4", "5", well_known, ignored]
         lookup_count: { type: integer }
       required: [level, lookup_count]
+    ReaderSurfaceKnowledge:
+      type: object
+      description: The reader's per-displayed-form level, keyed by StoryToken.form_key.
+      properties:
+        level:
+          type: string
+          description: "learner self-rating for this exact form; ''=unseen"
+          enum: ["", "1", "2", "3", "4", "5", well_known, ignored]
+      required: [level]
     SentenceSpan:
       type: object
       description: >
@@ -1182,9 +1216,13 @@ components:
           items: { $ref: "#/components/schemas/SentenceSpan" }
         knowledge:
           type: object
-          description: "canonical key → knowledge state; unseen items are absent"
+          description: "canonical key → canonical knowledge state; unseen items are absent"
           additionalProperties: { $ref: "#/components/schemas/ReaderKnowledge" }
-      required: [story_id, language, tokens, sentences, knowledge]
+        surface_knowledge:
+          type: object
+          description: "StoryToken.form_key → exact-form level; unseen forms are absent"
+          additionalProperties: { $ref: "#/components/schemas/ReaderSurfaceKnowledge" }
+      required: [story_id, language, tokens, sentences, knowledge, surface_knowledge]
     ReaderEvent:
       type: object
       description: One logged reader interaction.
@@ -1215,6 +1253,17 @@ components:
           description: "'' clears to unseen"
           enum: ["", "1", "2", "3", "4", "5", well_known, ignored]
       required: [language, level]
+    ReaderSurfaceKnowledgeRequest:
+      type: object
+      properties:
+        language: { type: string }
+        item_key: { type: string, description: "canonical lemma/root/stem key for the token" }
+        surface_key: { type: string, description: "StoryToken.surface_key for the displayed form" }
+        level:
+          type: string
+          description: "'' clears to unseen for this exact form"
+          enum: ["", "1", "2", "3", "4", "5", well_known, ignored]
+      required: [language, item_key, surface_key, level]
     Definition:
       type: object
       description: A resolved word definition for the reader popup.

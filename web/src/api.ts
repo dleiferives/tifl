@@ -297,6 +297,10 @@ export async function postReaderEvents(
   return apiFetch<APIResponse<"postReaderEvents", 202>>("/reader/events", init, !options.keepalive);
 }
 
+export async function setReaderSurfaceKnowledge(request: APIRequest<"putReaderSurfaceKnowledge">): Promise<void> {
+  return apiFetch<void>("/reader/surface_knowledge", jsonRequest("PUT", request));
+}
+
 export async function setWordKnowledge(token: string, request: APIRequest<"putWordKnowledge">): Promise<void> {
   return apiFetch<void>(`/word_knowledge/${encodeURIComponent(token)}`, jsonRequest("PUT", request));
 }

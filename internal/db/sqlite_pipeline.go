@@ -257,9 +257,9 @@ func (r *SQLiteRepository) ReplaceStoryTokens(ctx context.Context, storyID strin
 		}
 		for _, t := range tokens {
 			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO story_tokens(story_id, position, surface, item_key, is_word)
-				 VALUES(?, ?, ?, ?, ?)`,
-				storyID, t.Position, t.Surface, nullEmpty(t.ItemKey), boolToInt(t.IsWord)); err != nil {
+				`INSERT INTO story_tokens(story_id, position, surface, item_key, surface_key, is_word)
+				 VALUES(?, ?, ?, ?, ?, ?)`,
+				storyID, t.Position, t.Surface, nullEmpty(t.ItemKey), nullEmpty(t.SurfaceKey), boolToInt(t.IsWord)); err != nil {
 				return err
 			}
 		}
@@ -269,7 +269,7 @@ func (r *SQLiteRepository) ReplaceStoryTokens(ctx context.Context, storyID strin
 
 func (r *SQLiteRepository) ListStoryTokens(ctx context.Context, storyID string) ([]domain.StoryToken, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT story_id, position, surface, item_key, is_word
+		`SELECT story_id, position, surface, item_key, surface_key, is_word
 		 FROM story_tokens WHERE story_id = ? ORDER BY position`, storyID)
 	if err != nil {
 		return nil, err
@@ -281,12 +281,14 @@ func (r *SQLiteRepository) ListStoryTokens(ctx context.Context, storyID string) 
 		var (
 			t       domain.StoryToken
 			itemKey sql.NullString
+			surfKey sql.NullString
 			isWord  int
 		)
-		if err := rows.Scan(&t.StoryID, &t.Position, &t.Surface, &itemKey, &isWord); err != nil {
+		if err := rows.Scan(&t.StoryID, &t.Position, &t.Surface, &itemKey, &surfKey, &isWord); err != nil {
 			return nil, err
 		}
 		t.ItemKey = itemKey.String
+		t.SurfaceKey = surfKey.String
 		t.IsWord = isWord != 0
 		out = append(out, t)
 	}

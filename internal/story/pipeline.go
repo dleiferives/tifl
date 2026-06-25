@@ -774,7 +774,7 @@ func toStoryTokens(storyID string, tokens []lang.Token) []domain.StoryToken {
 	for i, t := range tokens {
 		out[i] = domain.StoryToken{
 			StoryID: storyID, Position: t.Position, Surface: t.Surface,
-			ItemKey: t.Key, IsWord: t.IsWord,
+			ItemKey: t.Key, SurfaceKey: t.SurfaceKey, IsWord: t.IsWord,
 		}
 	}
 	return out

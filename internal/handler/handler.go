@@ -65,6 +65,7 @@ func currentAPIRoutes() []apiRoute {
 		{Method: http.MethodPost, Path: "/api/v1/stories/{id}/sentence", Handler: (*Handler).postSentenceBreakdown, RequireUser: true},
 		{Method: http.MethodPost, Path: "/api/v1/stories/{id}/word", Handler: (*Handler).postWordBreakdown, RequireUser: true},
 		{Method: http.MethodPost, Path: "/api/v1/reader/events", Handler: (*Handler).postReaderEvents, RequireUser: true},
+		{Method: http.MethodPut, Path: "/api/v1/reader/surface_knowledge", Handler: (*Handler).putReaderSurfaceKnowledge, RequireUser: true},
 		{Method: http.MethodPut, Path: "/api/v1/word_knowledge/{token}", Handler: (*Handler).putWordKnowledge, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/sessions", Handler: (*Handler).listSessions, RequireUser: true},
 		{Method: http.MethodPost, Path: "/api/v1/sessions/generate", Handler: (*Handler).generateSession, RequireUser: true},

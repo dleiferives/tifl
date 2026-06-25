@@ -266,14 +266,17 @@ func replaceStoryTokens(ctx context.Context, tx *sql.Tx, tokens []lang.Token) er
 		return fmt.Errorf("clear story tokens: %w", err)
 	}
 	for _, tok := range tokens {
-		var key any
+		var key, surfaceKey any
 		if tok.Key != "" {
 			key = tok.Key
 		}
+		if tok.SurfaceKey != "" {
+			surfaceKey = tok.SurfaceKey
+		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO story_tokens(story_id, position, surface, item_key, is_word)
-			 VALUES(?, ?, ?, ?, ?)`,
-			DemoStoryID, tok.Position, tok.Surface, key, boolInt(tok.IsWord)); err != nil {
+			`INSERT INTO story_tokens(story_id, position, surface, item_key, surface_key, is_word)
+			 VALUES(?, ?, ?, ?, ?, ?)`,
+			DemoStoryID, tok.Position, tok.Surface, key, surfaceKey, boolInt(tok.IsWord)); err != nil {
 			return fmt.Errorf("seed story token %d: %w", tok.Position, err)
 		}
 	}
