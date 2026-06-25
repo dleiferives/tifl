@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (no cgo; cross-compiles cleanly)
@@ -848,6 +849,145 @@ func (r *SQLiteRepository) UpsertBreakdown(ctx context.Context, b domain.Breakdo
 	return err
 }
 
+func (r *SQLiteRepository) GetSentenceStructure(ctx context.Context, language, structureKey string) (domain.SentenceStructure, error) {
+	var (
+		st                  domain.SentenceStructure
+		graphJSON, keysJSON sql.NullString
+		sourceBreakdownKey  sql.NullString
+	)
+	err := r.db.QueryRowContext(ctx,
+		`SELECT language, structure_key, template, graph, phrase_keys, source_breakdown_key, created_at, updated_at
+		 FROM sentence_structures WHERE language = ? AND structure_key = ?`,
+		language, structureKey).Scan(
+		&st.Language, &st.StructureKey, &st.Template, &graphJSON, &keysJSON,
+		&sourceBreakdownKey, &st.CreatedAt, &st.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.SentenceStructure{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.SentenceStructure{}, err
+	}
+	if err := unmarshalJSONInto(graphJSON, &st.Graph); err != nil {
+		return domain.SentenceStructure{}, err
+	}
+	if err := unmarshalJSONInto(keysJSON, &st.PhraseKeys); err != nil {
+		return domain.SentenceStructure{}, err
+	}
+	st.SourceBreakdownKey = sourceBreakdownKey.String
+	return st, nil
+}
+
+func (r *SQLiteRepository) UpsertSentenceStructure(ctx context.Context, st domain.SentenceStructure) error {
+	if st.CreatedAt == 0 {
+		st.CreatedAt = float64(time.Now().Unix())
+	}
+	if st.UpdatedAt == 0 {
+		st.UpdatedAt = st.CreatedAt
+	}
+	graphJSON, err := marshalJSONAny(st.Graph)
+	if err != nil {
+		return err
+	}
+	keysJSON, err := marshalJSONAny(st.PhraseKeys)
+	if err != nil {
+		return err
+	}
+	_, err = r.db.ExecContext(ctx,
+		`INSERT INTO sentence_structures(language, structure_key, template, graph, phrase_keys,
+		   source_breakdown_key, created_at, updated_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(language, structure_key) DO UPDATE SET
+		   template = excluded.template, graph = excluded.graph, phrase_keys = excluded.phrase_keys,
+		   source_breakdown_key = excluded.source_breakdown_key, updated_at = excluded.updated_at`,
+		st.Language, st.StructureKey, st.Template, graphJSON, keysJSON,
+		emptyToNull(st.SourceBreakdownKey), st.CreatedAt, st.UpdatedAt)
+	return err
+}
+
+func (r *SQLiteRepository) FindPhrases(ctx context.Context, language string, normalizedTexts []string) ([]domain.CachedPhrase, error) {
+	if len(normalizedTexts) == 0 {
+		return nil, nil
+	}
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(normalizedTexts)), ",")
+	args := make([]any, 0, len(normalizedTexts)+1)
+	args = append(args, language)
+	for _, text := range normalizedTexts {
+		args = append(args, text)
+	}
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT language, phrase_key, text, normalized_text, kind, gloss, notes, graph,
+		   metadata, source_breakdown_key, created_at, updated_at
+		 FROM cached_phrases
+		 WHERE language = ? AND normalized_text IN (`+placeholders+`)
+		 ORDER BY normalized_text, phrase_key`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.CachedPhrase
+	for rows.Next() {
+		p, err := scanSQLitePhrase(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (r *SQLiteRepository) UpsertPhrase(ctx context.Context, p domain.CachedPhrase) error {
+	if p.CreatedAt == 0 {
+		p.CreatedAt = float64(time.Now().Unix())
+	}
+	if p.UpdatedAt == 0 {
+		p.UpdatedAt = p.CreatedAt
+	}
+	graphJSON, err := marshalJSONAny(p.Graph)
+	if err != nil {
+		return err
+	}
+	metadata, err := marshalJSON(p.Metadata)
+	if err != nil {
+		return err
+	}
+	_, err = r.db.ExecContext(ctx,
+		`INSERT INTO cached_phrases(language, phrase_key, text, normalized_text, kind, gloss, notes,
+		   graph, metadata, source_breakdown_key, created_at, updated_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(language, phrase_key) DO UPDATE SET
+		   text = excluded.text, normalized_text = excluded.normalized_text, kind = excluded.kind,
+		   gloss = excluded.gloss, notes = excluded.notes, graph = excluded.graph,
+		   metadata = excluded.metadata, source_breakdown_key = excluded.source_breakdown_key,
+		   updated_at = excluded.updated_at`,
+		p.Language, p.PhraseKey, p.Text, p.NormalizedText, p.Kind,
+		emptyToNull(p.Gloss), emptyToNull(p.Notes), graphJSON, metadata,
+		emptyToNull(p.SourceBreakdownKey), p.CreatedAt, p.UpdatedAt)
+	return err
+}
+
+func scanSQLitePhrase(rows interface {
+	Scan(dest ...any) error
+}) (domain.CachedPhrase, error) {
+	var (
+		p                   domain.CachedPhrase
+		gloss, notes        sql.NullString
+		graphJSON, metaJSON sql.NullString
+		sourceBreakdownKey  sql.NullString
+	)
+	if err := rows.Scan(&p.Language, &p.PhraseKey, &p.Text, &p.NormalizedText, &p.Kind,
+		&gloss, &notes, &graphJSON, &metaJSON, &sourceBreakdownKey, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		return domain.CachedPhrase{}, err
+	}
+	p.Gloss, p.Notes, p.SourceBreakdownKey = gloss.String, notes.String, sourceBreakdownKey.String
+	if err := unmarshalJSONInto(graphJSON, &p.Graph); err != nil {
+		return domain.CachedPhrase{}, err
+	}
+	if err := unmarshalJSONInto(metaJSON, &p.Metadata); err != nil {
+		return domain.CachedPhrase{}, err
+	}
+	return p, nil
+}
+
 // --- helpers ---------------------------------------------------------------
 
 // emptyToNull stores an empty optional string as SQL NULL.
@@ -869,6 +1009,17 @@ func marshalJSON(v map[string]any) (any, error) {
 	return string(b), nil
 }
 
+func marshalJSONAny(v any) (any, error) {
+	if v == nil {
+		return nil, nil
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return string(b), nil
+}
+
 func unmarshalJSON(ns sql.NullString) (map[string]any, error) {
 	if !ns.Valid || ns.String == "" {
 		return nil, nil
@@ -878,6 +1029,13 @@ func unmarshalJSON(ns sql.NullString) (map[string]any, error) {
 		return nil, err
 	}
 	return m, nil
+}
+
+func unmarshalJSONInto(ns sql.NullString, out any) error {
+	if !ns.Valid || ns.String == "" {
+		return nil
+	}
+	return json.Unmarshal([]byte(ns.String), out)
 }
 
 func nullFloat(p *float64) any {

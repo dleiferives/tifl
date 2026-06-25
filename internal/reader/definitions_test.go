@@ -2,6 +2,8 @@ package reader_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"testing"
 
@@ -36,6 +38,28 @@ func defFixture(t *testing.T, resp string) (context.Context, *reader.DefinitionS
 	svc := reader.NewDefinitionService(repo, client, nil)
 	return ctx, svc, repo, client, user.UserID, story.StoryID
 }
+
+const sentenceBreakdownJSON = `{
+  "translation":"a b",
+  "words":[{"surface":"a","gloss":"A"},{"surface":"b","gloss":"B"}],
+  "grammar":["simple clause"],
+  "phrases":[{"text":"a b","kind":"phrase","gloss":"A B","node_id":"p0","notes":"two-word chunk"}],
+  "syntax_graph":{
+    "version":"syntax-graph/v1",
+    "roots":["s0"],
+    "nodes":[
+      {"id":"s0","kind":"sentence","label":"S","span_start":0,"span_end":2},
+      {"id":"p0","kind":"phrase","label":"XP","surface":"a b","gloss":"A B","span_start":0,"span_end":2},
+      {"id":"t0","kind":"token","label":"X","surface":"a","item_key":"a","span_start":0,"span_end":1},
+      {"id":"t1","kind":"token","label":"X","surface":"b","item_key":"b","span_start":1,"span_end":2}
+    ],
+    "edges":[
+      {"source":"s0","target":"p0","relation":"head"},
+      {"source":"p0","target":"t0","relation":"part"},
+      {"source":"p0","target":"t1","relation":"part"}
+    ]
+  }
+}`
 
 func TestResolvePrefersGlossary(t *testing.T) {
 	ctx, svc, repo, client, userID, storyID := defFixture(t, `{"gloss":"from llm"}`)
@@ -127,7 +151,7 @@ func TestResolveNoClientIsUnavailable(t *testing.T) {
 }
 
 func TestSentenceBreakdownCaches(t *testing.T) {
-	ctx, svc, _, client, userID, storyID := defFixture(t, `{"translation":"a b","words":[],"grammar":[]}`)
+	ctx, svc, _, client, userID, storyID := defFixture(t, sentenceBreakdownJSON)
 	// Position 0 is in the first sentence "a b."
 	b, err := svc.SentenceBreakdown(ctx, userID, storyID, 0)
 	must(t, err)
@@ -147,6 +171,66 @@ func TestSentenceBreakdownCaches(t *testing.T) {
 	if len(client.Calls) != 1 {
 		t.Fatalf("same sentence should hit the cache, got %d calls", len(client.Calls))
 	}
+}
+
+func TestSentenceBreakdownStoresGraphStructureAndPhrase(t *testing.T) {
+	ctx, svc, repo, _, userID, storyID := defFixture(t, sentenceBreakdownJSON)
+	if _, err := svc.SentenceBreakdown(ctx, userID, storyID, 0); err != nil {
+		t.Fatal(err)
+	}
+	phrases, err := repo.FindPhrases(ctx, "xx", []string{"a b"})
+	must(t, err)
+	if len(phrases) != 1 {
+		t.Fatalf("want one cached phrase, got %+v", phrases)
+	}
+	if phrases[0].Text != "a b" || phrases[0].Gloss != "A B" || len(phrases[0].Graph.Nodes) == 0 {
+		t.Fatalf("phrase was not graph-backed: %+v", phrases[0])
+	}
+	st, err := repo.GetSentenceStructure(ctx, "xx", testStructureKey("{word} {word}."))
+	must(t, err)
+	if st.Template != "{word} {word}." || len(st.Graph.Nodes) < 4 || len(st.PhraseKeys) != 1 {
+		t.Fatalf("sentence structure not persisted: %+v", st)
+	}
+}
+
+func TestSentenceBreakdownUsesGraphAndPhraseHintsOnMiss(t *testing.T) {
+	ctx, svc, repo, client, userID, storyID := defFixture(t, sentenceBreakdownJSON)
+	if _, err := svc.SentenceBreakdown(ctx, userID, storyID, 0); err != nil {
+		t.Fatal(err)
+	}
+	must(t, repo.UpsertPhrase(ctx, domain.CachedPhrase{
+		PhraseKey: "manual-c-d", Language: "xx", Text: "c d", NormalizedText: "c d",
+		Kind: "phrase", Gloss: "C D", Graph: domain.SyntaxGraph{
+			Version: "syntax-graph/v1",
+			Roots:   []string{"p0"},
+			Nodes:   []domain.SyntaxNode{{ID: "p0", Kind: "phrase", Surface: "c d", SpanStart: 0, SpanEnd: 2}},
+		},
+	}))
+	story, err := repo.CreateStory(ctx, domain.Story{UserID: userID, Language: "xx", Text: "c d.", Level: "beginner"})
+	must(t, err)
+	must(t, repo.ReplaceStoryTokens(ctx, story.StoryID, []domain.StoryToken{
+		{StoryID: story.StoryID, Position: 0, Surface: "c", ItemKey: "c", IsWord: true},
+		{StoryID: story.StoryID, Position: 1, Surface: " ", IsWord: false},
+		{StoryID: story.StoryID, Position: 2, Surface: "d.", ItemKey: "d", IsWord: true},
+	}))
+	if _, err := svc.SentenceBreakdown(ctx, userID, story.StoryID, 0); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.Calls) != 2 {
+		t.Fatalf("different exact sentence should call LLM again, got %d calls", len(client.Calls))
+	}
+	prompt := client.Calls[1].Req.User
+	if !strings.Contains(prompt, "Reusable structure hint") || !strings.Contains(prompt, "Template: {word} {word}.") {
+		t.Fatalf("second prompt missing structure hint:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "Reusable phrase/subtree hints") || !strings.Contains(prompt, "c d") {
+		t.Fatalf("second prompt missing phrase hint:\n%s", prompt)
+	}
+}
+
+func testStructureKey(template string) string {
+	sum := sha256.Sum256([]byte(template))
+	return hex.EncodeToString(sum[:])
 }
 
 func TestWordBreakdownCaches(t *testing.T) {

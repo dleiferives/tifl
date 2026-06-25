@@ -20,9 +20,10 @@ CREATE TABLE definitions (
 );
 
 -- Cached sentence/word breakdowns (LLM-backed, slow, reusable). cache_key is the
--- hash of the normalized sentence text for scope='sentence' (so the same sentence
--- in another story reuses it) and the canonical item_key for scope='word'.
--- content is the breakdown JSON, shape owned by the breakdown prompt builder.
+-- hash of the normalized sentence text for scope='sentence' (exact reuse) and
+-- the canonical item_key for scope='word'. Graph-backed structure/phrase reuse is
+-- materialized in later syntax cache tables; content remains the served
+-- breakdown JSON, shape owned by the breakdown prompt builder.
 CREATE TABLE breakdowns (
     scope      TEXT NOT NULL,              -- 'sentence' | 'word'
     language   TEXT NOT NULL REFERENCES languages(code),

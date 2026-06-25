@@ -309,6 +309,40 @@ func testDefinitionsBreakdowns(t *testing.T, repo db.Repository) {
 	if got.Content["translation"] != "in the beginning was the word" {
 		t.Fatalf("breakdown content not round-tripped: %+v", got.Content)
 	}
+
+	if _, err := repo.GetSentenceStructure(ctx, "grc", "tmpl_1"); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("want ErrNotFound on structure miss, got %v", err)
+	}
+	graph := domain.SyntaxGraph{
+		Version: "syntax-graph/v1",
+		Roots:   []string{"s0"},
+		Nodes: []domain.SyntaxNode{
+			{ID: "s0", Kind: "sentence", Label: "S", SpanStart: 0, SpanEnd: 2},
+			{ID: "t0", Kind: "token", Surface: "ἐν", ItemKey: "ἐν", SpanStart: 0, SpanEnd: 1},
+		},
+		Edges: []domain.SyntaxEdge{{Source: "s0", Target: "t0", Relation: "head"}},
+	}
+	must(t, repo.UpsertSentenceStructure(ctx, domain.SentenceStructure{
+		Language: "grc", StructureKey: "tmpl_1", Template: "{word} {word}.",
+		Graph: graph, PhraseKeys: []string{"phr_1"}, SourceBreakdownKey: "h1",
+		CreatedAt: 1700, UpdatedAt: 1700,
+	}))
+	st, err := repo.GetSentenceStructure(ctx, "grc", "tmpl_1")
+	must(t, err)
+	if st.Template != "{word} {word}." || len(st.Graph.Nodes) != 2 || len(st.PhraseKeys) != 1 {
+		t.Fatalf("sentence structure not round-tripped: %+v", st)
+	}
+	must(t, repo.UpsertPhrase(ctx, domain.CachedPhrase{
+		Language: "grc", PhraseKey: "phr_1", Text: "ἐν ἀρχῇ", NormalizedText: "ἐν ἀρχῇ",
+		Kind: "phrase", Gloss: "in the beginning", Notes: "prepositional phrase",
+		Graph: graph, Metadata: map[string]any{"node_id": "p0"},
+		SourceBreakdownKey: "h1", CreatedAt: 1700, UpdatedAt: 1700,
+	}))
+	phrases, err := repo.FindPhrases(ctx, "grc", []string{"ἐν ἀρχῇ", "missing"})
+	must(t, err)
+	if len(phrases) != 1 || phrases[0].Gloss != "in the beginning" || phrases[0].Metadata["node_id"] != "p0" {
+		t.Fatalf("cached phrase not found/round-tripped: %+v", phrases)
+	}
 }
 
 func testPipeline(t *testing.T, repo db.Repository) {

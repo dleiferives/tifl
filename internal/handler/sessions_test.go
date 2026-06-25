@@ -120,7 +120,7 @@ func newServer(t *testing.T, withBroker bool) (*httptest.Server, *db.FakeReposit
 			case "definition":
 				return llm.LLMResponse{Text: `{"gloss":"the letter a","grammatical_note":"","example":"","etymology":""}`}, nil
 			case "sentence_breakdown":
-				return llm.LLMResponse{Text: `{"translation":"a a b","words":[{"surface":"a","gloss":"a"}],"grammar":[]}`}, nil
+				return llm.LLMResponse{Text: `{"translation":"a a b","words":[{"surface":"a","gloss":"a"}],"grammar":[],"phrases":[{"text":"a a","kind":"phrase","gloss":"a a","node_id":"p0"}],"syntax_graph":{"version":"syntax-graph/v1","roots":["s0"],"nodes":[{"id":"s0","kind":"sentence","label":"S","span_start":0,"span_end":3},{"id":"p0","kind":"phrase","label":"XP","surface":"a a","gloss":"a a","span_start":0,"span_end":2},{"id":"t0","kind":"token","surface":"a","item_key":"a","span_start":0,"span_end":1}],"edges":[{"source":"s0","target":"p0","relation":"head"},{"source":"p0","target":"t0","relation":"part"}]}}`}, nil
 			case "word_breakdown":
 				return llm.LLMResponse{Text: `{"root":"a","morphology":"","etymology":"","related":[],"examples":[]}`}, nil
 			}

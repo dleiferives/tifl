@@ -143,6 +143,40 @@ func TestAssessorBuilder_IncludesSignals(t *testing.T) {
 	}
 }
 
+func TestSentenceBreakdownBuilder_GraphContractAndHints(t *testing.T) {
+	b := SentenceBreakdownBuilder{
+		Sentence: "ὁ λόγος ἐστίν.",
+		StructureHint: &domain.SentenceStructure{
+			Template: "{word} {word}.",
+			Graph: domain.SyntaxGraph{
+				Roots: []string{"s0"},
+				Nodes: []domain.SyntaxNode{
+					{ID: "s0", Kind: "sentence", Label: "S", SpanStart: 0, SpanEnd: 2},
+				},
+			},
+		},
+		Phrases: []domain.CachedPhrase{{
+			Text: "ὁ λόγος", Kind: "phrase", Gloss: "the word", Notes: "noun phrase",
+		}},
+	}
+	req := b.Build(sampleCtx())
+	if b.Version() != "sentence_breakdown/v2" {
+		t.Fatalf("Version = %q, want sentence_breakdown/v2", b.Version())
+	}
+	for _, want := range []string{
+		"syntax_graph", `"kind": "sentence"|"clause"|"phrase"|"token"`,
+		"dependency-style edges", "span_start is inclusive", "Reusable structure hint",
+		"Template: {word} {word}.", "Reusable phrase/subtree hints", "ὁ λόγος",
+	} {
+		if !strings.Contains(req.System+"\n"+req.User, want) {
+			t.Errorf("sentence breakdown prompt missing %q\nSystem:\n%s\nUser:\n%s", want, req.System, req.User)
+		}
+	}
+	if req.MaxTokens < 1000 {
+		t.Fatalf("graph-shaped breakdown needs a larger budget, got %d", req.MaxTokens)
+	}
+}
+
 func TestSkillTierVerifierBuilder_IncludesSkillAndEvidence(t *testing.T) {
 	at := 1710.0
 	b := SkillTierVerifierBuilder{
@@ -188,6 +222,7 @@ func TestBuilders_VersionsStable(t *testing.T) {
 		{GraderBuilder{}, "grader/v1"},
 		{AssessorBuilder{}, "assessor/v1"},
 		{SkillTierVerifierBuilder{}, "skill_tier_verifier/v1"},
+		{SentenceBreakdownBuilder{}, "sentence_breakdown/v2"},
 	}
 	for _, c := range cases {
 		if got := c.b.Version(); got != c.want {

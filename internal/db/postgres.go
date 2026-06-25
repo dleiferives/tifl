@@ -882,6 +882,141 @@ func (r *PostgresRepository) UpsertBreakdown(ctx context.Context, b domain.Break
 	return err
 }
 
+func (r *PostgresRepository) GetSentenceStructure(ctx context.Context, language, structureKey string) (domain.SentenceStructure, error) {
+	var (
+		st                  domain.SentenceStructure
+		graphJSON, keysJSON []byte
+		sourceBreakdownKey  *string
+	)
+	err := r.pool.QueryRow(ctx,
+		`SELECT language, structure_key, template, graph, phrase_keys, source_breakdown_key, created_at, updated_at
+		 FROM sentence_structures WHERE language = $1 AND structure_key = $2`,
+		language, structureKey).Scan(
+		&st.Language, &st.StructureKey, &st.Template, &graphJSON, &keysJSON,
+		&sourceBreakdownKey, &st.CreatedAt, &st.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.SentenceStructure{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.SentenceStructure{}, err
+	}
+	if err := unmarshalJSONBInto(graphJSON, &st.Graph); err != nil {
+		return domain.SentenceStructure{}, err
+	}
+	if err := unmarshalJSONBInto(keysJSON, &st.PhraseKeys); err != nil {
+		return domain.SentenceStructure{}, err
+	}
+	st.SourceBreakdownKey = derefStr(sourceBreakdownKey)
+	return st, nil
+}
+
+func (r *PostgresRepository) UpsertSentenceStructure(ctx context.Context, st domain.SentenceStructure) error {
+	if st.CreatedAt == 0 {
+		st.CreatedAt = float64(time.Now().Unix())
+	}
+	if st.UpdatedAt == 0 {
+		st.UpdatedAt = st.CreatedAt
+	}
+	graphJSON, err := marshalJSONBAny(st.Graph)
+	if err != nil {
+		return err
+	}
+	keysJSON, err := marshalJSONBAny(st.PhraseKeys)
+	if err != nil {
+		return err
+	}
+	_, err = r.pool.Exec(ctx,
+		`INSERT INTO sentence_structures(language, structure_key, template, graph, phrase_keys,
+		   source_breakdown_key, created_at, updated_at)
+		 VALUES($1, $2, $3, $4, $5, $6, $7, $8)
+		 ON CONFLICT(language, structure_key) DO UPDATE SET
+		   template = excluded.template, graph = excluded.graph, phrase_keys = excluded.phrase_keys,
+		   source_breakdown_key = excluded.source_breakdown_key, updated_at = excluded.updated_at`,
+		st.Language, st.StructureKey, st.Template, graphJSON, keysJSON,
+		nullStr(st.SourceBreakdownKey), st.CreatedAt, st.UpdatedAt)
+	return err
+}
+
+func (r *PostgresRepository) FindPhrases(ctx context.Context, language string, normalizedTexts []string) ([]domain.CachedPhrase, error) {
+	if len(normalizedTexts) == 0 {
+		return nil, nil
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT language, phrase_key, text, normalized_text, kind, gloss, notes, graph,
+		   metadata, source_breakdown_key, created_at, updated_at
+		 FROM cached_phrases
+		 WHERE language = $1 AND normalized_text = ANY($2)
+		 ORDER BY normalized_text, phrase_key`, language, normalizedTexts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.CachedPhrase
+	for rows.Next() {
+		p, err := scanPostgresPhrase(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (r *PostgresRepository) UpsertPhrase(ctx context.Context, p domain.CachedPhrase) error {
+	if p.CreatedAt == 0 {
+		p.CreatedAt = float64(time.Now().Unix())
+	}
+	if p.UpdatedAt == 0 {
+		p.UpdatedAt = p.CreatedAt
+	}
+	graphJSON, err := marshalJSONBAny(p.Graph)
+	if err != nil {
+		return err
+	}
+	metadata, err := marshalJSONB(p.Metadata)
+	if err != nil {
+		return err
+	}
+	_, err = r.pool.Exec(ctx,
+		`INSERT INTO cached_phrases(language, phrase_key, text, normalized_text, kind, gloss, notes,
+		   graph, metadata, source_breakdown_key, created_at, updated_at)
+		 VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		 ON CONFLICT(language, phrase_key) DO UPDATE SET
+		   text = excluded.text, normalized_text = excluded.normalized_text, kind = excluded.kind,
+		   gloss = excluded.gloss, notes = excluded.notes, graph = excluded.graph,
+		   metadata = excluded.metadata, source_breakdown_key = excluded.source_breakdown_key,
+		   updated_at = excluded.updated_at`,
+		p.Language, p.PhraseKey, p.Text, p.NormalizedText, p.Kind,
+		nullStr(p.Gloss), nullStr(p.Notes), graphJSON, metadata,
+		nullStr(p.SourceBreakdownKey), p.CreatedAt, p.UpdatedAt)
+	return err
+}
+
+func scanPostgresPhrase(row interface {
+	Scan(dest ...any) error
+}) (domain.CachedPhrase, error) {
+	var (
+		p                   domain.CachedPhrase
+		gloss, notes        *string
+		graphJSON, metaJSON []byte
+		sourceBreakdownKey  *string
+	)
+	if err := row.Scan(&p.Language, &p.PhraseKey, &p.Text, &p.NormalizedText, &p.Kind,
+		&gloss, &notes, &graphJSON, &metaJSON, &sourceBreakdownKey, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		return domain.CachedPhrase{}, err
+	}
+	p.Gloss, p.Notes, p.SourceBreakdownKey = derefStr(gloss), derefStr(notes), derefStr(sourceBreakdownKey)
+	if err := unmarshalJSONBInto(graphJSON, &p.Graph); err != nil {
+		return domain.CachedPhrase{}, err
+	}
+	if len(metaJSON) > 0 {
+		if err := unmarshalJSONBInto(metaJSON, &p.Metadata); err != nil {
+			return domain.CachedPhrase{}, err
+		}
+	}
+	return p, nil
+}
+
 func derefStr(p *string) string {
 	if p == nil {
 		return ""
@@ -907,6 +1042,13 @@ func marshalJSONB(v map[string]any) ([]byte, error) {
 	return json.Marshal(v)
 }
 
+func marshalJSONBAny(v any) ([]byte, error) {
+	if v == nil {
+		return nil, nil
+	}
+	return json.Marshal(v)
+}
+
 func unmarshalJSONB(b []byte) (map[string]any, error) {
 	if len(b) == 0 {
 		return nil, nil
@@ -916,4 +1058,11 @@ func unmarshalJSONB(b []byte) (map[string]any, error) {
 		return nil, err
 	}
 	return m, nil
+}
+
+func unmarshalJSONBInto(b []byte, out any) error {
+	if len(b) == 0 {
+		return nil
+	}
+	return json.Unmarshal(b, out)
 }

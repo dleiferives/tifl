@@ -118,14 +118,23 @@ word. This is an LLM-backed call. The breakdown includes:
 - The full sentence in the target language
 - A word-by-word gloss (each word's canonical form + meaning)
 - Grammatical structures identified (which constructions are present, what they do)
+- A graph-shaped syntax analysis: token, phrase, clause, and sentence nodes with
+  span offsets plus dependency-style edges such as head, subject, object,
+  modifier, and complement
+- Reusable phrase/chunk entries that correspond to graph subtrees
 - An idiomatic translation into the user's native language
 - For languages where this is relevant: morphological parse of each word
 
 This is slower than the definition popup (it requires an LLM call unless cached)
 and is meant for sentences the user genuinely cannot parse, not as a crutch for
 every sentence. The UI should convey this — perhaps a brief loading indicator.
-Results are cached: if the user comes back to the same sentence, no second LLM
-call is needed.
+Results are cached at two layers. The exact normalized sentence is cached as the
+served breakdown JSON, so if the user comes back to the same sentence, no second
+LLM call is needed. A live breakdown also materializes a reusable syntax graph
+template and phrase/subtree rows in the shared cache. Similar future sentences
+do not blindly reuse another sentence's answer; they use matching structure and
+phrase graph rows as prompt context so the new analysis remains sentence-specific
+while still composing from prior linguistic work.
 
 ---
 

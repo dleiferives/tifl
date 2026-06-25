@@ -308,30 +308,64 @@ func (b DefinitionBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
 	return LLMRequest{System: sys.String(), User: usr.String(), Temperature: gradeTemperature, MaxTokens: 300, ResponseFormat: "json"}
 }
 
-// SentenceBreakdownBuilder produces the richer, cached analysis of a whole
-// sentence (the reader's `s` key). The result JSON shape is owned here and stored
-// opaquely; it is cached by the hash of the normalized sentence, so the same
-// sentence in another story reuses it.
+// SentenceBreakdownBuilder produces the richer analysis of a whole sentence (the
+// reader's `s` key). The public response remains breakdown JSON, but the shape
+// now includes a syntax_graph and phrases so the backend can materialize reusable
+// graph-backed structure and phrase cache rows (#42). StructureHint and Phrases
+// are optional cache hits from prior analyses; they prime a fresh LLM call but
+// never replace the exact-sentence cache.
 type SentenceBreakdownBuilder struct {
-	Sentence string
+	Sentence      string
+	StructureHint *domain.SentenceStructure
+	Phrases       []domain.CachedPhrase
 }
 
 func (SentenceBreakdownBuilder) Kind() string    { return "sentence_breakdown" }
-func (SentenceBreakdownBuilder) Version() string { return "sentence_breakdown/v1" }
+func (SentenceBreakdownBuilder) Version() string { return "sentence_breakdown/v2" }
 
 func (b SentenceBreakdownBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
 	var sys strings.Builder
 	fmt.Fprintf(&sys, "You break down %s sentences for a language learner.\n", ctx.Language)
 	sys.WriteString("Respond with a JSON object: ")
-	sys.WriteString(`{"translation": string, "words": [{"surface": string, "gloss": string}], "grammar": [string]}.`)
+	sys.WriteString(`{"translation": string, "words": [{"surface": string, "gloss": string}], "grammar": [string], "phrases": [{"text": string, "kind": string, "gloss": string, "node_id": string, "notes": string}], "syntax_graph": {"version": "syntax-graph/v1", "roots": [string], "nodes": [{"id": string, "kind": "sentence"|"clause"|"phrase"|"token", "label": string, "surface": string, "gloss": string, "item_key": string, "span_start": integer, "span_end": integer, "features": object}], "edges": [{"source": string, "target": string, "relation": string, "label": string, "features": object}]}}.`)
 	sys.WriteString("\ntranslation is an idiomatic English rendering; words is a word-by-word gloss; ")
-	sys.WriteString("grammar lists the notable constructions present.")
+	sys.WriteString("grammar lists the notable constructions present. syntax_graph is required and must encode the sentence as reusable linguistic structure: token nodes for words, phrase/clause nodes for useful spans, and dependency-style edges such as head, subject, object, determiner, modifier, complement, or clause.")
+	sys.WriteString("\nSpan offsets are sentence-local word-token offsets: span_start is inclusive and span_end is exclusive.")
+	sys.WriteString("\nphrases should list reusable linguistic chunks or constructions that correspond to graph phrase/clause nodes.")
 	sys.WriteString("\nReturn JSON only — no prose, no markdown.")
 
 	var usr strings.Builder
 	fmt.Fprintf(&usr, "Sentence:\n%s\n", b.Sentence)
+	if b.StructureHint != nil {
+		usr.WriteString("\nReusable structure hint from a prior sentence with the same coarse template:\n")
+		fmt.Fprintf(&usr, "Template: %s\n", b.StructureHint.Template)
+		if len(b.StructureHint.Graph.Nodes) > 0 {
+			fmt.Fprintf(&usr, "Syntax graph: %s\n", compactJSON(map[string]any{
+				"roots": b.StructureHint.Graph.Roots,
+				"nodes": b.StructureHint.Graph.Nodes,
+				"edges": b.StructureHint.Graph.Edges,
+			}))
+		}
+		usr.WriteString("Use this only as structural guidance. The output must analyze the current sentence exactly.\n")
+	}
+	if len(b.Phrases) > 0 {
+		usr.WriteString("\nReusable phrase/subtree hints found in this sentence:\n")
+		for _, p := range b.Phrases {
+			fmt.Fprintf(&usr, "- %s", p.Text)
+			if p.Kind != "" {
+				fmt.Fprintf(&usr, " (%s)", p.Kind)
+			}
+			if p.Gloss != "" {
+				fmt.Fprintf(&usr, ": %s", p.Gloss)
+			}
+			if p.Notes != "" {
+				fmt.Fprintf(&usr, " — %s", p.Notes)
+			}
+			usr.WriteString("\n")
+		}
+	}
 
-	return LLMRequest{System: sys.String(), User: usr.String(), Temperature: gradeTemperature, MaxTokens: 700, ResponseFormat: "json"}
+	return LLMRequest{System: sys.String(), User: usr.String(), Temperature: gradeTemperature, MaxTokens: 1200, ResponseFormat: "json"}
 }
 
 // WordBreakdownBuilder produces the deep, on-demand morphological + etymological

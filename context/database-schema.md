@@ -585,6 +585,83 @@ has the definition.
 
 ---
 
+### `breakdowns`
+
+Global, shared cache for exact LLM-backed reader breakdowns. These rows are not
+user-scoped: if one learner requests a breakdown, later learners of the same
+language can reuse it.
+
+```
+breakdowns
+  scope       TEXT  NOT NULL    'sentence' | 'word'
+  language    TEXT  NOT NULL    FK → languages.code
+  cache_key   TEXT  NOT NULL    sentence: hash of normalized sentence text;
+                                word: canonical item key
+  content     JSON  NOT NULL    served breakdown JSON, prompt-builder-owned
+  created_at  REAL  NOT NULL
+
+  PRIMARY KEY (scope, language, cache_key)
+```
+
+For sentences this is exact reuse only. Similar sentences do not return another
+sentence's cached answer; they use the graph-backed structure tables below as
+prompt context for a fresh analysis.
+
+---
+
+### `sentence_structures`
+
+Reusable syntax-graph memory derived from sentence breakdowns. This is the cache
+that supports future tree/graph visualization and compositional sentence analysis.
+
+```
+sentence_structures
+  language             TEXT  NOT NULL    FK → languages.code
+  structure_key        TEXT  NOT NULL    hash of the normalized structural template
+  template             TEXT  NOT NULL    e.g. "{word} {word}."
+  graph                JSON  NOT NULL    SyntaxGraph: token/phrase/clause/sentence
+                                        nodes plus dependency-style edges
+  phrase_keys          JSON  NOT NULL    cached_phrases keys represented in graph
+  source_breakdown_key TEXT              originating exact sentence cache key
+  created_at           REAL  NOT NULL
+  updated_at           REAL  NOT NULL
+
+  PRIMARY KEY (language, structure_key)
+```
+
+The initial structure key is intentionally conservative and deterministic. Later
+language plugins or parsers can replace the coarse template with POS/dependency
+skeletons without changing the public reader API.
+
+---
+
+### `cached_phrases`
+
+Global, reusable phrase/chunk rows discovered from sentence syntax graphs.
+
+```
+cached_phrases
+  language             TEXT  NOT NULL    FK → languages.code
+  phrase_key           TEXT  NOT NULL    hash(language + kind + normalized_text)
+  text                 TEXT  NOT NULL    target-language phrase text
+  normalized_text      TEXT  NOT NULL    lookup form for matching future spans
+  kind                 TEXT  NOT NULL    phrase | clause | construction | ...
+  gloss                TEXT
+  notes                TEXT
+  graph                JSON  NOT NULL    SyntaxGraph subgraph for this phrase
+  metadata             JSON              source annotations, node ids, labels
+  source_breakdown_key TEXT              originating exact sentence cache key
+  created_at           REAL  NOT NULL
+  updated_at           REAL  NOT NULL
+
+  PRIMARY KEY (language, phrase_key)
+```
+
+These rows can later be promoted into `knowledge_items` with `item_type = 'phrase'`
+or `construction` once the product flow for phrase-level learning is settled.
+
+---
+
 ## Indexing Strategy
 
 The following indexes cover the hot query paths. All others are full table scans
@@ -628,6 +705,12 @@ CREATE INDEX idx_llm_calls_session
   ON llm_calls(session_id);
 CREATE INDEX idx_llm_calls_user_date
   ON llm_calls(user_id, called_at);
+
+-- Reader syntax cache
+CREATE INDEX idx_sentence_structures_language_updated
+  ON sentence_structures(language, updated_at);
+CREATE INDEX idx_cached_phrases_language_normalized
+  ON cached_phrases(language, normalized_text);
 ```
 
 ---
