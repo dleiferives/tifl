@@ -536,6 +536,15 @@ func (r *FakeRepository) ListDefinitions(_ context.Context, language, itemKey st
 	return out, nil
 }
 
+func (r *FakeRepository) UpsertDefinitions(ctx context.Context, defs []domain.Definition) error {
+	for _, d := range defs {
+		if err := r.UpsertDefinition(ctx, d); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (r *FakeRepository) UpsertDefinition(_ context.Context, d domain.Definition) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -811,6 +811,28 @@ func (r *PostgresRepository) ListDefinitions(ctx context.Context, language, item
 	return out, rows.Err()
 }
 
+func (r *PostgresRepository) UpsertDefinitions(ctx context.Context, defs []domain.Definition) error {
+	if len(defs) == 0 {
+		return nil
+	}
+	now := float64(time.Now().Unix())
+	batch := &pgx.Batch{}
+	for _, d := range defs {
+		if d.CreatedAt == 0 {
+			d.CreatedAt = now
+		}
+		batch.Queue(
+			`INSERT INTO definitions(language, item_key, source, gloss, grammatical_note, example, etymology, created_at)
+			 VALUES($1, $2, $3, $4, $5, $6, $7, $8)
+			 ON CONFLICT(language, item_key, source) DO UPDATE SET
+			   gloss = excluded.gloss, grammatical_note = excluded.grammatical_note,
+			   example = excluded.example, etymology = excluded.etymology, created_at = excluded.created_at`,
+			d.Language, d.ItemKey, d.Source, d.Gloss,
+			nullStr(d.GrammaticalNote), nullStr(d.Example), nullStr(d.Etymology), d.CreatedAt)
+	}
+	return r.pool.SendBatch(ctx, batch).Close()
+}
+
 func (r *PostgresRepository) UpsertDefinition(ctx context.Context, d domain.Definition) error {
 	if d.CreatedAt == 0 {
 		d.CreatedAt = float64(time.Now().Unix())

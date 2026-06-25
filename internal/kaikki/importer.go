@@ -17,11 +17,13 @@ import (
 	"github.com/dleiferives/tifl/internal/lang"
 )
 
+const progressEvery = 10_000
+
 const maxJSONLLine = 32 * 1024 * 1024
 
 // Store is the repository surface the importer needs.
 type Store interface {
-	UpsertDefinition(ctx context.Context, d domain.Definition) error
+	UpsertDefinitions(ctx context.Context, defs []domain.Definition) error
 	UpsertDefinitionImport(ctx context.Context, imp domain.DefinitionImport) error
 }
 
@@ -102,6 +104,10 @@ func (i *Importer) Import(ctx context.Context, r io.Reader) (stats Stats, err er
 			return stats, err
 		}
 		stats.EntriesRead++
+		if stats.EntriesRead%progressEvery == 0 {
+			fmt.Printf("progress: %d entries read, %d matched, %d definitions\n",
+				stats.EntriesRead, stats.EntriesMatched, len(defs))
+		}
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
@@ -121,10 +127,7 @@ func (i *Importer) Import(ctx context.Context, r io.Reader) (stats Stats, err er
 			continue
 		}
 		stats.EntriesMatched++
-		if err := i.addDefinition(ctx, defs, base); err != nil {
-			return stats, err
-		}
-		stats.DefinitionsWritten = len(defs)
+		i.mergeDefinition(defs, base)
 
 		canonicalKey := base.ItemKey
 		for _, f := range entry.Forms {
@@ -140,30 +143,33 @@ func (i *Importer) Import(ctx context.Context, r io.Reader) (stats Stats, err er
 			}
 			alias := base
 			alias.ItemKey = key
-			if err := i.addDefinition(ctx, defs, alias); err != nil {
-				return stats, err
-			}
+			i.mergeDefinition(defs, alias)
 			stats.FormDefinitions++
-			stats.DefinitionsWritten = len(defs)
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return stats, fmt.Errorf("kaikki: scan JSONL: %w", err)
 	}
+
+	stats.DefinitionsWritten = len(defs)
+	fmt.Printf("progress: flushing %d definitions to store...\n", stats.DefinitionsWritten)
+
+	batch := make([]domain.Definition, 0, len(defs))
+	for _, d := range defs {
+		batch = append(batch, d)
+	}
+	if err := i.store.UpsertDefinitions(ctx, batch); err != nil {
+		return stats, fmt.Errorf("kaikki: flush definitions: %w", err)
+	}
 	return stats, nil
 }
 
-func (i *Importer) addDefinition(ctx context.Context, defs map[string]domain.Definition, d domain.Definition) error {
+func (i *Importer) mergeDefinition(defs map[string]domain.Definition, d domain.Definition) {
 	if existing, ok := defs[d.ItemKey]; ok {
-		merged := mergeDefinitions(existing, d)
-		if merged == existing {
-			return nil
-		}
-		defs[d.ItemKey] = merged
-		return i.store.UpsertDefinition(ctx, merged)
+		defs[d.ItemKey] = mergeDefinitions(existing, d)
+		return
 	}
 	defs[d.ItemKey] = d
-	return i.store.UpsertDefinition(ctx, d)
 }
 
 func (i *Importer) definitionForEntry(entry wiktextractEntry, createdAt float64) (domain.Definition, bool, error) {

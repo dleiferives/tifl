@@ -182,6 +182,7 @@ type Repository interface {
 	// give a future UI stable syntax nodes/edges to visualize.
 	ListDefinitions(ctx context.Context, language, itemKey string) ([]domain.Definition, error)
 	UpsertDefinition(ctx context.Context, d domain.Definition) error
+	UpsertDefinitions(ctx context.Context, defs []domain.Definition) error
 	UpsertDefinitionImport(ctx context.Context, imp domain.DefinitionImport) error
 	GetDefinitionImport(ctx context.Context, importID string) (domain.DefinitionImport, error)
 	GetUserDefinition(ctx context.Context, userID, language, itemKey string) (domain.UserDefinition, error)

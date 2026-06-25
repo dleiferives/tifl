@@ -107,38 +107,37 @@ def default_db() -> Path:
 
 
 def run_with_spinner(label: str, cmd: list[str]) -> int:
-    """Run cmd, showing a spinner + elapsed time. Returns exit code."""
+    """Run cmd, streaming its stdout as spinner status. Returns exit code."""
     frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
     start = time.monotonic()
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    lines: list[str] = []
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+    status: list[str] = [""]
     done = threading.Event()
+    width = 70
 
     def spin() -> None:
         i = 0
         while not done.is_set():
             elapsed = time.monotonic() - start
             frame = frames[i % len(frames)] if not NO_COLOR else "-"
-            print(f"\r  {c(CYAN, frame)} {label}  {dim(f'{elapsed:.0f}s')}", end="", flush=True)
+            line = f"  {c(CYAN, frame)} {label}  {dim(f'{elapsed:.0f}s')}  {dim(status[0])}"
+            print(f"\r{line:<{width}}", end="", flush=True)
             i += 1
-            time.sleep(0.08)
+            time.sleep(0.1)
 
     spinner = threading.Thread(target=spin, daemon=True)
     spinner.start()
 
     assert proc.stdout
-    for line in proc.stdout:
-        lines.append(line.rstrip())
+    for raw in proc.stdout:
+        status[0] = raw.rstrip()
 
     proc.wait()
     done.set()
     spinner.join()
-    print("\r" + " " * 60 + "\r", end="")  # clear spinner line
 
-    if lines:
-        for line in lines:
-            print(f"  {dim(line)}")
-
+    elapsed = time.monotonic() - start
+    print(f"\r  {c(GREEN, '✓')} {label}  {dim(f'{elapsed:.0f}s')}{' ' * 30}")
     return proc.returncode
 
 

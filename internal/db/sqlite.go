@@ -780,6 +780,38 @@ func (r *SQLiteRepository) ListDefinitions(ctx context.Context, language, itemKe
 	return out, rows.Err()
 }
 
+func (r *SQLiteRepository) UpsertDefinitions(ctx context.Context, defs []domain.Definition) error {
+	if len(defs) == 0 {
+		return nil
+	}
+	now := float64(time.Now().Unix())
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.PrepareContext(ctx,
+		`INSERT INTO definitions(language, item_key, source, gloss, grammatical_note, example, etymology, created_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(language, item_key, source) DO UPDATE SET
+		   gloss = excluded.gloss, grammatical_note = excluded.grammatical_note,
+		   example = excluded.example, etymology = excluded.etymology, created_at = excluded.created_at`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, d := range defs {
+		if d.CreatedAt == 0 {
+			d.CreatedAt = now
+		}
+		if _, err := stmt.ExecContext(ctx, d.Language, d.ItemKey, d.Source, d.Gloss,
+			emptyToNull(d.GrammaticalNote), emptyToNull(d.Example), emptyToNull(d.Etymology), d.CreatedAt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (r *SQLiteRepository) UpsertDefinition(ctx context.Context, d domain.Definition) error {
 	if d.CreatedAt == 0 {
 		d.CreatedAt = float64(time.Now().Unix())
