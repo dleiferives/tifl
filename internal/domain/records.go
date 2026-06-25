@@ -79,3 +79,15 @@ type UserKnowledge struct {
 	ConfidenceScore  *float64 // 0..1, computed by the predictor
 	NextTargetAfter  *float64 // internal SRS-like scheduling; not user-visible
 }
+
+// KnowledgePrediction is a cached predictor output for one (user, item) pair.
+// The selector reads these rows before falling back to persisted confidence_score
+// or on-the-fly scoring. See context/knowledge-predictor.md ("Caching and
+// Freshness").
+type KnowledgePrediction struct {
+	UserID           string
+	ItemID           string
+	PredictedProb    float64
+	PredictorVersion string
+	ComputedAt       float64 // Unix seconds
+}

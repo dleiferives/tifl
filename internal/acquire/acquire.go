@@ -128,10 +128,11 @@ func (c Config) Stage(uk domain.UserKnowledge) domain.AcquisitionStage {
 // service, the task grader); Engine owns only the derivation: predict
 // confidence, then evaluate the stage, then persist.
 type Engine struct {
-	repo db.Repository
-	algo *predictor.Algorithmic
-	cfg  Config
-	now  func() float64
+	repo  db.Repository
+	algo  *predictor.Algorithmic
+	cfg   Config
+	cache predictor.CacheConfig
+	now   func() float64
 }
 
 // NewEngine builds an Engine over the repository, using the algorithmic
@@ -141,10 +142,11 @@ func NewEngine(repo db.Repository, predCfg predictor.Config, cfg Config) *Engine
 		cfg = DefaultConfig()
 	}
 	return &Engine{
-		repo: repo,
-		algo: predictor.NewAlgorithmic(predCfg),
-		cfg:  cfg,
-		now:  func() float64 { return float64(time.Now().Unix()) },
+		repo:  repo,
+		algo:  predictor.NewAlgorithmic(predCfg),
+		cfg:   cfg,
+		cache: predictor.DefaultCacheConfig(),
+		now:   func() float64 { return float64(time.Now().Unix()) },
 	}
 }
 
@@ -167,7 +169,29 @@ func (e *Engine) Refresh(ctx context.Context, uk domain.UserKnowledge) (domain.U
 	if err := e.repo.UpsertUserKnowledge(ctx, uk); err != nil {
 		return domain.UserKnowledge{}, err
 	}
+	if err := e.repo.DeleteKnowledgePredictions(ctx, uk.UserID, []string{uk.ItemID}); err != nil {
+		return domain.UserKnowledge{}, err
+	}
+	e.recomputePredictionAsync(uk)
 	return uk, nil
+}
+
+func (e *Engine) recomputePredictionAsync(uk domain.UserKnowledge) {
+	go func() {
+		now := e.now()
+		pred := e.algo.Score(uk, now)
+		version := e.cache.PredictorVersion
+		if version == "" {
+			version = predictor.AlgorithmicVersion
+		}
+		_ = e.repo.UpsertKnowledgePredictions(context.Background(), []domain.KnowledgePrediction{{
+			UserID:           uk.UserID,
+			ItemID:           uk.ItemID,
+			PredictedProb:    pred.Probability,
+			PredictorVersion: version,
+			ComputedAt:       now,
+		}})
+	}()
 }
 
 // ApplyTaskGrade folds a graded task's outcome into the acquisition signals: for

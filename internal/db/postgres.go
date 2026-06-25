@@ -636,6 +636,74 @@ func (r *PostgresRepository) UpsertReaderSurfaceLevel(ctx context.Context, userI
 	return err
 }
 
+func (r *PostgresRepository) UpsertKnowledgePredictions(ctx context.Context, predictions []domain.KnowledgePrediction) error {
+	if len(predictions) == 0 {
+		return nil
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	for _, p := range predictions {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO knowledge_predictions(user_id, item_id, predicted_prob, predictor_version, computed_at)
+			 VALUES($1, $2, $3, $4, $5)
+			 ON CONFLICT(user_id, item_id) DO UPDATE SET
+			   predicted_prob = excluded.predicted_prob,
+			   predictor_version = excluded.predictor_version,
+			   computed_at = excluded.computed_at`,
+			p.UserID, p.ItemID, p.PredictedProb, p.PredictorVersion, p.ComputedAt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *PostgresRepository) ListKnowledgePredictions(ctx context.Context, userID string, itemIDs []string) ([]domain.KnowledgePrediction, error) {
+	itemIDs = uniqueStrings(itemIDs)
+	query := `SELECT user_id, item_id, predicted_prob, predictor_version, computed_at
+	          FROM knowledge_predictions WHERE user_id = $1`
+	args := []any{userID}
+	if len(itemIDs) > 0 {
+		for _, itemID := range itemIDs {
+			args = append(args, itemID)
+		}
+		query += ` AND item_id IN (` + pgPlaceholders(2, len(itemIDs)) + `)`
+	}
+	query += ` ORDER BY item_id`
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.KnowledgePrediction
+	for rows.Next() {
+		var p domain.KnowledgePrediction
+		if err := rows.Scan(&p.UserID, &p.ItemID, &p.PredictedProb, &p.PredictorVersion, &p.ComputedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (r *PostgresRepository) DeleteKnowledgePredictions(ctx context.Context, userID string, itemIDs []string) error {
+	itemIDs = uniqueStrings(itemIDs)
+	if len(itemIDs) == 0 {
+		return nil
+	}
+	args := []any{userID}
+	for _, itemID := range itemIDs {
+		args = append(args, itemID)
+	}
+	_, err := r.pool.Exec(ctx,
+		`DELETE FROM knowledge_predictions
+		 WHERE user_id = $1 AND item_id IN (`+pgPlaceholders(2, len(itemIDs))+`)`,
+		args...)
+	return err
+}
+
 // --- llm calls -------------------------------------------------------------
 
 func (r *PostgresRepository) InsertLLMCall(ctx context.Context, c domain.LLMCall) error {

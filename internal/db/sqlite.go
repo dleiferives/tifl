@@ -607,6 +607,78 @@ func (r *SQLiteRepository) UpsertReaderSurfaceLevel(ctx context.Context, userID 
 	return err
 }
 
+func (r *SQLiteRepository) UpsertKnowledgePredictions(ctx context.Context, predictions []domain.KnowledgePrediction) error {
+	if len(predictions) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	stmt, err := tx.PrepareContext(ctx,
+		`INSERT INTO knowledge_predictions(user_id, item_id, predicted_prob, predictor_version, computed_at)
+		 VALUES(?, ?, ?, ?, ?)
+		 ON CONFLICT(user_id, item_id) DO UPDATE SET
+		   predicted_prob = excluded.predicted_prob,
+		   predictor_version = excluded.predictor_version,
+		   computed_at = excluded.computed_at`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, p := range predictions {
+		if _, err := stmt.ExecContext(ctx, p.UserID, p.ItemID, p.PredictedProb, p.PredictorVersion, p.ComputedAt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (r *SQLiteRepository) ListKnowledgePredictions(ctx context.Context, userID string, itemIDs []string) ([]domain.KnowledgePrediction, error) {
+	itemIDs = uniqueStrings(itemIDs)
+	query := `SELECT user_id, item_id, predicted_prob, predictor_version, computed_at
+	          FROM knowledge_predictions WHERE user_id = ?`
+	args := []any{userID}
+	if len(itemIDs) > 0 {
+		for _, itemID := range itemIDs {
+			args = append(args, itemID)
+		}
+		query += ` AND item_id IN (` + sqlitePlaceholders(len(itemIDs)) + `)`
+	}
+	query += ` ORDER BY item_id`
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.KnowledgePrediction
+	for rows.Next() {
+		var p domain.KnowledgePrediction
+		if err := rows.Scan(&p.UserID, &p.ItemID, &p.PredictedProb, &p.PredictorVersion, &p.ComputedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (r *SQLiteRepository) DeleteKnowledgePredictions(ctx context.Context, userID string, itemIDs []string) error {
+	itemIDs = uniqueStrings(itemIDs)
+	if len(itemIDs) == 0 {
+		return nil
+	}
+	args := []any{userID}
+	for _, itemID := range itemIDs {
+		args = append(args, itemID)
+	}
+	_, err := r.db.ExecContext(ctx,
+		`DELETE FROM knowledge_predictions
+		 WHERE user_id = ? AND item_id IN (`+sqlitePlaceholders(len(itemIDs))+`)`,
+		args...)
+	return err
+}
+
 // --- llm calls -------------------------------------------------------------
 
 func (r *SQLiteRepository) InsertLLMCall(ctx context.Context, c domain.LLMCall) error {

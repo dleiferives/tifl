@@ -63,6 +63,7 @@ func seedItems(t *testing.T, repo db.Repository, userID, language string, items 
 			LookupCount:      si.lookups,
 			TaskCorrect:      si.correct,
 			TaskTotal:        si.total,
+			ConfidenceScore:  si.confidence,
 			LastSeen:         &now,
 		}); err != nil {
 			t.Fatalf("upsert uk %q: %v", si.key, err)
@@ -71,13 +72,14 @@ func seedItems(t *testing.T, repo db.Repository, userID, language string, items 
 }
 
 type seedItem struct {
-	key      string
-	freq     int
-	stage    domain.AcquisitionStage
-	exposure int
-	lookups  int
-	correct  int
-	total    int
+	key        string
+	freq       int
+	stage      domain.AcquisitionStage
+	exposure   int
+	lookups    int
+	correct    int
+	total      int
+	confidence *float64
 }
 
 func TestSelectBuckets(t *testing.T) {
@@ -190,5 +192,88 @@ func TestSelectEmptyKnowledge(t *testing.T) {
 	}
 	if len(result.Targets) != 0 || len(result.Background) != 0 || len(result.New) != 0 {
 		t.Error("expected all-empty SelectedItems for new user with no items")
+	}
+}
+
+func TestSelectUsesCachedPredictionsForTargetPriority(t *testing.T) {
+	sel, repo := newTestSelector(t)
+	ctx := context.Background()
+	const userID = "usr_cached"
+	const lang = "el"
+
+	ensureUser(t, repo, userID)
+	if err := repo.UpsertLanguage(ctx, domain.Language{Code: lang, Name: "Greek", KeyStrategy: "lemma", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	seedItems(t, repo, userID, lang, []seedItem{
+		{key: "alpha", freq: 1, stage: domain.StageAcquiring, exposure: 10},
+		{key: "beta", freq: 2, stage: domain.StageAcquiring, exposure: 10},
+	})
+	ids := itemIDsByKey(t, repo, lang)
+	mustPredictions(t, repo.UpsertKnowledgePredictions(ctx, []domain.KnowledgePrediction{
+		{UserID: userID, ItemID: ids["alpha"], PredictedProb: 0.95, PredictorVersion: predictor.AlgorithmicVersion, ComputedAt: float64(time.Now().Unix())},
+		{UserID: userID, ItemID: ids["beta"], PredictedProb: 0.05, PredictorVersion: predictor.AlgorithmicVersion, ComputedAt: float64(time.Now().Unix())},
+	}))
+
+	result, err := sel.Select(ctx, SelectRequest{
+		UserID: userID, Language: lang, Budget: Budget{TargetCount: 2},
+	})
+	if err != nil {
+		t.Fatalf("Select: %v", err)
+	}
+	if len(result.Targets) != 2 || result.Targets[0].Key != "beta" {
+		t.Fatalf("cached low-probability item should rank first, got %+v", result.Targets)
+	}
+}
+
+func TestSelectFallsBackToConfidenceWhenCachedPredictionIsStale(t *testing.T) {
+	sel, repo := newTestSelector(t)
+	ctx := context.Background()
+	const userID = "usr_stale"
+	const lang = "el"
+	high, low := 0.95, 0.05
+
+	ensureUser(t, repo, userID)
+	if err := repo.UpsertLanguage(ctx, domain.Language{Code: lang, Name: "Greek", KeyStrategy: "lemma", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	seedItems(t, repo, userID, lang, []seedItem{
+		{key: "alpha", freq: 1, stage: domain.StageAcquiring, exposure: 10, confidence: &high},
+		{key: "beta", freq: 2, stage: domain.StageAcquiring, exposure: 10, confidence: &low},
+	})
+	ids := itemIDsByKey(t, repo, lang)
+	mustPredictions(t, repo.UpsertKnowledgePredictions(ctx, []domain.KnowledgePrediction{
+		{UserID: userID, ItemID: ids["alpha"], PredictedProb: 0.05, PredictorVersion: predictor.AlgorithmicVersion, ComputedAt: 1},
+		{UserID: userID, ItemID: ids["beta"], PredictedProb: 0.95, PredictorVersion: predictor.AlgorithmicVersion, ComputedAt: 1},
+	}))
+
+	result, err := sel.Select(ctx, SelectRequest{
+		UserID: userID, Language: lang, Budget: Budget{TargetCount: 2},
+	})
+	if err != nil {
+		t.Fatalf("Select: %v", err)
+	}
+	if len(result.Targets) != 2 || result.Targets[0].Key != "beta" {
+		t.Fatalf("stale cache should fall back to confidence_score, got %+v", result.Targets)
+	}
+}
+
+func itemIDsByKey(t *testing.T, repo db.Repository, language string) map[string]string {
+	t.Helper()
+	items, err := repo.ListKnowledgeItems(context.Background(), language)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := make(map[string]string, len(items))
+	for _, item := range items {
+		out[item.Key] = item.ItemID
+	}
+	return out
+}
+
+func mustPredictions(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
 	}
 }

@@ -82,6 +82,14 @@ type Repository interface {
 	LoadReaderSurfaceLevels(ctx context.Context, userID, language string) ([]domain.ReaderSurfaceLevel, error)
 	UpsertReaderSurfaceLevel(ctx context.Context, userID string, row domain.ReaderSurfaceLevel) error
 
+	// Knowledge predictions — cached predictor outputs, tenant-scoped by user.
+	// List accepts an optional item id filter; an empty filter returns all cached
+	// rows for the user. Delete accepts an item id filter and is a no-op when the
+	// filter is empty, so callers cannot accidentally wipe a user's full cache.
+	UpsertKnowledgePredictions(ctx context.Context, predictions []domain.KnowledgePrediction) error
+	ListKnowledgePredictions(ctx context.Context, userID string, itemIDs []string) ([]domain.KnowledgePrediction, error)
+	DeleteKnowledgePredictions(ctx context.Context, userID string, itemIDs []string) error
+
 	// LLM calls — the audit/cost log written by the gateway client after every
 	// outbound model call. Append-only; the call_id is the caller's idempotency key.
 	InsertLLMCall(ctx context.Context, c domain.LLMCall) error

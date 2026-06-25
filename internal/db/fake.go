@@ -20,27 +20,28 @@ import (
 type FakeRepository struct {
 	mu sync.Mutex
 
-	users      map[string]domain.User // user_id -> user
-	emailIndex map[string]string      // email -> user_id (unique)
-	refresh    map[string]domain.RefreshToken
-	languages  map[string]domain.Language
-	items      map[string]domain.KnowledgeItem // item_id -> item
-	itemKeys   map[string]string               // language\x00type\x00key -> item_id
-	knowledge  map[string]domain.UserKnowledge // user_id\x00item_id -> state
-	surface    map[string]domain.ReaderSurfaceLevel
-	llmCalls   []domain.LLMCall             // append-only audit log
-	readerEvts []domain.ReaderEvent         // append-only reader signal log
-	readerIDs  map[string]bool              // event_id set, for idempotent insert
-	defs       map[string]domain.Definition // language\x00key\x00source -> definition
-	defImports map[string]domain.DefinitionImport
-	userDefs   map[string]domain.UserDefinition // user_id\x00language\x00key -> user definition
-	breakdowns map[string]domain.Breakdown      // scope\x00language\x00cacheKey -> breakdown
-	structures map[string]domain.SentenceStructure
-	phrases    map[string]domain.CachedPhrase
-	skills     map[string]domain.Skill       // skill_id -> skill
-	itemSkills map[string]map[string]bool    // item_id -> skill_id set
-	userSkills map[string]domain.UserSkillXP // user_id\x00skill_id -> state
-	skillLogs  []domain.TaskSkillXPLog       // append-only skill XP log
+	users       map[string]domain.User // user_id -> user
+	emailIndex  map[string]string      // email -> user_id (unique)
+	refresh     map[string]domain.RefreshToken
+	languages   map[string]domain.Language
+	items       map[string]domain.KnowledgeItem // item_id -> item
+	itemKeys    map[string]string               // language\x00type\x00key -> item_id
+	knowledge   map[string]domain.UserKnowledge // user_id\x00item_id -> state
+	predictions map[string]domain.KnowledgePrediction
+	surface     map[string]domain.ReaderSurfaceLevel
+	llmCalls    []domain.LLMCall             // append-only audit log
+	readerEvts  []domain.ReaderEvent         // append-only reader signal log
+	readerIDs   map[string]bool              // event_id set, for idempotent insert
+	defs        map[string]domain.Definition // language\x00key\x00source -> definition
+	defImports  map[string]domain.DefinitionImport
+	userDefs    map[string]domain.UserDefinition // user_id\x00language\x00key -> user definition
+	breakdowns  map[string]domain.Breakdown      // scope\x00language\x00cacheKey -> breakdown
+	structures  map[string]domain.SentenceStructure
+	phrases     map[string]domain.CachedPhrase
+	skills      map[string]domain.Skill       // skill_id -> skill
+	itemSkills  map[string]map[string]bool    // item_id -> skill_id set
+	userSkills  map[string]domain.UserSkillXP // user_id\x00skill_id -> state
+	skillLogs   []domain.TaskSkillXPLog       // append-only skill XP log
 
 	// Generation-pipeline state.
 	sessions   map[string]domain.Session                    // session_id -> session
@@ -59,32 +60,33 @@ var _ Repository = (*FakeRepository)(nil)
 // NewFake returns an empty in-memory repository ready to use.
 func NewFake() *FakeRepository {
 	return &FakeRepository{
-		users:      make(map[string]domain.User),
-		emailIndex: make(map[string]string),
-		refresh:    make(map[string]domain.RefreshToken),
-		languages:  make(map[string]domain.Language),
-		items:      make(map[string]domain.KnowledgeItem),
-		itemKeys:   make(map[string]string),
-		knowledge:  make(map[string]domain.UserKnowledge),
-		surface:    make(map[string]domain.ReaderSurfaceLevel),
-		readerIDs:  make(map[string]bool),
-		defs:       make(map[string]domain.Definition),
-		defImports: make(map[string]domain.DefinitionImport),
-		userDefs:   make(map[string]domain.UserDefinition),
-		breakdowns: make(map[string]domain.Breakdown),
-		structures: make(map[string]domain.SentenceStructure),
-		phrases:    make(map[string]domain.CachedPhrase),
-		skills:     make(map[string]domain.Skill),
-		itemSkills: make(map[string]map[string]bool),
-		userSkills: make(map[string]domain.UserSkillXP),
-		sessions:   make(map[string]domain.Session),
-		stages:     make(map[string]map[string]domain.GenerationStage),
-		stories:    make(map[string]domain.Story),
-		tokens:     make(map[string][]domain.StoryToken),
-		glossary:   make(map[string][]domain.StoryGlossaryEntry),
-		tasks:      make(map[string]domain.Task),
-		targets:    make(map[string][]string),
-		phraseSets: make(map[string]domain.PhraseSet),
+		users:       make(map[string]domain.User),
+		emailIndex:  make(map[string]string),
+		refresh:     make(map[string]domain.RefreshToken),
+		languages:   make(map[string]domain.Language),
+		items:       make(map[string]domain.KnowledgeItem),
+		itemKeys:    make(map[string]string),
+		knowledge:   make(map[string]domain.UserKnowledge),
+		predictions: make(map[string]domain.KnowledgePrediction),
+		surface:     make(map[string]domain.ReaderSurfaceLevel),
+		readerIDs:   make(map[string]bool),
+		defs:        make(map[string]domain.Definition),
+		defImports:  make(map[string]domain.DefinitionImport),
+		userDefs:    make(map[string]domain.UserDefinition),
+		breakdowns:  make(map[string]domain.Breakdown),
+		structures:  make(map[string]domain.SentenceStructure),
+		phrases:     make(map[string]domain.CachedPhrase),
+		skills:      make(map[string]domain.Skill),
+		itemSkills:  make(map[string]map[string]bool),
+		userSkills:  make(map[string]domain.UserSkillXP),
+		sessions:    make(map[string]domain.Session),
+		stages:      make(map[string]map[string]domain.GenerationStage),
+		stories:     make(map[string]domain.Story),
+		tokens:      make(map[string][]domain.StoryToken),
+		glossary:    make(map[string][]domain.StoryGlossaryEntry),
+		tasks:       make(map[string]domain.Task),
+		targets:     make(map[string][]string),
+		phraseSets:  make(map[string]domain.PhraseSet),
 	}
 }
 
@@ -475,6 +477,50 @@ func (r *FakeRepository) UpsertReaderSurfaceLevel(_ context.Context, userID stri
 	return nil
 }
 
+func (r *FakeRepository) UpsertKnowledgePredictions(_ context.Context, predictions []domain.KnowledgePrediction) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, p := range predictions {
+		if _, ok := r.users[p.UserID]; !ok {
+			return errFakeFK("knowledge_predictions.user_id")
+		}
+		if _, ok := r.items[p.ItemID]; !ok {
+			return errFakeFK("knowledge_predictions.item_id")
+		}
+	}
+	for _, p := range predictions {
+		r.predictions[p.UserID+"\x00"+p.ItemID] = p
+	}
+	return nil
+}
+
+func (r *FakeRepository) ListKnowledgePredictions(_ context.Context, userID string, itemIDs []string) ([]domain.KnowledgePrediction, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	filter := stringSet(itemIDs)
+	var out []domain.KnowledgePrediction
+	for _, p := range r.predictions {
+		if p.UserID != userID {
+			continue
+		}
+		if len(filter) > 0 && !filter[p.ItemID] {
+			continue
+		}
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ItemID < out[j].ItemID })
+	return out, nil
+}
+
+func (r *FakeRepository) DeleteKnowledgePredictions(_ context.Context, userID string, itemIDs []string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, itemID := range uniqueStrings(itemIDs) {
+		delete(r.predictions, userID+"\x00"+itemID)
+	}
+	return nil
+}
+
 // --- definitions & breakdowns ----------------------------------------------
 
 func (r *FakeRepository) ListDefinitions(_ context.Context, language, itemKey string) ([]domain.Definition, error) {
@@ -696,6 +742,15 @@ func (r *FakeRepository) ReaderEvents() []domain.ReaderEvent {
 
 func surfaceLevelKey(userID, language, itemKey, surfaceKey string) string {
 	return userID + "\x00" + language + "\x00" + itemKey + "\x00" + surfaceKey
+}
+
+func stringSet(values []string) map[string]bool {
+	values = uniqueStrings(values)
+	out := make(map[string]bool, len(values))
+	for _, v := range values {
+		out[v] = true
+	}
+	return out
 }
 
 // LLMCalls returns a copy of the recorded calls, for test inspection. It is not
