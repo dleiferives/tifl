@@ -45,8 +45,8 @@ web-typecheck: ## typecheck the web client
 test: ## run Go unit tests (no network)
 	go test ./...
 
-test-live: ## live gateway test vs a running `opencode serve` (needs TIFL_LIVE_OPENCODE_URL)
-	TIFL_LIVE_OPENCODE_URL=$(TIFL_LIVE_OPENCODE_URL) go test -tags live ./internal/gateway/ -run Live -v
+test-live: ## live OpenCode tests vs a running `opencode serve` (needs TIFL_LIVE_OPENCODE_URL)
+	TIFL_LIVE_OPENCODE_URL=$(TIFL_LIVE_OPENCODE_URL) go test -tags live ./internal/gateway ./internal/handler -run Live -v
 
 vet: ## go vet
 	go vet ./...
