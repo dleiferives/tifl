@@ -812,6 +812,35 @@ func (r *SQLiteRepository) UpsertDefinitions(ctx context.Context, defs []domain.
 	return tx.Commit()
 }
 
+func (r *SQLiteRepository) ListUntranslatedNativeDefinitions(ctx context.Context, language string, limit int) ([]domain.Definition, error) {
+	q := `SELECT language, item_key, source, gloss, COALESCE(grammatical_note,''), COALESCE(example,''), COALESCE(etymology,''), created_at
+	      FROM definitions
+	      WHERE language = ? AND source = ?
+	        AND item_key NOT IN (
+	          SELECT item_key FROM definitions
+	          WHERE language = ? AND source IN (?,?)
+	        )`
+	args := []any{language, domain.DefinitionSourceNative, language, domain.DefinitionSourceWiktionary, domain.DefinitionSourceTranslated}
+	if limit > 0 {
+		q += " LIMIT ?"
+		args = append(args, limit)
+	}
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.Definition
+	for rows.Next() {
+		var d domain.Definition
+		if err := rows.Scan(&d.Language, &d.ItemKey, &d.Source, &d.Gloss, &d.GrammaticalNote, &d.Example, &d.Etymology, &d.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
 func (r *SQLiteRepository) UpsertDefinition(ctx context.Context, d domain.Definition) error {
 	if d.CreatedAt == 0 {
 		d.CreatedAt = float64(time.Now().Unix())

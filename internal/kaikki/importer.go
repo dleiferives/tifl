@@ -31,6 +31,7 @@ type Options struct {
 	Language       lang.Language
 	SourcePath     string
 	DatasetVersion string
+	NativeGloss    bool // true when the dump is from the target language's own Wiktionary
 	Now            func() float64
 }
 
@@ -187,10 +188,14 @@ func (i *Importer) definitionForEntry(entry wiktextractEntry, createdAt float64)
 	if key == "" {
 		return domain.Definition{}, false, nil
 	}
+	source := domain.DefinitionSourceWiktionary
+	if i.opts.NativeGloss {
+		source = domain.DefinitionSourceNative
+	}
 	return domain.Definition{
 		Language:        i.opts.Language.Code(),
 		ItemKey:         key,
-		Source:          domain.DefinitionSourceWiktionary,
+		Source:          source,
 		Gloss:           gloss,
 		GrammaticalNote: noteForEntry(entry),
 		Example:         exampleForEntry(entry),

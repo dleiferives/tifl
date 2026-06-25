@@ -833,6 +833,34 @@ func (r *PostgresRepository) UpsertDefinitions(ctx context.Context, defs []domai
 	return r.pool.SendBatch(ctx, batch).Close()
 }
 
+func (r *PostgresRepository) ListUntranslatedNativeDefinitions(ctx context.Context, language string, limit int) ([]domain.Definition, error) {
+	q := `SELECT language, item_key, source, gloss, COALESCE(grammatical_note,''), COALESCE(example,''), COALESCE(etymology,''), created_at
+	      FROM definitions
+	      WHERE language = $1 AND source = $2
+	        AND item_key NOT IN (
+	          SELECT item_key FROM definitions
+	          WHERE language = $3 AND source = ANY($4::text[])
+	        )`
+	args := []any{language, domain.DefinitionSourceNative, language, []string{domain.DefinitionSourceWiktionary, domain.DefinitionSourceTranslated}}
+	if limit > 0 {
+		q += fmt.Sprintf(" LIMIT %d", limit)
+	}
+	rows, err := r.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.Definition
+	for rows.Next() {
+		var d domain.Definition
+		if err := rows.Scan(&d.Language, &d.ItemKey, &d.Source, &d.Gloss, &d.GrammaticalNote, &d.Example, &d.Etymology, &d.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
 func (r *PostgresRepository) UpsertDefinition(ctx context.Context, d domain.Definition) error {
 	if d.CreatedAt == 0 {
 		d.CreatedAt = float64(time.Now().Unix())

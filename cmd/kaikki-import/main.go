@@ -27,6 +27,7 @@ func main() {
 	languageCode := flag.String("language", "el", "target language code to import")
 	datasetVersion := flag.String("dataset-version", "", "dataset version or dump date for the import audit row")
 	dbPath := flag.String("db", "", "SQLite database path (overrides server.db_path and storage mode)")
+	nativeGloss := flag.Bool("native", false, "glosses are in the target language (sets source=wiktionary-native)")
 	flag.Parse()
 
 	if *inputPath == "" {
@@ -75,6 +76,7 @@ func main() {
 		Language:       language,
 		SourcePath:     *inputPath,
 		DatasetVersion: *datasetVersion,
+		NativeGloss:    *nativeGloss,
 	})
 	if err != nil {
 		log.Fatal(err)

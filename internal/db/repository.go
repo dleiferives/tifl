@@ -183,6 +183,10 @@ type Repository interface {
 	ListDefinitions(ctx context.Context, language, itemKey string) ([]domain.Definition, error)
 	UpsertDefinition(ctx context.Context, d domain.Definition) error
 	UpsertDefinitions(ctx context.Context, defs []domain.Definition) error
+	// ListUntranslatedNativeDefinitions returns definitions with source=wiktionary-native
+	// that have no wiktionary or wiktionary-translated counterpart for the same (language, item_key).
+	// limit=0 means no cap.
+	ListUntranslatedNativeDefinitions(ctx context.Context, language string, limit int) ([]domain.Definition, error)
 	UpsertDefinitionImport(ctx context.Context, imp domain.DefinitionImport) error
 	GetDefinitionImport(ctx context.Context, importID string) (domain.DefinitionImport, error)
 	GetUserDefinition(ctx context.Context, userID, language, itemKey string) (domain.UserDefinition, error)

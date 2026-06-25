@@ -4,11 +4,13 @@ package domain
 // dataset, #41) and LLM-written entries are stored separately and may coexist for
 // the same (language, key).
 const (
-	DefinitionSourceUser       = "user" // per-user custom dictionary (not persisted in the shared cache)
-	DefinitionSourceWiktionary = "wiktionary"
-	DefinitionSourceLLM        = "llm"
-	DefinitionSourceGlossary   = "glossary" // per-story glossary (not persisted in the shared cache)
-	DefinitionSourceMetadata   = "metadata" // knowledge_items.metadata (not persisted in the shared cache)
+	DefinitionSourceUser        = "user"       // per-user custom dictionary (not persisted in the shared cache)
+	DefinitionSourceWiktionary  = "wiktionary" // English Wiktionary via kaikki/Wiktextract
+	DefinitionSourceNative      = "wiktionary-native"     // target-language Wiktionary (gloss in target language)
+	DefinitionSourceTranslated  = "wiktionary-translated" // LLM-translated from wiktionary-native
+	DefinitionSourceLLM         = "llm"
+	DefinitionSourceGlossary    = "glossary" // per-story glossary (not persisted in the shared cache)
+	DefinitionSourceMetadata    = "metadata" // knowledge_items.metadata (not persisted in the shared cache)
 )
 
 // UserDefinition is one learner-owned dictionary override. It layers over the

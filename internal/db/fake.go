@@ -536,6 +536,27 @@ func (r *FakeRepository) ListDefinitions(_ context.Context, language, itemKey st
 	return out, nil
 }
 
+func (r *FakeRepository) ListUntranslatedNativeDefinitions(_ context.Context, language string, limit int) ([]domain.Definition, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	translated := make(map[string]bool)
+	for _, d := range r.defs {
+		if d.Language == language && (d.Source == domain.DefinitionSourceWiktionary || d.Source == domain.DefinitionSourceTranslated) {
+			translated[d.ItemKey] = true
+		}
+	}
+	var out []domain.Definition
+	for _, d := range r.defs {
+		if d.Language == language && d.Source == domain.DefinitionSourceNative && !translated[d.ItemKey] {
+			out = append(out, d)
+			if limit > 0 && len(out) >= limit {
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
 func (r *FakeRepository) UpsertDefinitions(ctx context.Context, defs []domain.Definition) error {
 	for _, d := range defs {
 		if err := r.UpsertDefinition(ctx, d); err != nil {
