@@ -104,9 +104,18 @@ reader signals, #9 consumes them).
 - **Shared cache**: global `definitions` (source-split: Wiktionary + LLM coexist)
   and `breakdowns` (sentence by normalized-hash, word by key) tables — reused
   across users. Wiktionary is behind an interface, stubbed (kaikki ingestion #41).
-- **Deferred → sub-issues**: #40 per-user dictionary, #41 kaikki ingestion,
-  #42 structure/phrase caching, #43 per-inflection levels, #44 wire the
-  knowledge_predictions cache (selector still scores on the fly — always fresh).
+- **Deferred → sub-issues**: #41 kaikki ingestion, #42 structure/phrase caching,
+  #43 per-inflection levels, #44 wire the knowledge_predictions cache (selector
+  still scores on the fly — always fresh).
+
+## Done — reader per-user dictionary (#40)
+
+- Added a per-user dictionary layer (`user_definitions`) that stores
+  user/language/item-key custom glosses and notes separately from the global
+  shared definition cache.
+- Definition lookup now resolves user custom entries before glossary, metadata,
+  shared cache, Wiktionary, or LLM sources.
+- Added single-entry dictionary CRUD endpoints at `/api/v1/dictionary/entry`.
 
 ## Done — auth & users (#12)
 
