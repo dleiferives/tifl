@@ -96,11 +96,36 @@ the server over HTTPS. See [Authentication](authentication.md).
 | `provider` | `GATEWAY_PROVIDER` | `ollama` | upstream: `ollama`, `openrouter`, `openai`, `anthropic`, `opencode` |
 | `upstream_url` | `GATEWAY_UPSTREAM_URL` | per provider | upstream base URL (required for `opencode`) |
 | `api_key` | `GATEWAY_API_KEY` | — | upstream credential |
-| `model` | `GATEWAY_MODEL` | — | default model when a request omits one |
+| `model` | `GATEWAY_MODEL` | `openrouter/free` for OpenRouter; otherwise — | default model when a request omits one |
 | `agent` | `GATEWAY_AGENT` | `writer` | OpenCode only: agent to drive |
 
 `llm_base_url` (server) and `addr` (gateway) must point at each other — they
 default to the same `127.0.0.1:8001` so the two processes connect out of the box.
+
+### Secrets
+
+Provider API keys belong on the gateway only. For local development, put the key
+in your untracked `tifl.yaml`:
+
+```yaml
+gateway:
+  provider: openrouter
+  api_key: "<OPENROUTER_API_KEY>"
+  model: openrouter/free
+```
+
+For CI or hosted deployments, prefer environment variables:
+
+```bash
+GATEWAY_PROVIDER=openrouter \
+GATEWAY_API_KEY=... \
+GATEWAY_MODEL=openrouter/free \
+make run-gateway
+```
+
+The Go binaries do not load `.env` files automatically. `.env` is ignored so it
+is safe as a local shell-helper file if your own tooling sources it, but the
+first-class inputs are `tifl.yaml` and environment variables.
 
 ### Providers
 
@@ -111,6 +136,14 @@ default to the same `127.0.0.1:8001` so the two processes connect out of the box
 | `openai` | `https://api.openai.com/v1` | set `api_key` |
 | `anthropic` | `https://api.anthropic.com` | set `api_key`; native Messages API mapped to OpenAI |
 | `opencode` | — (required) | local [OpenCode](https://opencode.ai) server; credential-free |
+
+When `provider: openrouter`, the gateway uses OpenRouter's OpenAI-compatible
+base URL (`https://openrouter.ai/api/v1`), sends `api_key` as a bearer token, and
+forwards chat requests to `/chat/completions`. The Settings screen can save a
+per-user `llm_model` override; blank uses `gateway.model`. If `gateway.model` is
+blank and `provider` is `openrouter`, the gateway default is `openrouter/free`.
+The model field is an OpenRouter/OpenAI-compatible id such as `openai/gpt-4`, a
+`:free` variant, or a latest alias like `~openai/gpt-latest`.
 
 For `opencode`, `model` is a `providerID/modelID` pair (e.g.
 `opencode/nemotron-3-ultra-free`) and the gateway drives the `agent` (the repo

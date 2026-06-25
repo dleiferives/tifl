@@ -288,7 +288,7 @@ func (h *Handler) getDefinition(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("key query parameter is required"))
 		return
 	}
-	d, err := h.defs.Resolve(r.Context(), h.currentUserID(r), storyID, key)
+	d, err := h.defs.Resolve(h.llmCallContext(r, ""), h.currentUserID(r), storyID, key)
 	if err != nil {
 		h.writeReaderError(w, err)
 		return
@@ -412,7 +412,7 @@ func (h *Handler) postSentenceBreakdown(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
 		return
 	}
-	b, err := h.defs.SentenceBreakdown(r.Context(), h.currentUserID(r), r.PathValue("id"), req.Position)
+	b, err := h.defs.SentenceBreakdown(h.llmCallContext(r, ""), h.currentUserID(r), r.PathValue("id"), req.Position)
 	if err != nil {
 		h.writeReaderError(w, err)
 		return
@@ -436,7 +436,7 @@ func (h *Handler) postWordBreakdown(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("key is required"))
 		return
 	}
-	b, err := h.defs.WordBreakdown(r.Context(), h.currentUserID(r), r.PathValue("id"), req.Key)
+	b, err := h.defs.WordBreakdown(h.llmCallContext(r, ""), h.currentUserID(r), r.PathValue("id"), req.Key)
 	if err != nil {
 		h.writeReaderError(w, err)
 		return

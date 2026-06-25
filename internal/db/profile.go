@@ -57,6 +57,9 @@ func applyProfileSettings(profile *domain.UserProfile, settings map[string]any) 
 	if s, ok := stringSetting(settings, "theme"); ok {
 		profile.Theme = s
 	}
+	if s, ok := stringSetting(settings, "llm_model"); ok {
+		profile.LLMModel = s
+	}
 	if prefs, ok := objectMap(settings["preferences"]); ok {
 		profile.Preferences = cloneJSONMap(prefs)
 	}
@@ -74,6 +77,9 @@ func applyProfilePatch(profile domain.UserProfile, patch domain.UserProfilePatch
 	}
 	if patch.Theme != nil {
 		profile.Theme = *patch.Theme
+	}
+	if patch.LLMModel != nil {
+		profile.LLMModel = *patch.LLMModel
 	}
 	if patch.Preferences != nil {
 		if profile.Preferences == nil {
@@ -104,6 +110,7 @@ func settingsWithProfile(settings map[string]any, profile domain.UserProfile) ma
 		"level":           profile.Level,
 		"ui_language":     profile.UILanguage,
 		"theme":           profile.Theme,
+		"llm_model":       profile.LLMModel,
 		"preferences":     prefs,
 	}
 	return out
@@ -121,6 +128,9 @@ func validateProfile(profile domain.UserProfile) error {
 	}
 	if !domain.ValidThemeID(profile.Theme) {
 		return invalidProfile("theme %q is not a valid theme id", profile.Theme)
+	}
+	if !domain.ValidLLMModel(profile.LLMModel) {
+		return invalidProfile("llm_model %q is not a valid model id", profile.LLMModel)
 	}
 	return nil
 }

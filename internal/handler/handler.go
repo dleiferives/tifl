@@ -33,6 +33,7 @@ type Handler struct {
 	skillXP      *skillassoc.XPService           // task grade -> user_skill_xp + audit logs (#70/#71)
 	skillVerify  *skillassoc.VerificationService // background tier verification + auto-approve (#49)
 	llmEnabled   bool                            // false when no LLM client: LLM-graded tasks return 503
+	models       llm.ModelLister                 // nil when the gateway cannot list upstream models
 	frontendDir  string
 	auth         *authn.Service
 	cookieSecure bool
@@ -57,6 +58,7 @@ func currentAPIRoutes() []apiRoute {
 	return []apiRoute{
 		{Method: http.MethodGet, Path: "/api/v1/ping", Handler: (*Handler).ping, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/languages", Handler: (*Handler).listLanguages, RequireUser: true},
+		{Method: http.MethodGet, Path: "/api/v1/llm/models", Handler: (*Handler).listLLMModels, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/profile", Handler: (*Handler).getProfile, RequireUser: true},
 		{Method: http.MethodPatch, Path: "/api/v1/profile", Handler: (*Handler).patchProfile, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/skills", Handler: (*Handler).listSkills, RequireUser: true},
@@ -116,6 +118,10 @@ func New(repo db.Repository, broker *story.Broker, client llm.Client, taskTypes 
 		}
 		return l.Normalize
 	}))
+	var modelLister llm.ModelLister
+	if lister, ok := client.(llm.ModelLister); ok {
+		modelLister = lister
+	}
 	h := &Handler{
 		repo:        repo,
 		langs:       langs,
@@ -129,6 +135,7 @@ func New(repo db.Repository, broker *story.Broker, client llm.Client, taskTypes 
 		skillXP:     skillXP,
 		skillVerify: skillassoc.NewVerificationService(repo, client),
 		llmEnabled:  client != nil,
+		models:      modelLister,
 		frontendDir: frontendDir,
 	}
 	for _, opt := range opts {

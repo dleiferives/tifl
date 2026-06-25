@@ -11,6 +11,7 @@ type UserProfile struct {
 	Level          string
 	UILanguage     string
 	Theme          string
+	LLMModel       string
 	Preferences    map[string]any
 }
 
@@ -22,6 +23,7 @@ type UserProfilePatch struct {
 	Level          *string
 	UILanguage     *string
 	Theme          *string
+	LLMModel       *string
 	Preferences    map[string]any
 }
 
@@ -88,6 +90,25 @@ func ValidThemeID(s string) bool {
 	}
 	for _, r := range s {
 		if asciiAlphaNum(r) || r == '_' || r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// ValidLLMModel accepts provider model ids such as "openai/gpt-4.1-mini",
+// "meta-llama/llama-3.1-8b-instruct:free", or "~openai/gpt-latest". Empty
+// means "use the gateway default".
+func ValidLLMModel(s string) bool {
+	if s == "" {
+		return true
+	}
+	if len(s) > 160 {
+		return false
+	}
+	for _, r := range s {
+		if asciiAlphaNum(r) || r == '/' || r == '-' || r == '_' || r == '.' || r == ':' || r == '~' {
 			continue
 		}
 		return false

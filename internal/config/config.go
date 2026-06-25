@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -127,12 +128,17 @@ func LoadGateway(path string) (GatewayConfig, error) {
 		return GatewayConfig{}, err
 	}
 	g := f.Gateway
+	provider := pick("GATEWAY_PROVIDER", g.Provider, "")
+	model := pick("GATEWAY_MODEL", g.Model, "")
+	if strings.EqualFold(strings.TrimSpace(provider), "openrouter") && model == "" {
+		model = "openrouter/free"
+	}
 	return GatewayConfig{
 		Addr:        pick("GATEWAY_ADDR", g.Addr, "127.0.0.1:8001"),
-		Provider:    pick("GATEWAY_PROVIDER", g.Provider, ""),
+		Provider:    provider,
 		UpstreamURL: pick("GATEWAY_UPSTREAM_URL", g.UpstreamURL, ""),
 		APIKey:      pick("GATEWAY_API_KEY", g.APIKey, ""),
-		Model:       pick("GATEWAY_MODEL", g.Model, ""),
+		Model:       model,
 		Agent:       pick("GATEWAY_AGENT", g.Agent, ""),
 	}, nil
 }

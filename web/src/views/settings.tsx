@@ -1,7 +1,8 @@
-import { createSignal, For, onMount, Show } from "solid-js";
+import { createEffect, createSignal, For, onMount, Show } from "solid-js";
 import {
   APIError,
   listLanguages,
+  listLLMModels,
   patchProfile,
   type APIRequest,
   type APISchema,
@@ -10,6 +11,7 @@ import { appStore } from "../store";
 import { applyTheme, normalizeTheme, THEMES, type ThemeID } from "../theme";
 
 type Language = APISchema<"Language">;
+type LLMModel = APISchema<"LLMModel">;
 type ProfilePatch = APIRequest<"patchProfile">;
 
 const UI_LANGUAGES = [
@@ -34,15 +36,34 @@ const KNOWLEDGE_LEVELS = [
 export function SettingsView() {
   const [languages, setLanguages] = createSignal<Language[]>([]);
   const [languagesError, setLanguagesError] = createSignal("");
+  const [models, setModels] = createSignal<LLMModel[]>([]);
+  const [modelsError, setModelsError] = createSignal("");
+  const [modelDraft, setModelDraft] = createSignal("");
   const [saving, setSaving] = createSignal(false);
 
-  onMount(async () => {
+  createEffect(() => setModelDraft(appStore.profile()?.llm_model || ""));
+
+  onMount(() => {
+    void loadLanguages();
+    void loadModels();
+  });
+
+  const loadLanguages = async () => {
     try {
       setLanguages((await listLanguages()).filter((language) => language.enabled));
     } catch {
       setLanguagesError("Available learning languages could not be loaded.");
     }
-  });
+  };
+
+  const loadModels = async () => {
+    try {
+      setModels((await listLLMModels()).models);
+      setModelsError("");
+    } catch {
+      setModelsError("Model list could not be loaded. You can still enter a model id.");
+    }
+  };
 
   const save = async (patch: ProfilePatch, rollback?: () => void) => {
     setSaving(true);
@@ -63,6 +84,25 @@ export function SettingsView() {
     const previous = normalizeTheme(appStore.profile()?.theme);
     applyTheme(next);
     void save({ theme: next }, () => applyTheme(previous));
+  };
+
+  const commitModel = () => {
+    const next = modelDraft().trim();
+    const previous = appStore.profile()?.llm_model || "";
+    setModelDraft(next);
+    if (next === previous) {
+      return;
+    }
+    void save({ llm_model: next }, () => setModelDraft(previous));
+  };
+
+  const clearModel = () => {
+    const previous = appStore.profile()?.llm_model || "";
+    setModelDraft("");
+    if (previous === "") {
+      return;
+    }
+    void save({ llm_model: "" }, () => setModelDraft(previous));
   };
 
   return (
@@ -155,6 +195,41 @@ export function SettingsView() {
             </select>
           </label>
           <p class="field-help">Used for interface text and story definitions as localization support expands.</p>
+        </fieldset>
+
+        <fieldset class="settings-group" disabled={saving()}>
+          <legend>Generation</legend>
+          <label class="field">
+            <span>Model</span>
+            <input
+              type="text"
+              list="llm-model-options"
+              value={modelDraft()}
+              placeholder="Gateway default"
+              autocomplete="off"
+              onInput={(event) => setModelDraft(event.currentTarget.value)}
+              onBlur={commitModel}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.currentTarget.blur();
+                }
+              }}
+            />
+          </label>
+          <datalist id="llm-model-options">
+            <For each={models()}>
+              {(model) => <option value={model.id}>{model.name || model.id}</option>}
+            </For>
+          </datalist>
+          <div class="settings-actions">
+            <button class="secondary-button" type="button" disabled={saving() || !modelDraft()} onClick={clearModel}>
+              Use default
+            </button>
+          </div>
+          <Show when={modelsError()}>
+            <p class="field-error" role="status">{modelsError()}</p>
+          </Show>
+          <p class="field-help">Blank uses the gateway default.</p>
         </fieldset>
       </div>
     </section>

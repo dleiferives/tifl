@@ -87,6 +87,11 @@ func (s *VerificationService) runLLMVerification(ctx context.Context, userID str
 		Evidence:    evidence,
 	}
 	lc := domain.LearnerCtx{UserID: userID, Language: skill.Language}
+	meta := llm.CallMeta{UserID: userID}
+	if profile, err := s.repo.GetUserProfile(ctx, userID); err == nil {
+		meta.Model = profile.LLMModel
+	}
+	ctx = llm.WithCallMeta(ctx, meta)
 
 	result, err := llm.CompleteJSON[llm.SkillTierVerificationResult](
 		ctx, s.client, builder, lc,
