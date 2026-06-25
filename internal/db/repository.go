@@ -167,6 +167,8 @@ type Repository interface {
 	// on a cache miss.
 	ListDefinitions(ctx context.Context, language, itemKey string) ([]domain.Definition, error)
 	UpsertDefinition(ctx context.Context, d domain.Definition) error
+	UpsertDefinitionImport(ctx context.Context, imp domain.DefinitionImport) error
+	GetDefinitionImport(ctx context.Context, importID string) (domain.DefinitionImport, error)
 	GetBreakdown(ctx context.Context, scope domain.BreakdownScope, language, cacheKey string) (domain.Breakdown, error)
 	UpsertBreakdown(ctx context.Context, b domain.Breakdown) error
 }

@@ -86,10 +86,32 @@ Every key can still be overridden by its env var (e.g. `GATEWAY_MODEL`) for CI o
 one-off runs — precedence is defaults < `tifl.yaml` < environment. Providers:
 `ollama` (default), `openrouter`, `openai`, `anthropic`, `opencode`.
 
+### Import Wiktionary definitions
+
+Reader definitions can be preloaded from the Wiktextract/kaikki.org JSONL dumps
+instead of waiting for live fallback lookups. Download the language dump from
+[kaikki.org raw data](https://kaikki.org/dictionary/rawdata.html), then run:
+
+```bash
+make import-kaikki ARGS="-input el-extract.jsonl.gz -language el -dataset-version 2026-06-01"
+```
+
+The importer reads `tifl.yaml` like the server, runs migrations, and writes
+`source = "wiktionary"` rows into the shared definition cache. It supports plain
+`.jsonl` and `.jsonl.gz`. For local SQLite work, override the database directly:
+
+```bash
+make import-kaikki ARGS="-db data/tifl.db -input el-extract.jsonl.gz -language el"
+```
+
+Each run is recorded in `definition_imports` with the source path, optional
+dataset version, status, and row counts. Re-importing a newer dump refreshes the
+Wiktionary-source rows while leaving LLM-source definitions separate.
+
 ## Develop
 
 ```bash
-make build   # both Go binaries -> bin/
+make build   # Go binaries -> bin/
 make test    # go test ./...
 make vet     # go vet ./...
 make fmt     # gofmt -w
