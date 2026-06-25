@@ -76,3 +76,31 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req ChatRequest) (ChatRes
 	}
 	return out, nil
 }
+
+func (p *OpenAIProvider) ListModels(ctx context.Context) (json.RawMessage, *Error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+"/models", nil)
+	if err != nil {
+		return nil, &Error{Status: http.StatusInternalServerError, Err: err}
+	}
+	httpReq.Header.Set("Accept", "application/json")
+	if p.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	}
+
+	resp, err := p.http.Do(httpReq)
+	if err != nil {
+		status, transient := statusForErr(err)
+		return nil, &Error{Status: status, Transient: transient, Err: fmt.Errorf("%s: %w", p.name, err)}
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode >= 400 {
+		return nil, &Error{
+			Status:    resp.StatusCode,
+			Transient: isTransientStatus(resp.StatusCode),
+			Err:       fmt.Errorf("%s upstream %d: %s", p.name, resp.StatusCode, strings.TrimSpace(string(raw))),
+		}
+	}
+	return json.RawMessage(raw), nil
+}

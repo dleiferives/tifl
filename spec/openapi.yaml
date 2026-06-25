@@ -47,6 +47,33 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "500":
           $ref: "#/components/responses/InternalError"
+  /llm/models:
+    get:
+      summary: List available LLM models
+      description: >
+        Returns safe model metadata from the configured LLM gateway. Provider
+        credentials stay on the gateway process and are never exposed to the
+        client.
+      operationId: listLLMModels
+      responses:
+        "200":
+          description: Available gateway models
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  models:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/LLMModel"
+                required: [models]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /auth/register:
     post:
       security: []
@@ -922,11 +949,14 @@ components:
         theme:
           type: string
           description: "theme id, e.g. 'default' or 'high-contrast'"
+        llm_model:
+          type: string
+          description: "model id requested for LLM calls; blank uses the gateway default"
         preferences:
           type: object
           additionalProperties: true
           description: "arbitrary client-owned preferences; product-critical fields remain top-level"
-      required: [user_id, active_language, level, ui_language, theme, preferences]
+      required: [user_id, active_language, level, ui_language, theme, llm_model, preferences]
     ProfilePatch:
       type: object
       additionalProperties: false
@@ -944,10 +974,29 @@ components:
         theme:
           type: string
           description: "letters, numbers, '_' and '-' only"
+        llm_model:
+          type: string
+          description: "OpenAI/OpenRouter-compatible model id; empty string clears to the gateway default"
         preferences:
           type: object
           additionalProperties: true
           description: "shallow-merged; null values delete keys"
+    LLMModel:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Provider model id.
+        name:
+          type: string
+          description: Display name when provided by the upstream.
+        description:
+          type: string
+          description: Upstream model description.
+        context_length:
+          type: integer
+          description: Maximum context length when provided by the upstream.
+      required: [id]
     SkillTree:
       type: object
       properties:

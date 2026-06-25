@@ -280,6 +280,7 @@ select {
 }
 
 .auth-form input,
+.field input,
 .field select {
   width: 100%;
   padding: 0.65rem 0.75rem;
@@ -290,6 +291,7 @@ select {
 }
 
 .auth-form input:focus,
+.field input:focus,
 .field select:focus {
   border-color: var(--accent);
   outline: 3px solid var(--focus-ring);
@@ -619,6 +621,12 @@ select {
 
 .settings-group:disabled {
   opacity: 0.72;
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
 }
 
 .knowledge-preview {

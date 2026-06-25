@@ -117,6 +117,26 @@ func TestLoadGateway_EnvOverridesFile(t *testing.T) {
 	}
 }
 
+func TestLoadGateway_OpenRouterDefaultModel(t *testing.T) {
+	path := writeCfg(t, "gateway:\n  provider: openrouter\n")
+	g, err := config.LoadGateway(path)
+	if err != nil {
+		t.Fatalf("LoadGateway: %v", err)
+	}
+	if g.Model != "openrouter/free" {
+		t.Fatalf("openrouter default model = %q", g.Model)
+	}
+
+	t.Setenv("GATEWAY_MODEL", "google/gemma-4-31b-it:free")
+	g, err = config.LoadGateway(path)
+	if err != nil {
+		t.Fatalf("LoadGateway with env: %v", err)
+	}
+	if g.Model != "google/gemma-4-31b-it:free" {
+		t.Fatalf("env model should override openrouter default: %q", g.Model)
+	}
+}
+
 func TestLoad_MalformedFileErrors(t *testing.T) {
 	path := writeCfg(t, "server: [this is not a mapping")
 	if _, err := config.Load(path); err == nil {

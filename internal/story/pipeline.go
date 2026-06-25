@@ -128,7 +128,7 @@ func (p *Pipeline) Generate(ctx context.Context, sessionID string, emit emitter)
 	if err != nil {
 		return err
 	}
-	ctx = llm.WithCallMeta(ctx, llm.CallMeta{SessionID: sess.SessionID, UserID: sess.UserID})
+	ctx = p.callContext(ctx, sess)
 
 	if err := p.deps.Repo.UpdateSessionStatus(ctx, sess.SessionID, domain.StatusGenerating); err != nil {
 		return err
@@ -222,7 +222,7 @@ func (p *Pipeline) Retry(ctx context.Context, sessionID string, emit emitter) er
 	if err != nil {
 		return err
 	}
-	ctx = llm.WithCallMeta(ctx, llm.CallMeta{SessionID: sess.SessionID, UserID: sess.UserID})
+	ctx = p.callContext(ctx, sess)
 
 	stages := p.stageIndex(ctx, sessionID)
 	sourceText, contentDone := p.completedContent(ctx, sess, stages)
@@ -262,6 +262,14 @@ func (p *Pipeline) Retry(ctx context.Context, sessionID string, emit emitter) er
 		final = domain.StatusFailed
 	}
 	return p.markSession(ctx, sessionID, final)
+}
+
+func (p *Pipeline) callContext(ctx context.Context, sess domain.Session) context.Context {
+	meta := llm.CallMeta{SessionID: sess.SessionID, UserID: sess.UserID}
+	if profile, err := p.deps.Repo.GetUserProfile(ctx, sess.UserID); err == nil {
+		meta.Model = profile.LLMModel
+	}
+	return llm.WithCallMeta(ctx, meta)
 }
 
 // rebuildTaskCtx reconstructs the minimal LearnerCtx needed to regenerate tasks

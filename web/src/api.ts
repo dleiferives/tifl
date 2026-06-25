@@ -80,6 +80,10 @@ export async function listLanguages(): Promise<APIResponse<"listLanguages", 200>
   return apiFetch<APIResponse<"listLanguages", 200>>("/languages");
 }
 
+export async function listLLMModels(): Promise<APIResponse<"listLLMModels", 200>> {
+  return apiFetch<APIResponse<"listLLMModels", 200>>("/llm/models");
+}
+
 export async function register(request: APIRequest<"register">): Promise<APIResponse<"register", 201>> {
   return apiFetch<APIResponse<"register", 201>>("/auth/register", jsonRequest("POST", request), false);
 }

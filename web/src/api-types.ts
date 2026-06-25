@@ -38,6 +38,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/llm/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List available LLM models
+         * @description Returns safe model metadata from the configured LLM gateway. Provider credentials stay on the gateway process and are never exposed to the client.
+         */
+        get: operations["listLLMModels"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/register": {
         parameters: {
             query?: never;
@@ -598,6 +618,8 @@ export interface components {
             ui_language: string;
             /** @description theme id, e.g. 'default' or 'high-contrast' */
             theme: string;
+            /** @description model id requested for LLM calls; blank uses the gateway default */
+            llm_model: string;
             /** @description arbitrary client-owned preferences; product-critical fields remain top-level */
             preferences: {
                 [key: string]: unknown;
@@ -615,10 +637,22 @@ export interface components {
             ui_language?: string;
             /** @description letters, numbers, '_' and '-' only */
             theme?: string;
+            /** @description OpenAI/OpenRouter-compatible model id; empty string clears to the gateway default */
+            llm_model?: string;
             /** @description shallow-merged; null values delete keys */
             preferences?: {
                 [key: string]: unknown;
             };
+        };
+        LLMModel: {
+            /** @description Provider model id. */
+            id: string;
+            /** @description Display name when provided by the upstream. */
+            name?: string;
+            /** @description Upstream model description. */
+            description?: string;
+            /** @description Maximum context length when provided by the upstream. */
+            context_length?: number;
         };
         SkillTree: {
             /** @description Language code the skill tree is scoped to. */
@@ -1098,6 +1132,31 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             500: components["responses"]["InternalError"];
+        };
+    };
+    listLLMModels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Available gateway models */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        models: components["schemas"]["LLMModel"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     register: {

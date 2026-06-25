@@ -69,6 +69,36 @@ func TestOpenAIProvider_Passthrough(t *testing.T) {
 	}
 }
 
+func TestOpenAIProvider_ListModelsPassthrough(t *testing.T) {
+	var gotPath, gotAuth string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[{"id":"openai/gpt-4","name":"GPT-4"}]}`)
+	}))
+	defer up.Close()
+
+	p := gateway.NewOpenAIProvider("openrouter", up.URL, "sk-or", nil)
+	raw, gerr := p.ListModels(context.Background())
+	if gerr != nil {
+		t.Fatalf("ListModels: %v", gerr)
+	}
+	if gotPath != "/models" {
+		t.Fatalf("unexpected upstream path %q", gotPath)
+	}
+	if gotAuth != "Bearer sk-or" {
+		t.Fatalf("missing/wrong auth header: %q", gotAuth)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("invalid raw models JSON: %v", err)
+	}
+	if data, _ := out["data"].([]any); len(data) != 1 {
+		t.Fatalf("models response not relayed: %s", string(raw))
+	}
+}
+
 func TestDefaultModelApplied(t *testing.T) {
 	var gotModel string
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

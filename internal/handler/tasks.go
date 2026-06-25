@@ -165,6 +165,7 @@ func (h *Handler) submitTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, errors.New("LLM grading is not configured (no LLM gateway)"))
 		return
 	}
+	gradeCtx := r.Context()
 
 	gr := tasks.GradeRequest{
 		Type:     tt,
@@ -177,9 +178,10 @@ func (h *Handler) submitTask(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
+		gradeCtx = h.llmCallContext(r, task.SessionID)
 	}
 
-	grade, gradedBy, err := h.grader.Grade(r.Context(), gr)
+	grade, gradedBy, err := h.grader.Grade(gradeCtx, gr)
 	if err != nil {
 		// A grading failure on the LLM path is an upstream problem (the gateway or
 		// model), not a client error.

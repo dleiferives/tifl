@@ -34,3 +34,10 @@ gateway:
   api_key: ""                     # upstream credential (not needed for opencode/ollama)
   model: opencode/nemotron-3-ultra-free  # default model ("providerID/modelID" for opencode)
   agent: writer                   # opencode only: agent to drive        (default writer)
+
+# OpenRouter example:
+# gateway:
+#   provider: openrouter
+#   upstream_url: ""              # blank = https://openrouter.ai/api/v1
+#   api_key: ""                   # put the real key in local tifl.yaml or GATEWAY_API_KEY, never in git
+#   model: openrouter/free        # OpenRouter default when omitted; any slug from https://openrouter.ai/models works

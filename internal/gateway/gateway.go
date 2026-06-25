@@ -79,6 +79,13 @@ type Provider interface {
 	Complete(ctx context.Context, req ChatRequest) (ChatResponse, *Error)
 }
 
+// ModelListProvider is implemented by upstreams that expose an OpenAI-shaped
+// /models endpoint. The raw JSON is relayed so provider-specific model metadata
+// is preserved for callers that understand it.
+type ModelListProvider interface {
+	ListModels(ctx context.Context) (json.RawMessage, *Error)
+}
+
 // Config tunes the gateway handler.
 type Config struct {
 	DefaultModel string        // applied when a request omits "model"
@@ -111,7 +118,27 @@ func (h *Handler) Register(mux *http.ServeMux) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
+	mux.HandleFunc("GET /v1/models", h.models)
 	mux.HandleFunc("POST /v1/chat/completions", h.completions)
+}
+
+func (h *Handler) models(w http.ResponseWriter, r *http.Request) {
+	lister, ok := h.provider.(ModelListProvider)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "unsupported_endpoint", "provider does not support model listing")
+		return
+	}
+	raw, gerr := lister.ListModels(r.Context())
+	if gerr != nil {
+		status := gerr.Status
+		if status == 0 {
+			status = http.StatusBadGateway
+		}
+		writeError(w, status, "upstream_error", gerr.Err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(raw)
 }
 
 func (h *Handler) completions(w http.ResponseWriter, r *http.Request) {

@@ -56,11 +56,13 @@ func testUserProfile(t *testing.T, repo db.Repository) {
 	level := "intermediate"
 	ui := "es"
 	theme := "high-contrast"
+	model := "meta-llama/llama-3.1-8b-instruct:free"
 	profile, err = repo.UpdateUserProfile(ctx, user.UserID, domain.UserProfilePatch{
 		ActiveLanguage: &active,
 		Level:          &level,
 		UILanguage:     &ui,
 		Theme:          &theme,
+		LLMModel:       &model,
 		Preferences: map[string]any{
 			"density": "compact",
 			"reader":  map[string]any{"showGlosses": true},
@@ -68,7 +70,8 @@ func testUserProfile(t *testing.T, repo db.Repository) {
 	})
 	must(t, err)
 	if profile.ActiveLanguage != "zz" || profile.Level != "intermediate" ||
-		profile.UILanguage != "es" || profile.Theme != "high-contrast" {
+		profile.UILanguage != "es" || profile.Theme != "high-contrast" ||
+		profile.LLMModel != "meta-llama/llama-3.1-8b-instruct:free" {
 		t.Fatalf("updated profile mismatch: %+v", profile)
 	}
 	if profile.Preferences["density"] != "compact" {
@@ -77,7 +80,8 @@ func testUserProfile(t *testing.T, repo db.Repository) {
 
 	got, err := repo.GetUserProfile(ctx, user.UserID)
 	must(t, err)
-	if got.Theme != "high-contrast" || got.Preferences["density"] != "compact" {
+	if got.Theme != "high-contrast" || got.LLMModel != "meta-llama/llama-3.1-8b-instruct:free" ||
+		got.Preferences["density"] != "compact" {
 		t.Fatalf("profile did not persist through users.settings: %+v", got)
 	}
 
@@ -110,6 +114,10 @@ func testUserProfile(t *testing.T, repo db.Repository) {
 	badTheme := "bad theme"
 	if _, err := repo.UpdateUserProfile(ctx, user.UserID, domain.UserProfilePatch{Theme: &badTheme}); !errors.Is(err, db.ErrInvalidProfile) {
 		t.Fatalf("invalid theme error = %v, want ErrInvalidProfile", err)
+	}
+	badModel := "bad model"
+	if _, err := repo.UpdateUserProfile(ctx, user.UserID, domain.UserProfilePatch{LLMModel: &badModel}); !errors.Is(err, db.ErrInvalidProfile) {
+		t.Fatalf("invalid llm model error = %v, want ErrInvalidProfile", err)
 	}
 	if _, err := repo.GetUserProfile(ctx, "missing"); !errors.Is(err, db.ErrNotFound) {
 		t.Fatalf("missing profile error = %v, want ErrNotFound", err)

@@ -16,6 +16,7 @@ type profileResponse struct {
 	Level          string         `json:"level"`
 	UILanguage     string         `json:"ui_language"`
 	Theme          string         `json:"theme"`
+	LLMModel       string         `json:"llm_model"`
 	Preferences    map[string]any `json:"preferences"`
 }
 
@@ -36,6 +37,7 @@ func TestProfileLocalDefaultsPatchAndReload(t *testing.T) {
 		"level":"intermediate",
 		"ui_language":"es",
 		"theme":"high-contrast",
+		"llm_model":"openai/gpt-4.1-mini",
 		"preferences":{"density":"compact","sound":true}
 	}`)
 	req, _ := http.NewRequest(http.MethodPatch, srv.URL+"/api/v1/profile", bytes.NewReader(body))
@@ -51,7 +53,7 @@ func TestProfileLocalDefaultsPatchAndReload(t *testing.T) {
 		t.Fatal(err)
 	}
 	if profile.ActiveLanguage != "yy" || profile.Level != "intermediate" || profile.UILanguage != "es" ||
-		profile.Theme != "high-contrast" || profile.Preferences["density"] != "compact" ||
+		profile.Theme != "high-contrast" || profile.LLMModel != "openai/gpt-4.1-mini" || profile.Preferences["density"] != "compact" ||
 		profile.Preferences["sound"] != true {
 		t.Fatalf("patched profile mismatch: %+v", profile)
 	}
@@ -60,8 +62,22 @@ func TestProfileLocalDefaultsPatchAndReload(t *testing.T) {
 	// storage, not just the PATCH response body.
 	profile = getProfile(t, srv.URL, "")
 	if profile.ActiveLanguage != "yy" || profile.Level != "intermediate" || profile.Theme != "high-contrast" ||
-		profile.Preferences["density"] != "compact" {
+		profile.LLMModel != "openai/gpt-4.1-mini" || profile.Preferences["density"] != "compact" {
 		t.Fatalf("profile did not persist: %+v", profile)
+	}
+
+	req, _ = http.NewRequest(http.MethodPatch, srv.URL+"/api/v1/profile", bytes.NewReader([]byte(`{"llm_model":""}`)))
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("clear llm_model = %d", resp.StatusCode)
+	}
+	profile = getProfile(t, srv.URL, "")
+	if profile.LLMModel != "" {
+		t.Fatalf("llm_model should clear to gateway default: %+v", profile)
 	}
 }
 
@@ -92,6 +108,7 @@ func TestProfileRejectsInvalidPatch(t *testing.T) {
 	tests := []string{
 		`{"level":"expert"}`,
 		`{"theme":"bad theme"}`,
+		`{"llm_model":"bad model"}`,
 		`{"active_language":"zz"}`,
 		`{"preferences":[]}`,
 		`{"unknown":true}`,

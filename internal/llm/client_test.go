@@ -131,6 +131,52 @@ func TestComplete_RetriesTransientThenSucceeds(t *testing.T) {
 	}
 }
 
+func TestComplete_ModelOverrideFromCallMeta(t *testing.T) {
+	var got chatReq
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &got)
+		_, _ = io.WriteString(w, okResponse("ok", 1, 1))
+	}))
+	defer srv.Close()
+
+	repo := db.NewFake()
+	c := llm.New(srv.URL, llm.WithModel("gateway-default"), llm.WithRecorder(repo))
+	ctx := llm.WithCallMeta(context.Background(), llm.CallMeta{Model: "openai/gpt-4.1-mini"})
+	if _, err := c.Complete(ctx, "story_generator", llm.LLMRequest{User: "x"}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if got.Model != "openai/gpt-4.1-mini" {
+		t.Fatalf("model override not sent: %+v", got)
+	}
+	if calls := repo.LLMCalls(); len(calls) != 1 || calls[0].Model != "stub-model" {
+		t.Fatalf("response model should still be logged when present, got %+v", calls)
+	}
+}
+
+func TestListModels(t *testing.T) {
+	var gotPath, gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[{"id":"openai/gpt-4","name":"GPT-4","description":"Flagship","context_length":8192},{"id":""}]}`)
+	}))
+	defer srv.Close()
+
+	c := llm.New(srv.URL, llm.WithAPIKey("gateway-token"))
+	models, err := c.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if gotPath != "/v1/models" || gotAuth != "Bearer gateway-token" {
+		t.Fatalf("bad request path/auth: path=%q auth=%q", gotPath, gotAuth)
+	}
+	if len(models) != 1 || models[0].ID != "openai/gpt-4" || models[0].Name != "GPT-4" || models[0].ContextLength != 8192 {
+		t.Fatalf("models not parsed: %+v", models)
+	}
+}
+
 func TestComplete_PermanentErrorNoRetry(t *testing.T) {
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

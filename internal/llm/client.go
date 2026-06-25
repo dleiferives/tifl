@@ -29,6 +29,7 @@ type CallMeta struct {
 	SessionID     string
 	UserID        string
 	PromptVersion string
+	Model         string
 }
 
 type metaKey struct{}
@@ -101,7 +102,8 @@ func New(baseURL string, opts ...Option) *HTTPClient {
 // fail fast. Every attempt's outcome is recorded to llm_calls exactly once.
 func (c *HTTPClient) Complete(ctx context.Context, kind string, req LLMRequest) (LLMResponse, error) {
 	meta := callMetaFrom(ctx)
-	body, err := json.Marshal(c.wireRequest(req))
+	model := c.modelFor(meta)
+	body, err := json.Marshal(c.wireRequest(req, model))
 	if err != nil {
 		return LLMResponse{}, fmt.Errorf("llm: marshal request: %w", err)
 	}
@@ -111,7 +113,7 @@ func (c *HTTPClient) Complete(ctx context.Context, kind string, req LLMRequest) 
 	latency := int(time.Since(start).Milliseconds())
 
 	if err != nil {
-		c.record(ctx, kind, meta, c.model, nil, nil, latency, status, err)
+		c.record(ctx, kind, meta, model, nil, nil, latency, status, err)
 		return LLMResponse{}, err
 	}
 
@@ -120,12 +122,50 @@ func (c *HTTPClient) Complete(ctx context.Context, kind string, req LLMRequest) 
 		InputTokens:  resp.Usage.PromptTokens,
 		OutputTokens: resp.Usage.CompletionTokens,
 	}
-	model := resp.Model
-	if model == "" {
-		model = c.model
+	recordModel := resp.Model
+	if recordModel == "" {
+		recordModel = model
 	}
-	c.record(ctx, kind, meta, model, &out.InputTokens, &out.OutputTokens, latency, "success", nil)
+	c.record(ctx, kind, meta, recordModel, &out.InputTokens, &out.OutputTokens, latency, "success", nil)
 	return out, nil
+}
+
+// ListModels asks the configured gateway for upstream model metadata. The
+// gateway is still the only process that talks to providers with provider keys.
+func (c *HTTPClient) ListModels(ctx context.Context) ([]ModelInfo, error) {
+	raw, err := c.fetchModels(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var parsed struct {
+		Data []struct {
+			ID            string `json:"id"`
+			Name          string `json:"name"`
+			Description   string `json:"description"`
+			ContextLength int    `json:"context_length"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("llm: decode models response: %w", err)
+	}
+	models := make([]ModelInfo, 0, len(parsed.Data))
+	for _, m := range parsed.Data {
+		id := strings.TrimSpace(m.ID)
+		if id == "" {
+			continue
+		}
+		name := strings.TrimSpace(m.Name)
+		if name == "" {
+			name = id
+		}
+		models = append(models, ModelInfo{
+			ID:            id,
+			Name:          name,
+			Description:   strings.TrimSpace(m.Description),
+			ContextLength: m.ContextLength,
+		})
+	}
+	return models, nil
 }
 
 // send POSTs the body to the gateway, retrying transient failures. On the final
@@ -178,6 +218,45 @@ func (c *HTTPClient) send(ctx context.Context, body []byte) (chatResponse, strin
 	return chatResponse{}, lastStatus, lastErr
 }
 
+func (c *HTTPClient) fetchModels(ctx context.Context) ([]byte, error) {
+	var lastErr error
+	for attempt := 0; attempt <= c.maxRetries; attempt++ {
+		if attempt > 0 {
+			if err := sleep(ctx, backoff(c.baseDelay, attempt)); err != nil {
+				return nil, err
+			}
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/models", nil)
+		if err != nil {
+			return nil, fmt.Errorf("llm: build models request: %w", err)
+		}
+		req.Header.Set("Accept", "application/json")
+		if c.apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		}
+
+		httpResp, err := c.http.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("llm: gateway models request: %w", err)
+			continue
+		}
+
+		raw, _ := io.ReadAll(httpResp.Body)
+		httpResp.Body.Close()
+
+		if httpResp.StatusCode >= 400 {
+			lastErr = fmt.Errorf("llm: gateway models returned %d: %s", httpResp.StatusCode, strings.TrimSpace(string(raw)))
+			if isTransientStatus(httpResp.StatusCode) {
+				continue
+			}
+			return nil, lastErr
+		}
+		return raw, nil
+	}
+	return nil, lastErr
+}
+
 func (c *HTTPClient) record(ctx context.Context, kind string, meta CallMeta, model string,
 	inTok, outTok *int, latency int, status string, callErr error) {
 	if c.recorder == nil {
@@ -210,7 +289,14 @@ func (c *HTTPClient) record(ctx context.Context, kind string, meta CallMeta, mod
 	_ = c.recorder.InsertLLMCall(context.WithoutCancel(ctx), call)
 }
 
-func (c *HTTPClient) wireRequest(req LLMRequest) chatRequest {
+func (c *HTTPClient) modelFor(meta CallMeta) string {
+	if model := strings.TrimSpace(meta.Model); model != "" {
+		return model
+	}
+	return c.model
+}
+
+func (c *HTTPClient) wireRequest(req LLMRequest, model string) chatRequest {
 	msgs := make([]chatMessage, 0, 2)
 	if req.System != "" {
 		msgs = append(msgs, chatMessage{Role: "system", Content: req.System})
@@ -218,7 +304,7 @@ func (c *HTTPClient) wireRequest(req LLMRequest) chatRequest {
 	msgs = append(msgs, chatMessage{Role: "user", Content: req.User})
 
 	out := chatRequest{
-		Model:       c.model,
+		Model:       model,
 		Messages:    msgs,
 		Temperature: req.Temperature,
 		MaxTokens:   req.MaxTokens,

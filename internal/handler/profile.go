@@ -20,6 +20,7 @@ type profileDTO struct {
 	Level          string         `json:"level"`
 	UILanguage     string         `json:"ui_language"`
 	Theme          string         `json:"theme"`
+	LLMModel       string         `json:"llm_model"`
 	Preferences    map[string]any `json:"preferences"`
 }
 
@@ -137,6 +138,15 @@ func decodeProfilePatch(w http.ResponseWriter, r *http.Request) (domain.UserProf
 				return domain.UserProfilePatch{}, fmt.Errorf("%s must contain only letters, numbers, '_' or '-'", key)
 			}
 			patch.Theme = &s
+		case "llm_model":
+			s, err := decodeProfileOptionalString(value, key)
+			if err != nil {
+				return domain.UserProfilePatch{}, err
+			}
+			if !domain.ValidLLMModel(s) {
+				return domain.UserProfilePatch{}, fmt.Errorf("%s must be an OpenRouter/OpenAI-compatible model id", key)
+			}
+			patch.LLMModel = &s
 		case "preferences":
 			prefs, err := decodePreferences(value)
 			if err != nil {
@@ -160,6 +170,18 @@ func decodeProfileString(raw json.RawMessage, field string) (string, error) {
 		return "", fmt.Errorf("%s cannot be empty", field)
 	}
 	if len(s) > 64 {
+		return "", fmt.Errorf("%s is too long", field)
+	}
+	return s, nil
+}
+
+func decodeProfileOptionalString(raw json.RawMessage, field string) (string, error) {
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return "", fmt.Errorf("%s must be a string", field)
+	}
+	s = strings.TrimSpace(s)
+	if len(s) > 160 {
 		return "", fmt.Errorf("%s is too long", field)
 	}
 	return s, nil
@@ -200,6 +222,7 @@ func toProfileDTO(profile domain.UserProfile) profileDTO {
 		Level:          profile.Level,
 		UILanguage:     profile.UILanguage,
 		Theme:          profile.Theme,
+		LLMModel:       profile.LLMModel,
 		Preferences:    prefs,
 	}
 }
