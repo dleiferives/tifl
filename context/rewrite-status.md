@@ -105,8 +105,18 @@ reader signals, #9 consumes them).
   and `breakdowns` (sentence by normalized-hash, word by key) tables — reused
   across users. Wiktionary is behind an interface, stubbed (kaikki ingestion #41).
 - **Deferred → sub-issues**: #40 per-user dictionary, #41 kaikki ingestion,
-  #42 structure/phrase caching, #43 per-inflection levels, #44 wire the
+  #42 structure/phrase caching, #44 wire the
   knowledge_predictions cache (selector still scores on the fly — always fresh).
+
+## Done — reader per-inflection levels (#43)
+
+- Reader self-ratings are now split by scope:
+  - ordinary 1–5/w/i ratings write `reader_surface_levels` for the exact displayed
+    form (`item_key` + language-owned `surface_key`);
+  - explicit lemma/root marks still write canonical `user_knowledge.level` and
+    cover all displayed forms in the reader.
+- Story tokens carry `surface_key` and the API returns an opaque `form_key` plus
+  `surface_knowledge` alongside canonical `knowledge`.
 
 ## Done — auth & users (#12)
 

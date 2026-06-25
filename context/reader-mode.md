@@ -159,6 +159,9 @@ surface    TEXT    — the word as it appears in the text, with original casing
                      and no surrounding punctuation stripped (displayed as-is)
 key        TEXT    — canonical knowledge key (lemma/root/stem per language plugin)
                      null for non-word tokens
+surface_key TEXT   — language-owned key for the displayed form; preserves
+                     inflection-level distinctions for reader ratings
+form_key   TEXT    — opaque client lookup key for surface_knowledge
 is_word    BOOL    — false for spaces, punctuation, paragraph breaks
 ```
 
@@ -181,9 +184,10 @@ data for the knowledge predictor and the inputs to acquisition stage transitions
 |--------|--------|
 | Story loaded | `exposure_count` incremented for every word in story |
 | Space pressed on a word | `lookup_count` incremented for that word's key |
-| Knowledge rating set (1-5) | `user_knowledge.level` updated, task_correct/total context |
-| Word marked well-known (`w`) | Level set to `well_known`, effectively removes from targeting |
-| Word marked ignored (`i`) | Level set to `ignored`, removed from all tracking |
+| Knowledge rating set (1-5) | exact-form level updated in `reader_surface_levels` |
+| Word marked well-known (`w`) | exact-form level set to `well_known` |
+| Word marked ignored (`i`) | exact-form level set to `ignored` |
+| Lemma/root marked well-known/ignored | canonical `user_knowledge.level` updated as an explicit override covering all displayed forms |
 | Sentence breakdown requested | Logged as a signal that the sentence was difficult |
 | Deep breakdown requested | Logged as high-value "I want to understand this" signal |
 
@@ -210,17 +214,19 @@ requires a server roundtrip during navigation.
 tokens[]            — the full story_tokens array, loaded once at story start
 cursor              — index into tokens[] of the current active word
 knowledge{}         — map of key → {level, lookupCount} loaded at story start,
-                      updated locally as the user interacts
+                      where level is the explicit canonical lemma/root override
+surfaceKnowledge{}  — map of form_key → {level}; ordinary ratings update this
 popupVisible        — whether the definition popup is showing
 breakdownVisible    — whether the sentence breakdown popup is showing
 breakdownData       — the sentence breakdown result (null if not yet loaded)
 pendingWrites[]     — knowledge updates not yet flushed to server
 ```
 
-On load: fetch story tokens + fetch all user_knowledge for this language in one
-call. Everything needed for the reading session is in memory. Subsequent server
-calls are: definition lookup (if not in glossary), sentence breakdown (LLM),
-knowledge level writes (batched, background).
+On load: fetch story tokens, canonical user_knowledge, and surface-form levels
+for this language in one call. Everything needed for the reading session is in
+memory. Subsequent server calls are: definition lookup (if not in glossary),
+sentence breakdown (LLM), exact-form level writes, and explicit canonical
+lemma/root writes.
 
 ---
 

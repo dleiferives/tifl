@@ -216,14 +216,40 @@ story_tokens
   surface     TEXT  NOT NULL    display form including punctuation: "Ἄνθρωπόν,"
   item_key    TEXT              normalized key for knowledge lookup: "ἄνθρωπος"
                                 null for non-word tokens (spaces, punctuation)
+  surface_key TEXT              language-owned exact-form key for reader ratings
   is_word     BOOL  NOT NULL    false for whitespace and punctuation-only tokens
 
   PRIMARY KEY (story_id, position)
 ```
 
 A story token with `is_word = false` is rendered literally (space, comma, period)
-with no knowledge highlighting. `item_key` is used to look up `user_knowledge`
-for the knowledge level badge and definition popup.
+with no knowledge highlighting. `item_key` is used for canonical acquisition
+signals and definition lookup. `surface_key` is used with `item_key` to look up
+the exact displayed form's reader level.
+
+---
+
+### `reader_surface_levels`
+
+The learner's self-rating for an exact displayed form of a canonical item. This
+lets a lemma-keyed language track `πηγαίνω`, `πήγα`, and `πηγαίνει` as separate
+reader colours while preserving one canonical `user_knowledge` row for
+acquisition signals.
+
+```
+reader_surface_levels
+  user_id     TEXT  NOT NULL    FK → users.user_id
+  language    TEXT  NOT NULL    FK → languages.code
+  item_key    TEXT  NOT NULL    canonical lemma/root/stem key
+  surface_key TEXT  NOT NULL    exact-form key from story_tokens.surface_key
+  level       TEXT              ""/NULL | "1".."5" | "well_known" | "ignored"
+  updated_at  REAL  NOT NULL
+
+  PRIMARY KEY (user_id, language, item_key, surface_key)
+```
+
+Explicit lemma/root well-known or ignored marks remain on `user_knowledge.level`
+and cover all surface forms in the reader. Ordinary ratings write here.
 
 ---
 
