@@ -174,6 +174,9 @@ type Repository interface {
 	UpsertDefinition(ctx context.Context, d domain.Definition) error
 	UpsertDefinitionImport(ctx context.Context, imp domain.DefinitionImport) error
 	GetDefinitionImport(ctx context.Context, importID string) (domain.DefinitionImport, error)
+	GetUserDefinition(ctx context.Context, userID, language, itemKey string) (domain.UserDefinition, error)
+	UpsertUserDefinition(ctx context.Context, d domain.UserDefinition) (domain.UserDefinition, error)
+	DeleteUserDefinition(ctx context.Context, userID, language, itemKey string) error
 	GetBreakdown(ctx context.Context, scope domain.BreakdownScope, language, cacheKey string) (domain.Breakdown, error)
 	UpsertBreakdown(ctx context.Context, b domain.Breakdown) error
 }

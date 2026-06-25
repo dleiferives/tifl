@@ -4,11 +4,24 @@ package domain
 // dataset, #41) and LLM-written entries are stored separately and may coexist for
 // the same (language, key).
 const (
+	DefinitionSourceUser       = "user" // per-user custom dictionary (not persisted in the shared cache)
 	DefinitionSourceWiktionary = "wiktionary"
 	DefinitionSourceLLM        = "llm"
 	DefinitionSourceGlossary   = "glossary" // per-story glossary (not persisted in the shared cache)
 	DefinitionSourceMetadata   = "metadata" // knowledge_items.metadata (not persisted in the shared cache)
 )
+
+// UserDefinition is one learner-owned dictionary override. It layers over the
+// shared/global definition cache and never affects another user's lookup result.
+type UserDefinition struct {
+	UserID    string
+	Language  string
+	ItemKey   string
+	Gloss     string
+	Notes     string
+	CreatedAt float64
+	UpdatedAt float64
+}
 
 // Definition is one cached word definition in the global shared cache — not
 // user-scoped. See context/reader-mode.md ("The Definition Popup") and
@@ -21,6 +34,7 @@ type Definition struct {
 	GrammaticalNote string
 	Example         string
 	Etymology       string
+	Notes           string
 	CreatedAt       float64
 }
 

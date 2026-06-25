@@ -228,6 +228,8 @@ func testReaderEvents(t *testing.T, repo db.Repository) {
 func testDefinitionsBreakdowns(t *testing.T, repo db.Repository) {
 	ctx := context.Background()
 	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "grc", Name: "Greek", KeyStrategy: "lemma", Enabled: true}))
+	user, err := repo.CreateUser(ctx, domain.User{Email: "defs@defs.com"})
+	must(t, err)
 
 	must(t, repo.UpsertDefinition(ctx, domain.Definition{
 		Language: "grc", ItemKey: "λόγος", Source: domain.DefinitionSourceWiktionary,
@@ -263,6 +265,35 @@ func testDefinitionsBreakdowns(t *testing.T, repo db.Repository) {
 	must(t, err)
 	if imp.Status != domain.DefinitionImportComplete || imp.DefinitionsWritten != 6 || imp.CompletedAt == nil {
 		t.Fatalf("definition import not round-tripped: %+v", imp)
+	}
+
+	// User definitions are scoped by user and can be updated/deleted without
+	// touching the shared cache.
+	if _, err := repo.GetUserDefinition(ctx, user.UserID, "grc", "λόγος"); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("want ErrNotFound for missing user definition, got %v", err)
+	}
+	ud, err := repo.UpsertUserDefinition(ctx, domain.UserDefinition{
+		UserID: user.UserID, Language: "grc", ItemKey: "λόγος", Gloss: "my note", Notes: "classroom idiom",
+	})
+	must(t, err)
+	if ud.Gloss != "my note" || ud.Notes != "classroom idiom" || ud.CreatedAt == 0 || ud.UpdatedAt == 0 {
+		t.Fatalf("bad user definition round-trip: %+v", ud)
+	}
+	updated, err := repo.UpsertUserDefinition(ctx, domain.UserDefinition{
+		UserID: user.UserID, Language: "grc", ItemKey: "λόγος", Gloss: "my updated note",
+	})
+	must(t, err)
+	if updated.Gloss != "my updated note" || updated.CreatedAt != ud.CreatedAt {
+		t.Fatalf("user definition update did not preserve created_at/update gloss: before=%+v after=%+v", ud, updated)
+	}
+	must(t, repo.DeleteUserDefinition(ctx, user.UserID, "grc", "λόγος"))
+	if _, err := repo.GetUserDefinition(ctx, user.UserID, "grc", "λόγος"); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("want ErrNotFound after delete, got %v", err)
+	}
+	defs, err = repo.ListDefinitions(ctx, "grc", "λόγος")
+	must(t, err)
+	if len(defs) != 2 {
+		t.Fatalf("delete user definition should not touch shared cache, got %d shared defs", len(defs))
 	}
 
 	// Breakdown cache: miss → ErrNotFound, then round-trip the JSON content.

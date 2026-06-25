@@ -764,6 +764,52 @@ func (r *SQLiteRepository) GetDefinitionImport(ctx context.Context, importID str
 	return imp, nil
 }
 
+func (r *SQLiteRepository) GetUserDefinition(ctx context.Context, userID, language, itemKey string) (domain.UserDefinition, error) {
+	var (
+		d     domain.UserDefinition
+		notes sql.NullString
+	)
+	err := r.db.QueryRowContext(ctx,
+		`SELECT user_id, language, item_key, gloss, notes, created_at, updated_at
+		 FROM user_definitions WHERE user_id = ? AND language = ? AND item_key = ?`,
+		userID, language, itemKey).Scan(&d.UserID, &d.Language, &d.ItemKey, &d.Gloss, &notes, &d.CreatedAt, &d.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.UserDefinition{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.UserDefinition{}, err
+	}
+	d.Notes = notes.String
+	return d, nil
+}
+
+func (r *SQLiteRepository) UpsertUserDefinition(ctx context.Context, d domain.UserDefinition) (domain.UserDefinition, error) {
+	now := float64(time.Now().Unix())
+	if d.CreatedAt == 0 {
+		d.CreatedAt = now
+	}
+	if d.UpdatedAt == 0 {
+		d.UpdatedAt = now
+	}
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO user_definitions(user_id, language, item_key, gloss, notes, created_at, updated_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(user_id, language, item_key) DO UPDATE SET
+		   gloss = excluded.gloss, notes = excluded.notes, updated_at = excluded.updated_at`,
+		d.UserID, d.Language, d.ItemKey, d.Gloss, emptyToNull(d.Notes), d.CreatedAt, d.UpdatedAt)
+	if err != nil {
+		return domain.UserDefinition{}, err
+	}
+	return r.GetUserDefinition(ctx, d.UserID, d.Language, d.ItemKey)
+}
+
+func (r *SQLiteRepository) DeleteUserDefinition(ctx context.Context, userID, language, itemKey string) error {
+	_, err := r.db.ExecContext(ctx,
+		`DELETE FROM user_definitions WHERE user_id = ? AND language = ? AND item_key = ?`,
+		userID, language, itemKey)
+	return err
+}
+
 func (r *SQLiteRepository) GetBreakdown(ctx context.Context, scope domain.BreakdownScope, language, cacheKey string) (domain.Breakdown, error) {
 	var (
 		content   sql.NullString

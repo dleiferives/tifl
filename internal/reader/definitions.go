@@ -27,10 +27,10 @@ type WiktionarySource interface {
 }
 
 // DefinitionService owns the reader's definition-resolution chain and the cached,
-// LLM-backed sentence/word breakdowns. Definitions resolve story_glossary →
-// knowledge_items.metadata → shared cache → live (Wiktionary, then LLM); live
-// results are written to the global shared cache so the next learner gets them
-// free. See context/reader-mode.md and issues #10/#41.
+// LLM-backed sentence/word breakdowns. Definitions resolve user dictionary →
+// story_glossary → knowledge_items.metadata → shared cache → live (Wiktionary,
+// then LLM); live results are written to the global shared cache so the next
+// learner gets them free. See context/reader-mode.md and issues #10/#40/#41.
 type DefinitionService struct {
 	repo   db.Repository
 	client llm.Client       // nil when no gateway is configured
@@ -52,7 +52,17 @@ func (s *DefinitionService) Resolve(ctx context.Context, userID, storyID, key st
 		return domain.Definition{}, err
 	}
 
-	// 1. Per-story glossary — the generator's own gloss for this word.
+	// 1. Per-user dictionary — learner-owned overrides always win.
+	if d, err := s.repo.GetUserDefinition(ctx, userID, language, key); err == nil {
+		return domain.Definition{
+			Language: language, ItemKey: key, Source: domain.DefinitionSourceUser,
+			Gloss: d.Gloss, Notes: d.Notes, CreatedAt: d.CreatedAt,
+		}, nil
+	} else if !errors.Is(err, db.ErrNotFound) {
+		return domain.Definition{}, err
+	}
+
+	// 2. Per-story glossary — the generator's own gloss for this word.
 	if entries, err := s.repo.ListStoryGlossary(ctx, storyID); err == nil {
 		for _, g := range entries {
 			if g.ItemKey == key {
@@ -64,14 +74,14 @@ func (s *DefinitionService) Resolve(ctx context.Context, userID, storyID, key st
 		}
 	}
 
-	// 2. knowledge_items.metadata — a gloss carried on the item itself.
+	// 3. knowledge_items.metadata — a gloss carried on the item itself.
 	if d, ok, err := s.fromMetadata(ctx, language, key); err != nil {
 		return domain.Definition{}, err
 	} else if ok {
 		return d, nil
 	}
 
-	// 3. Shared cache — a previously stored Wiktionary/LLM definition.
+	// 4. Shared cache — a previously stored Wiktionary/LLM definition.
 	cached, err := s.repo.ListDefinitions(ctx, language, key)
 	if err != nil {
 		return domain.Definition{}, err
@@ -80,7 +90,7 @@ func (s *DefinitionService) Resolve(ctx context.Context, userID, storyID, key st
 		return d, nil
 	}
 
-	// 4. Live Wiktionary (cached on hit).
+	// 5. Live Wiktionary (cached on hit).
 	if s.wik != nil {
 		if d, ok, err := s.wik.Lookup(ctx, language, key); err == nil && ok {
 			d.Language, d.ItemKey, d.Source = language, key, domain.DefinitionSourceWiktionary
@@ -89,7 +99,7 @@ func (s *DefinitionService) Resolve(ctx context.Context, userID, storyID, key st
 		}
 	}
 
-	// 5. Live LLM (cached on success).
+	// 6. Live LLM (cached on success).
 	if s.client == nil {
 		return domain.Definition{}, ErrLLMUnavailable
 	}

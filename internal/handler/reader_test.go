@@ -242,6 +242,82 @@ func TestGetDefinitionLiveLLM(t *testing.T) {
 	}
 }
 
+func TestDictionaryEntryOverridesDefinitionThenDeleteRestoresFallback(t *testing.T) {
+	srv, repo := newServer(t, true)
+	storyID := seedStory(t, repo)
+
+	req, err := http.NewRequest(http.MethodPut, srv.URL+"/api/v1/dictionary/entry",
+		strings.NewReader(`{"language":"xx","key":"a","gloss":"custom a","notes":"mine"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200 from upsert, got %d", resp.StatusCode)
+	}
+	var entry struct {
+		Language, Key, Gloss, Notes string
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&entry); err != nil {
+		t.Fatal(err)
+	}
+	if entry.Language != "xx" || entry.Key != "a" || entry.Gloss != "custom a" || entry.Notes != "mine" {
+		t.Fatalf("bad dictionary response: %+v", entry)
+	}
+
+	resp, err = http.Get(srv.URL + "/api/v1/dictionary/entry?language=xx&key=a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200 from get, got %d", resp.StatusCode)
+	}
+
+	resp, err = http.Get(srv.URL + "/api/v1/stories/" + storyID + "/definition?key=a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var def struct {
+		Key, Source, Gloss, Notes string
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&def); err != nil {
+		t.Fatal(err)
+	}
+	if def.Source != "user" || def.Gloss != "custom a" || def.Notes != "mine" {
+		t.Fatalf("definition did not use custom entry: %+v", def)
+	}
+
+	req, _ = http.NewRequest(http.MethodDelete, srv.URL+"/api/v1/dictionary/entry?language=xx&key=a", nil)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("want 204 from delete, got %d", resp.StatusCode)
+	}
+	resp, err = http.Get(srv.URL + "/api/v1/stories/" + storyID + "/definition?key=a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	def = struct {
+		Key, Source, Gloss, Notes string
+	}{}
+	if err := json.NewDecoder(resp.Body).Decode(&def); err != nil {
+		t.Fatal(err)
+	}
+	if def.Source == "user" {
+		t.Fatalf("delete should restore fallback chain, got %+v", def)
+	}
+}
+
 func TestGetDefinitionMissingKeyIs400(t *testing.T) {
 	srv, repo := newServer(t, true)
 	storyID := seedStory(t, repo)

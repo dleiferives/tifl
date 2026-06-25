@@ -798,6 +798,52 @@ func (r *PostgresRepository) GetDefinitionImport(ctx context.Context, importID s
 	return imp, nil
 }
 
+func (r *PostgresRepository) GetUserDefinition(ctx context.Context, userID, language, itemKey string) (domain.UserDefinition, error) {
+	var (
+		d     domain.UserDefinition
+		notes *string
+	)
+	err := r.pool.QueryRow(ctx,
+		`SELECT user_id, language, item_key, gloss, notes, created_at, updated_at
+		 FROM user_definitions WHERE user_id = $1 AND language = $2 AND item_key = $3`,
+		userID, language, itemKey).Scan(&d.UserID, &d.Language, &d.ItemKey, &d.Gloss, &notes, &d.CreatedAt, &d.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.UserDefinition{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.UserDefinition{}, err
+	}
+	d.Notes = derefStr(notes)
+	return d, nil
+}
+
+func (r *PostgresRepository) UpsertUserDefinition(ctx context.Context, d domain.UserDefinition) (domain.UserDefinition, error) {
+	now := float64(time.Now().Unix())
+	if d.CreatedAt == 0 {
+		d.CreatedAt = now
+	}
+	if d.UpdatedAt == 0 {
+		d.UpdatedAt = now
+	}
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO user_definitions(user_id, language, item_key, gloss, notes, created_at, updated_at)
+		 VALUES($1, $2, $3, $4, $5, $6, $7)
+		 ON CONFLICT(user_id, language, item_key) DO UPDATE SET
+		   gloss = excluded.gloss, notes = excluded.notes, updated_at = excluded.updated_at`,
+		d.UserID, d.Language, d.ItemKey, d.Gloss, nullStr(d.Notes), d.CreatedAt, d.UpdatedAt)
+	if err != nil {
+		return domain.UserDefinition{}, err
+	}
+	return r.GetUserDefinition(ctx, d.UserID, d.Language, d.ItemKey)
+}
+
+func (r *PostgresRepository) DeleteUserDefinition(ctx context.Context, userID, language, itemKey string) error {
+	_, err := r.pool.Exec(ctx,
+		`DELETE FROM user_definitions WHERE user_id = $1 AND language = $2 AND item_key = $3`,
+		userID, language, itemKey)
+	return err
+}
+
 func (r *PostgresRepository) GetBreakdown(ctx context.Context, scope domain.BreakdownScope, language, cacheKey string) (domain.Breakdown, error) {
 	var (
 		content   []byte

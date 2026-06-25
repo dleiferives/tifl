@@ -33,11 +33,12 @@ type FakeRepository struct {
 	readerIDs  map[string]bool              // event_id set, for idempotent insert
 	defs       map[string]domain.Definition // language\x00key\x00source -> definition
 	defImports map[string]domain.DefinitionImport
-	breakdowns map[string]domain.Breakdown   // scope\x00language\x00cacheKey -> breakdown
-	skills     map[string]domain.Skill       // skill_id -> skill
-	itemSkills map[string]map[string]bool    // item_id -> skill_id set
-	userSkills map[string]domain.UserSkillXP // user_id\x00skill_id -> state
-	skillLogs  []domain.TaskSkillXPLog       // append-only skill XP log
+	userDefs   map[string]domain.UserDefinition // user_id\x00language\x00key -> user definition
+	breakdowns map[string]domain.Breakdown      // scope\x00language\x00cacheKey -> breakdown
+	skills     map[string]domain.Skill          // skill_id -> skill
+	itemSkills map[string]map[string]bool       // item_id -> skill_id set
+	userSkills map[string]domain.UserSkillXP    // user_id\x00skill_id -> state
+	skillLogs  []domain.TaskSkillXPLog          // append-only skill XP log
 
 	// Generation-pipeline state.
 	sessions   map[string]domain.Session                    // session_id -> session
@@ -67,6 +68,7 @@ func NewFake() *FakeRepository {
 		readerIDs:  make(map[string]bool),
 		defs:       make(map[string]domain.Definition),
 		defImports: make(map[string]domain.DefinitionImport),
+		userDefs:   make(map[string]domain.UserDefinition),
 		breakdowns: make(map[string]domain.Breakdown),
 		skills:     make(map[string]domain.Skill),
 		itemSkills: make(map[string]map[string]bool),
@@ -509,6 +511,42 @@ func (r *FakeRepository) GetDefinitionImport(_ context.Context, importID string)
 		return domain.DefinitionImport{}, ErrNotFound
 	}
 	return cloneDefinitionImport(imp), nil
+}
+
+func (r *FakeRepository) GetUserDefinition(_ context.Context, userID, language, itemKey string) (domain.UserDefinition, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	d, ok := r.userDefs[userID+"\x00"+language+"\x00"+itemKey]
+	if !ok {
+		return domain.UserDefinition{}, ErrNotFound
+	}
+	return d, nil
+}
+
+func (r *FakeRepository) UpsertUserDefinition(_ context.Context, d domain.UserDefinition) (domain.UserDefinition, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := d.UserID + "\x00" + d.Language + "\x00" + d.ItemKey
+	now := float64(time.Now().Unix())
+	if d.CreatedAt == 0 {
+		if existing, ok := r.userDefs[key]; ok {
+			d.CreatedAt = existing.CreatedAt
+		} else {
+			d.CreatedAt = now
+		}
+	}
+	if d.UpdatedAt == 0 {
+		d.UpdatedAt = now
+	}
+	r.userDefs[key] = d
+	return d, nil
+}
+
+func (r *FakeRepository) DeleteUserDefinition(_ context.Context, userID, language, itemKey string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.userDefs, userID+"\x00"+language+"\x00"+itemKey)
+	return nil
 }
 
 func (r *FakeRepository) GetBreakdown(_ context.Context, scope domain.BreakdownScope, language, cacheKey string) (domain.Breakdown, error) {
