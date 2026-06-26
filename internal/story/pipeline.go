@@ -93,10 +93,11 @@ func New(deps Deps, cfg Config) *Pipeline {
 // tokens/second during story generation (a ticker animation client-side); the
 // story text itself is never streamed. error_code is set only on failure.
 type Event struct {
-	Stage     string `json:"stage"`
-	Status    string `json:"status,omitempty"`
-	TokenRate int    `json:"token_rate,omitempty"`
-	ErrorCode string `json:"error_code,omitempty"`
+	Stage          string `json:"stage"`
+	Status         string `json:"status,omitempty"`
+	TokenRate      int    `json:"token_rate,omitempty"`
+	ErrorCode      string `json:"error_code,omitempty"`
+	SuggestedTopic string `json:"suggested_topic,omitempty"`
 }
 
 // emitter receives progress events; nil-safe via emit().
@@ -362,13 +363,9 @@ func (p *Pipeline) runScopeCheck(ctx context.Context, sess domain.Session, emit 
 		return se
 	}
 	if !res.IsViable() {
-		detail := res.Reason
-		if res.SuggestedTopic != "" {
-			detail += " (try: " + res.SuggestedTopic + ")"
-		}
-		se := fail(ErrCodeScopeRejected, fmt.Errorf("%s", detail))
+		se := fail(ErrCodeScopeRejected, fmt.Errorf("%s", res.Reason))
 		p.failStage(ctx, sess.SessionID, stage, se)
-		emit.emit(Event{Stage: stage, Status: string(domain.StageFailed), ErrorCode: se.code})
+		emit.emit(Event{Stage: stage, Status: string(domain.StageFailed), ErrorCode: se.code, SuggestedTopic: res.SuggestedTopic})
 		return se
 	}
 	p.completeStage(ctx, sess.SessionID, stage)

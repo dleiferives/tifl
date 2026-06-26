@@ -74,17 +74,18 @@ type generationStageDTO struct {
 }
 
 type generationEventDTO struct {
-	Stage        string           `json:"stage"`
-	Status       string           `json:"status,omitempty"`
-	SessionID    string           `json:"session_id,omitempty"`
-	ContentType  string           `json:"content_type,omitempty"`
-	StoryID      *string          `json:"story_id,omitempty"`
-	TokenRate    int              `json:"token_rate,omitempty"`
-	ErrorCode    string           `json:"error_code,omitempty"`
-	ErrorDetail  string           `json:"error_detail,omitempty"`
-	FailedStage  *string          `json:"failed_stage,omitempty"`
-	Tasks        *taskProgressDTO `json:"tasks,omitempty"`
-	StageSummary *stageSummaryDTO `json:"stage_summary,omitempty"`
+	Stage          string           `json:"stage"`
+	Status         string           `json:"status,omitempty"`
+	SessionID      string           `json:"session_id,omitempty"`
+	ContentType    string           `json:"content_type,omitempty"`
+	StoryID        *string          `json:"story_id,omitempty"`
+	TokenRate      int              `json:"token_rate,omitempty"`
+	ErrorCode      string           `json:"error_code,omitempty"`
+	ErrorDetail    string           `json:"error_detail,omitempty"`
+	FailedStage    *string          `json:"failed_stage,omitempty"`
+	Tasks          *taskProgressDTO `json:"tasks,omitempty"`
+	StageSummary   *stageSummaryDTO `json:"stage_summary,omitempty"`
+	SuggestedTopic string           `json:"suggested_topic,omitempty"`
 }
 
 type sessionOverviewDTO struct {
@@ -534,10 +535,11 @@ func (h *Handler) sessionEvents(w http.ResponseWriter, r *http.Request) {
 
 func progressGenerationEvent(ev story.Event) generationEventDTO {
 	return generationEventDTO{
-		Stage:     ev.Stage,
-		Status:    ev.Status,
-		TokenRate: ev.TokenRate,
-		ErrorCode: ev.ErrorCode,
+		Stage:          ev.Stage,
+		Status:         ev.Status,
+		TokenRate:      ev.TokenRate,
+		ErrorCode:      ev.ErrorCode,
+		SuggestedTopic: ev.SuggestedTopic,
 	}
 }
 
