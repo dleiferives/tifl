@@ -43,7 +43,7 @@ func storyStep() llm.StepDef {
 				sys.WriteString("\n- Ο μαθητής δεν έχει ακόμα λεξιλόγιο. Γράψε μια πολύ σύντομη παράγραφο (3–4 απλές προτάσεις) χρησιμοποιώντας μόνο τις πιο βασικές ελληνικές λέξεις: βασικές αντωνυμίες, τα ρήματα είμαι και έχω, 1–2 συχνά ουσιαστικά και τα μόρια και, δεν, να.")
 			}
 
-			sys.WriteString("\nRespond with a JSON object: {\"story\": string, \"estimated_coverage\": number, \"glossary\": [{\"key\": string, \"gloss\": string}]}.\nReturn JSON only — no prose, no markdown.")
+			sys.WriteString("\nΑπάντησε με ένα αντικείμενο JSON: {\"story\": string, \"estimated_coverage\": number, \"glossary\": [{\"key\": string, \"gloss\": string}]}.\nΜόνο JSON — χωρίς πεζή γραφή, χωρίς markdown.")
 
 			var usr strings.Builder
 
@@ -96,7 +96,7 @@ func storyStep() llm.StepDef {
 
 			// 12. Avoid recent topics.
 			if topics := llm.RecentTopics(in.History); topics != "" {
-				fmt.Fprintf(&usr, "\nAvoid repeating these recent topics/settings: %s\n", topics)
+				fmt.Fprintf(&usr, "\nΑπέφυγε να επαναλάβεις αυτά τα πρόσφατα θέματα: %s\n", topics)
 			}
 
 			return llm.LLMRequest{
@@ -143,11 +143,11 @@ func mcTaskStep() llm.StepDef {
 			sys.WriteString("- Ρύθμιζε τη δυσκολία σύμφωνα με το επίπεδο: αρχάριοι → απλές ερωτήσεις «ποιος/τι/πού», προχωρημένοι → ερωτήσεις συμπερασμού ή «γιατί».")
 
 			if schema, ok := in.ContentSchemas["comprehension_mc"]; ok && schema != "" {
-				fmt.Fprintf(&sys, "\nRespond with exactly this JSON: %s\nReturn JSON only.", schema)
+				fmt.Fprintf(&sys, "\nΑπάντησε ακριβώς με αυτό το JSON: %s\nΜόνο JSON, χωρίς κείμενο.", schema)
 			}
 
 			if len(in.PriorQuestions) > 0 {
-				sys.WriteString("\nDo NOT repeat any of these already-generated questions:\n")
+				sys.WriteString("\nΜΗΝ επαναλάβεις καμία από αυτές τις ερωτήσεις που έχουν ήδη δημιουργηθεί:\n")
 				for _, q := range in.PriorQuestions {
 					fmt.Fprintf(&sys, "- %s\n", q)
 				}
@@ -200,7 +200,7 @@ func fillTaskStep() llm.StepDef {
 			sys.WriteString("- Μην αλλάζεις τη σειρά των λέξεων ή άλλες λέξεις της πρότασης.")
 
 			if schema, ok := in.ContentSchemas["fill_blank"]; ok && schema != "" {
-				fmt.Fprintf(&sys, "\nRespond with exactly this JSON: %s\nReturn JSON only.", schema)
+				fmt.Fprintf(&sys, "\nΑπάντησε ακριβώς με αυτό το JSON: %s\nΜόνο JSON, χωρίς κείμενο.", schema)
 			}
 
 			storyText := ""

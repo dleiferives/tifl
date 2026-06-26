@@ -278,6 +278,18 @@ func (r *FakeRepository) GetStory(_ context.Context, storyID string) (domain.Sto
 	return cloneStory(s), nil
 }
 
+func (r *FakeRepository) CountUserStories(_ context.Context, userID, language string) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, s := range r.stories {
+		if s.UserID == userID && s.Language == language {
+			n++
+		}
+	}
+	return n, nil
+}
+
 func (r *FakeRepository) ReplaceStoryTokens(_ context.Context, storyID string, tokens []domain.StoryToken) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

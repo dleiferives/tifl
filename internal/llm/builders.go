@@ -25,11 +25,14 @@ const (
 // surrounding context to infer its meaning. The vocabulary pool is the whole of
 // the constraint: the model is told not to reach beyond SelectedItems, which is
 // how the comprehensible-input ratio is held. Assets is optional.
-// ZeroBackgroundHint, when non-empty, is injected as an additional hard
-// constraint for learners who have no background vocabulary yet.
+// OnboardingHint, when non-empty, overrides ZeroBackgroundHint and is injected
+// as an additional hard constraint for early-session learners.
+// ZeroBackgroundHint is the fallback when OnboardingHint is empty and the
+// learner has no background vocabulary.
 type StoryBuilder struct {
 	Assets             LangAssets
 	ZeroBackgroundHint string
+	OnboardingHint     string
 }
 
 func (StoryBuilder) Kind() string    { return "story_generator" }
@@ -46,7 +49,9 @@ func (b StoryBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
 	if note := noteOf(b.Assets); note != "" {
 		fmt.Fprintf(&sys, "- Writing system: %s\n", note)
 	}
-	if b.ZeroBackgroundHint != "" {
+	if hint := b.OnboardingHint; hint != "" {
+		fmt.Fprintf(&sys, "- %s\n", hint)
+	} else if b.ZeroBackgroundHint != "" {
 		fmt.Fprintf(&sys, "- %s\n", b.ZeroBackgroundHint)
 	}
 	sys.WriteString("Respond with a JSON object: ")

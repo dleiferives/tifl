@@ -126,6 +126,16 @@ type ZeroBackgroundProvider interface {
 	ZeroBackgroundHint() string
 }
 
+// OnboardingHintProvider is optionally implemented by language plugins to supply
+// progressively relaxed story-generation constraints for a learner's first few
+// sessions. storyNumber is the 1-indexed count of stories the user has already
+// had in this language before the current one (so 1 = first ever story).
+// Return "" once beyond the onboarding window to signal normal generation.
+// OnboardingHint takes precedence over ZeroBackgroundHint when non-empty.
+type OnboardingHintProvider interface {
+	OnboardingHint(storyNumber int) string
+}
+
 // StoryContractProvider is optionally implemented by language plugins that supply
 // their own generation DAG for the story session contract. The DAG must satisfy
 // OutputStory, OutputMCTask, and OutputFillTask. A plugin that does not implement
