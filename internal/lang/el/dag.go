@@ -5,8 +5,42 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/llm"
 )
+
+// serializeSkillConstraints is the Greek-language version of
+// llm.SerializeSkillConstraints. Prompting in Greek noticeably improves output.
+func serializeSkillConstraints(sc *domain.SkillConstraints) string {
+	if sc == nil {
+		return ""
+	}
+	var b strings.Builder
+	if len(sc.Allowed) > 0 {
+		fmt.Fprintf(&b, "Χρησιμοποίησε ελεύθερα: %s.\n", strings.Join(sc.Allowed, ", "))
+	}
+	if len(sc.Introduce) > 0 {
+		fmt.Fprintf(&b, "Εισήγαγε με σαφή συμφραζόμενα: %s.\n", strings.Join(sc.Introduce, ", "))
+	}
+	if len(sc.Avoid) > 0 {
+		fmt.Fprintf(&b, "Απέφυγε εντελώς: %s.\n", strings.Join(sc.Avoid, ", "))
+	}
+	if sc.VocabRange != "" {
+		fmt.Fprintf(&b, "Λεξιλόγιο: περιόρισε σε %s.\n", sc.VocabRange)
+	}
+	return b.String()
+}
+
+// formatItemNew is the Greek-language version of llm.FormatItemNew.
+func formatItemNew(it domain.KnowledgeItem) string {
+	line := llm.FormatItemCompact(it)
+	if ex := it.Metadata["example"]; ex != nil {
+		if s, ok := ex.(string); ok && s != "" {
+			line += "; παράδειγμα: " + s
+		}
+	}
+	return line
+}
 
 // StorySessionDAG returns the Greek-specific generation DAG for the story
 // session contract. It implements lang.StoryContractProvider.
@@ -110,7 +144,7 @@ func runStoryCall(ctx context.Context, in llm.StepInputs, client llm.Client) (st
 		usr.WriteString("\nΟδηγίες:\n- Χώρισε την ιστορία σε τουλάχιστον 6 παραγράφους, η καθεμία με 4 έως 6 προτάσεις.\n")
 	}
 
-	if constraints := llm.SerializeSkillConstraints(in.Skills); constraints != "" {
+	if constraints := serializeSkillConstraints(in.Skills); constraints != "" {
 		fmt.Fprintf(&usr, "- Γλωσσική πολυπλοκότητα (με βάση τις δεξιότητες που έχει κατακτήσει ο μαθητής): %s\n", constraints)
 	} else {
 		fmt.Fprintf(&usr, "- Επίπεδο: %s\n", llm.LevelOrDefault(in.Level))
@@ -125,7 +159,7 @@ func runStoryCall(ctx context.Context, in llm.StepInputs, client llm.Client) (st
 	llm.WriteItemBlock(&usr,
 		"Εισήγαγε απαλά και αυτές τις νέες λέξεις, με αρκετά συμφραζόμενα",
 		in.New,
-		llm.FormatItemNew,
+		formatItemNew,
 	)
 
 	usr.WriteString("- Χρησιμοποίησε μόνο υπαρκτές, κοινές ελληνικές λέξεις· μην εφευρίσκεις λέξεις.\n")
