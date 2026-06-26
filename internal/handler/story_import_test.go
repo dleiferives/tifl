@@ -4,8 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
+	"strings"
 	"testing"
 
 	authn "github.com/dleiferives/tifl/internal/auth"
@@ -78,6 +82,121 @@ func TestImportStoryCreatesTokenizedReaderStory(t *testing.T) {
 	if loadResp.StatusCode != http.StatusOK {
 		t.Fatalf("reader load = %d, want 200", loadResp.StatusCode)
 	}
+}
+
+func TestImportStoryUploadsTextFile(t *testing.T) {
+	srv, repo := newServer(t, false)
+	body, contentType := multipartImportBody(t, map[string]string{
+		"language": "xx",
+		"level":    "beginner",
+		"title":    "Uploaded note",
+	}, "note.txt", "text/plain; charset=utf-8", "Gamma delta")
+
+	resp, err := http.Post(srv.URL+"/api/v1/stories/import", contentType, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("want 201, got %d", resp.StatusCode)
+	}
+	var out struct {
+		StoryID  string `json:"story_id"`
+		Language string `json:"language"`
+		Title    string `json:"title"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.StoryID == "" || out.Language != "xx" || out.Title != "Uploaded note" {
+		t.Fatalf("unexpected response: %+v", out)
+	}
+
+	ctx := context.Background()
+	st, err := repo.GetStory(ctx, out.StoryID)
+	if err != nil {
+		t.Fatalf("story not persisted: %v", err)
+	}
+	if st.UserID != domain.LocalUserID || st.Text != "Gamma delta" || st.Topic != "Imported: Uploaded note" || st.SessionID != nil {
+		t.Fatalf("unexpected story row: %+v", st)
+	}
+	tokens, err := repo.ListStoryTokens(ctx, out.StoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tokens) != 2 || tokens[0].Surface != "Gamma" || tokens[0].ItemKey != "gamma" || !tokens[0].IsWord {
+		t.Fatalf("unexpected tokens: %+v", tokens)
+	}
+}
+
+func TestImportStoryRejectsUnsupportedUploadExtension(t *testing.T) {
+	srv, _ := newServer(t, false)
+	body, contentType := multipartImportBody(t, map[string]string{
+		"language": "xx",
+		"level":    "beginner",
+	}, "note.pdf", "text/plain", "Gamma delta")
+
+	resp, err := http.Post(srv.URL+"/api/v1/stories/import", contentType, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	expectBadRequestContains(t, resp, "only .txt uploads are supported")
+}
+
+func TestImportStoryRejectsUnsupportedUploadContentType(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		contentType string
+	}{
+		{name: "pdf", contentType: "application/pdf"},
+		{name: "epub", contentType: "application/epub+zip"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, _ := newServer(t, false)
+			body, contentType := multipartImportBody(t, map[string]string{
+				"language": "xx",
+				"level":    "beginner",
+			}, "note.txt", tc.contentType, "Gamma delta")
+
+			resp, err := http.Post(srv.URL+"/api/v1/stories/import", contentType, body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			expectBadRequestContains(t, resp, "only text/plain uploads are supported")
+		})
+	}
+}
+
+func TestImportStoryRejectsOversizedTextUpload(t *testing.T) {
+	srv, _ := newServer(t, false)
+	body, contentType := multipartImportBody(t, map[string]string{
+		"language": "xx",
+		"level":    "beginner",
+	}, "note.txt", "text/plain", strings.Repeat("a", 512<<10+1))
+
+	resp, err := http.Post(srv.URL+"/api/v1/stories/import", contentType, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	expectBadRequestContains(t, resp, "text file must be 524288 bytes or smaller")
+}
+
+func TestImportStoryRejectsEmptyTextUpload(t *testing.T) {
+	srv, _ := newServer(t, false)
+	body, contentType := multipartImportBody(t, map[string]string{
+		"language": "xx",
+		"level":    "beginner",
+	}, "note.txt", "text/plain", "   ")
+
+	resp, err := http.Post(srv.URL+"/api/v1/stories/import", contentType, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	expectBadRequestContains(t, resp, "text is required")
 }
 
 func TestImportStoryTenantIsolation(t *testing.T) {
@@ -154,4 +273,47 @@ func newAuthImportServer(t *testing.T) (*httptest.Server, *db.FakeRepository, *a
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv, repo, service
+}
+
+func multipartImportBody(t *testing.T, fields map[string]string, filename, fileContentType, text string) (*bytes.Buffer, string) {
+	t.Helper()
+	body := new(bytes.Buffer)
+	writer := multipart.NewWriter(body)
+	for key, value := range fields {
+		if err := writer.WriteField(key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	header := make(textproto.MIMEHeader)
+	header.Set("Content-Disposition", `form-data; name="file"; filename="`+filename+`"`)
+	if fileContentType != "" {
+		header.Set("Content-Type", fileContentType)
+	}
+	file, err := writer.CreatePart(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(file, text); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return body, writer.FormDataContentType()
+}
+
+func expectBadRequestContains(t *testing.T, resp *http.Response, want string) {
+	t.Helper()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", resp.StatusCode)
+	}
+	var out struct {
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Error, want) {
+		t.Fatalf("error = %q, want substring %q", out.Error, want)
+	}
 }

@@ -571,13 +571,15 @@ paths:
           $ref: "#/components/responses/ServiceUnavailable"
   /stories/import:
     post:
-      summary: Import pasted text as a reader story
+      summary: Import text as a reader story
       description: >
         Persists caller-provided target-language text as a tokenized story the
-        normal reader can load via GET /stories/{id}. This MVP accepts raw text
-        only; upload/PDF/EPUB extraction is deferred. If language or level is
-        omitted, the current profile defaults are used. Imported stories are
-        standalone reader content and do not create generation sessions or tasks.
+        normal reader can load via GET /stories/{id}. Clients may send pasted
+        text as JSON or upload one UTF-8 text/plain .txt file with
+        multipart/form-data. PDF/EPUB extraction is deferred. If language or
+        level is omitted, the current profile defaults are used. Imported stories
+        are standalone reader content and do not create generation sessions or
+        tasks.
       operationId: importStory
       requestBody:
         required: true
@@ -585,6 +587,9 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/ImportStoryRequest"
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/ImportStoryUploadRequest"
       responses:
         "201":
           description: Imported story
@@ -1103,6 +1108,23 @@ components:
           type: string
           description: "raw target-language text to tokenize for the reader"
       required: [text]
+    ImportStoryUploadRequest:
+      type: object
+      properties:
+        language:
+          type: string
+          description: "registered enabled language code, e.g. 'el'; defaults to profile.active_language"
+        level:
+          type: string
+          description: "beginner|elementary|intermediate|upper-intermediate|advanced; defaults to profile.level"
+        title:
+          type: string
+          description: "optional user-facing label stored as imported-story metadata"
+        file:
+          type: string
+          format: binary
+          description: "UTF-8 text/plain .txt file, at most 512 KiB"
+      required: [file]
     ImportStoryResponse:
       type: object
       properties:

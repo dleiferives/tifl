@@ -424,8 +424,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Import pasted text as a reader story
-         * @description Persists caller-provided target-language text as a tokenized story the normal reader can load via GET /stories/{id}. This MVP accepts raw text only; upload/PDF/EPUB extraction is deferred. If language or level is omitted, the current profile defaults are used. Imported stories are standalone reader content and do not create generation sessions or tasks.
+         * Import text as a reader story
+         * @description Persists caller-provided target-language text as a tokenized story the normal reader can load via GET /stories/{id}. Clients may send pasted text as JSON or upload one UTF-8 text/plain .txt file with multipart/form-data. PDF/EPUB extraction is deferred. If language or level is omitted, the current profile defaults are used. Imported stories are standalone reader content and do not create generation sessions or tasks.
          */
         post: operations["importStory"];
         delete?: never;
@@ -722,6 +722,19 @@ export interface components {
             title?: string;
             /** @description raw target-language text to tokenize for the reader */
             text: string;
+        };
+        ImportStoryUploadRequest: {
+            /** @description registered enabled language code, e.g. 'el'; defaults to profile.active_language */
+            language?: string;
+            /** @description beginner|elementary|intermediate|upper-intermediate|advanced; defaults to profile.level */
+            level?: string;
+            /** @description optional user-facing label stored as imported-story metadata */
+            title?: string;
+            /**
+             * Format: binary
+             * @description UTF-8 text/plain .txt file, at most 512 KiB
+             */
+            file: string;
         };
         ImportStoryResponse: {
             story_id: string;
@@ -1836,6 +1849,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ImportStoryRequest"];
+                "multipart/form-data": components["schemas"]["ImportStoryUploadRequest"];
             };
         };
         responses: {
