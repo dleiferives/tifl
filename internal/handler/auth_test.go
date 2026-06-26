@@ -12,6 +12,7 @@ import (
 
 	authn "github.com/dleiferives/tifl/internal/auth"
 	"github.com/dleiferives/tifl/internal/db"
+	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/handler"
 	"github.com/dleiferives/tifl/internal/lang"
 	"github.com/dleiferives/tifl/internal/tasks"
@@ -45,11 +46,24 @@ type authFailureResponse struct {
 
 func postAuthFailure(t *testing.T, client *http.Client, url, email, password string) authFailureResponse {
 	t.Helper()
+	return postAuthFailureWithHeaders(t, client, url, email, password, nil)
+}
+
+func postAuthFailureWithHeaders(t *testing.T, client *http.Client, url, email, password string, headers map[string]string) authFailureResponse {
+	t.Helper()
 	body, err := json.Marshal(map[string]string{"email": email, "password": password})
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := client.Post(url, "application/json", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,6 +228,77 @@ func TestThrottledRegisterDoesNotRevealKnownEmail(t *testing.T) {
 
 	if known != unknown {
 		t.Fatalf("known and unknown throttled register responses differed:\nknown:   %+v\nunknown: %+v", known, unknown)
+	}
+}
+
+func TestThrottledLoginRecordsSecurityEvent(t *testing.T) {
+	srv, repo := newAuthServer(t)
+	headers := map[string]string{"X-Forwarded-For": "203.0.113.99"}
+	var got authFailureResponse
+	for range 11 {
+		got = postAuthFailureWithHeaders(t, srv.Client(), srv.URL+"/api/v1/auth/login", "USER@Example.COM", "wrong horse battery staple", headers)
+	}
+	want := throttledAuthFailureResponse()
+	if got != want {
+		t.Fatalf("throttled login response = %+v, want %+v", got, want)
+	}
+
+	events := repo.AuthSecurityEvents()
+	if len(events) != 1 {
+		t.Fatalf("auth security events = %d, want 1: %+v", len(events), events)
+	}
+	event := events[0]
+	if event.EventType != domain.AuthSecurityEventThrottledAttempt || event.Flow != domain.AuthFlowLogin {
+		t.Fatalf("event type/flow = %s/%s", event.EventType, event.Flow)
+	}
+	if event.EmailHash != authn.SecurityEmailHash("user@example.com") {
+		t.Fatalf("event email hash = %q", event.EmailHash)
+	}
+	if event.SourceAddressBucket == "" || event.SourceAddressBucket == "ip:203.0.113.0/24" {
+		t.Fatalf("event source bucket used forwarded header: %q", event.SourceAddressBucket)
+	}
+	if event.Details["reason"] != "auth_limiter" {
+		t.Fatalf("event details = %+v", event.Details)
+	}
+}
+
+func TestThrottledRegisterRecordsSecurityEvent(t *testing.T) {
+	srv, repo := newAuthServer(t)
+	headers := map[string]string{"X-Forwarded-For": "203.0.113.99"}
+	var got authFailureResponse
+	for range 11 {
+		got = postAuthFailureWithHeaders(t, srv.Client(), srv.URL+"/api/v1/auth/register", "new@example.com", "too short", headers)
+	}
+	want := throttledAuthFailureResponse()
+	if got != want {
+		t.Fatalf("throttled register response = %+v, want %+v", got, want)
+	}
+
+	events := repo.AuthSecurityEvents()
+	if len(events) != 1 {
+		t.Fatalf("auth security events = %d, want 1: %+v", len(events), events)
+	}
+	event := events[0]
+	if event.EventType != domain.AuthSecurityEventThrottledAttempt || event.Flow != domain.AuthFlowRegister {
+		t.Fatalf("event type/flow = %s/%s", event.EventType, event.Flow)
+	}
+	if event.EmailHash != authn.SecurityEmailHash("new@example.com") {
+		t.Fatalf("event email hash = %q", event.EmailHash)
+	}
+	if event.SourceAddressBucket == "" || event.SourceAddressBucket == "ip:203.0.113.0/24" {
+		t.Fatalf("event source bucket used forwarded header: %q", event.SourceAddressBucket)
+	}
+	if event.Details["reason"] != "auth_limiter" {
+		t.Fatalf("event details = %+v", event.Details)
+	}
+}
+
+func throttledAuthFailureResponse() authFailureResponse {
+	return authFailureResponse{
+		StatusCode:  http.StatusTooManyRequests,
+		Body:        "{\"error\":\"too many authentication attempts\"}\n",
+		ContentType: "application/json",
+		RetryAfter:  "60",
 	}
 }
 

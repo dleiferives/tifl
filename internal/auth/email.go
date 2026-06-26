@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net/mail"
 	"strings"
 
@@ -53,4 +55,18 @@ func normalizeEmail(raw string) (string, error) {
 		return "", err
 	}
 	return email.Canonical, nil
+}
+
+// SecurityEmailHash returns a stable digest for security event rows without
+// persisting plaintext email addresses.
+func SecurityEmailHash(raw string) string {
+	email, err := normalizeEmail(raw)
+	if err != nil {
+		email = strings.TrimSpace(strings.ToLower(raw))
+	}
+	if email == "" {
+		email = "unknown"
+	}
+	sum := sha256.Sum256([]byte(email))
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
