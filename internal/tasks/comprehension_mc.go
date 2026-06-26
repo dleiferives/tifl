@@ -66,5 +66,5 @@ func (ComprehensionMC) Present(content map[string]any) map[string]any {
 }
 
 func (ComprehensionMC) ContentSchema() string {
-	return `{"question": string, "options": [string, string, ...], "correct_index": number, "target_item_ids": [string]}`
+	return `{"question": "...", "options": ["...", "...", "...", "..."], "correct_index": 0, "target_item_ids": ["key"]}`
 }
