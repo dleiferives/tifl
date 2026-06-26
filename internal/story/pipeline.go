@@ -641,6 +641,7 @@ func (p *Pipeline) runTaskType(ctx context.Context, sess domain.Session, lc doma
 		count = 1
 	}
 	var priorQuestions []string
+	contents := make([]map[string]any, 0, count)
 	for i := 0; i < count; i++ {
 		content, err := p.generateValidTaskContent(ctx, tt, spec.TaskTypeID, sourceText, lc, priorQuestions, taskStep)
 		if err != nil {
@@ -671,6 +672,10 @@ func (p *Pipeline) runTaskType(ctx context.Context, sess domain.Session, lc doma
 				priorQuestions = append(priorQuestions, qt2)
 			}
 		}
+		contents = append(contents, content)
+	}
+
+	for _, content := range contents {
 		if _, err := p.deps.Repo.CreateTask(ctx, domain.Task{
 			SessionID: sess.SessionID, UserID: sess.UserID, TaskType: spec.TaskTypeID,
 			Language: sess.Language, Content: content,

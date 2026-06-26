@@ -3,6 +3,9 @@ package tasks
 import (
 	"fmt"
 	"strings"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
 )
 
 // ValidateGeneratedContent rejects impossible task content before it is
@@ -42,6 +45,14 @@ func validateComprehensionMC(content map[string]any) error {
 			return fmt.Errorf("%w: comprehension_mc option %d is empty", ErrBadContent, i)
 		}
 	}
+	seen := make(map[string]int, len(options))
+	for i, option := range options {
+		key := normalizeMCOption(option)
+		if prev, ok := seen[key]; ok {
+			return fmt.Errorf("%w: comprehension_mc option %d duplicates option %d", ErrBadContent, i, prev)
+		}
+		seen[key] = i
+	}
 	correctIdx, ok := asWholeNumber(content, "correct_index")
 	if !ok {
 		return fmt.Errorf("%w: comprehension_mc correct_index is missing or non-integer", ErrBadContent)
@@ -50,6 +61,10 @@ func validateComprehensionMC(content map[string]any) error {
 		return fmt.Errorf("%w: comprehension_mc correct_index out of range", ErrBadContent)
 	}
 	return nil
+}
+
+func normalizeMCOption(s string) string {
+	return strings.TrimSpace(cases.Fold().String(norm.NFC.String(s)))
 }
 
 func validateFillBlank(tt TaskType, content map[string]any) error {

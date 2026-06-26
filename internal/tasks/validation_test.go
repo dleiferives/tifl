@@ -42,6 +42,16 @@ func TestValidateGeneratedContent(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "mc rejects duplicate normalized options",
+			tt:   ComprehensionMC{},
+			content: map[string]any{
+				"question":      "Q?",
+				"options":       []any{" One ", "one"},
+				"correct_index": float64(0),
+			},
+			wantErr: true,
+		},
+		{
 			name: "mc rejects out-of-range correct index",
 			tt:   ComprehensionMC{},
 			content: map[string]any{

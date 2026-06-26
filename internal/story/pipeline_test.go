@@ -642,6 +642,58 @@ func TestPipeline_InvalidGeneratedTaskRetriesBeforePersist(t *testing.T) {
 	}
 }
 
+func TestPipeline_TaskStageValidationFailureDoesNotLeavePartialTasks(t *testing.T) {
+	ctx := context.Background()
+	ctrl := &clientControl{
+		stories: []string{"a a a a"},
+		taskResponses: map[string][]string{
+			"task_comprehension_mc": {
+				`{"question":"Q1?","options":["one","two"],"correct_index":1}`,
+				`{"question":"Q2?","options":["one","two"],"correct_index":2}`,
+				`{"question":"Q2 retry?","options":["one","two"],"correct_index":2}`,
+			},
+		},
+	}
+	h := newHarness(t, ctrl, []string{tasks.TypeComprehensionMC})
+	sessID := h.newSession(t, "beginner")
+
+	must(t, h.pipeline.Generate(ctx, sessID, nil))
+
+	if got := h.stageStatus(t, sessID, domain.StageForTask(tasks.TypeComprehensionMC)); got != domain.StageFailed {
+		t.Fatalf("task stage = %q, want failed", got)
+	}
+	tks, _ := h.repo.ListSessionTasks(ctx, sessID)
+	if len(tks) != 0 {
+		t.Fatalf("failed task stage left partial tasks: %+v", tks)
+	}
+
+	ctrl.taskResponses = map[string][]string{
+		"task_comprehension_mc": {
+			`{"question":"Q1?","options":["one","two"],"correct_index":1}`,
+			`{"question":"Q2?","options":["one","two"],"correct_index":0}`,
+			`{"question":"Q3?","options":["one","two"],"correct_index":1}`,
+		},
+	}
+	ctrl.taskN = nil
+
+	must(t, h.pipeline.Retry(ctx, sessID, nil))
+
+	tks, _ = h.repo.ListSessionTasks(ctx, sessID)
+	if len(tks) != 3 {
+		t.Fatalf("retry should persist only the complete valid set, got %d tasks: %+v", len(tks), tks)
+	}
+	questions := make(map[string]bool, len(tks))
+	for _, task := range tks {
+		q, _ := task.Content["question"].(string)
+		questions[q] = true
+	}
+	for _, want := range []string{"Q1?", "Q2?", "Q3?"} {
+		if !questions[want] {
+			t.Fatalf("retry tasks missing %q: %+v", want, tks)
+		}
+	}
+}
+
 func TestPipeline_CoverageRetry(t *testing.T) {
 	ctx := context.Background()
 	// First story is mostly out-of-pool (low coverage); the second is fully
