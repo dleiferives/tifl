@@ -1092,12 +1092,34 @@ export interface components {
              * @description where the definition came from
              * @enum {string}
              */
-            source: "user" | "glossary" | "metadata" | "wiktionary" | "llm";
+            source: "user" | "glossary" | "metadata" | "wiktionary" | "wiktionary-native" | "wiktionary-translated" | "llm";
             gloss: string;
             grammatical_note?: string;
             example?: string;
             etymology?: string;
             notes?: string;
+            trace: components["schemas"]["DefinitionTrace"];
+        };
+        /** @description Debug-safe source trace for a reader definition lookup. */
+        DefinitionTrace: {
+            query_key: string;
+            resolved_key: string;
+            /** @enum {string} */
+            winning_source: "user" | "glossary" | "metadata" | "wiktionary" | "wiktionary-native" | "wiktionary-translated" | "llm";
+            steps: components["schemas"]["DefinitionTraceStep"][];
+        };
+        /** @description One checked source in the ordered definition lookup chain. */
+        DefinitionTraceStep: {
+            /** @enum {string} */
+            step: "user_dictionary" | "story_glossary" | "knowledge_metadata" | "shared_cache" | "canonical_key_follow" | "wiktionary" | "llm_fallback";
+            /** @enum {string} */
+            status: "hit" | "miss" | "skipped";
+            /** @enum {string} */
+            source?: "user" | "glossary" | "metadata" | "wiktionary" | "wiktionary-native" | "wiktionary-translated" | "llm";
+            key?: string;
+            target_key?: string;
+            count?: number;
+            reason?: string;
         };
         /** @description A caller-owned dictionary override for one canonical word key. */
         DictionaryEntry: {

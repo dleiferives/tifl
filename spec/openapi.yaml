@@ -1657,13 +1657,49 @@ components:
         source:
           type: string
           description: where the definition came from
-          enum: [user, glossary, metadata, wiktionary, llm]
+          enum: [user, glossary, metadata, wiktionary, wiktionary-native, wiktionary-translated, llm]
         gloss: { type: string }
         grammatical_note: { type: string }
         example: { type: string }
         etymology: { type: string }
         notes: { type: string }
-      required: [key, source, gloss]
+        trace:
+          $ref: "#/components/schemas/DefinitionTrace"
+      required: [key, source, gloss, trace]
+    DefinitionTrace:
+      type: object
+      description: Debug-safe source trace for a reader definition lookup.
+      properties:
+        query_key: { type: string }
+        resolved_key: { type: string }
+        winning_source:
+          type: string
+          enum: [user, glossary, metadata, wiktionary, wiktionary-native, wiktionary-translated, llm]
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/DefinitionTraceStep"
+      required: [query_key, resolved_key, winning_source, steps]
+    DefinitionTraceStep:
+      type: object
+      description: One checked source in the ordered definition lookup chain.
+      properties:
+        step:
+          type: string
+          enum: [user_dictionary, story_glossary, knowledge_metadata, shared_cache, canonical_key_follow, wiktionary, llm_fallback]
+        status:
+          type: string
+          enum: [hit, miss, skipped]
+        source:
+          type: string
+          enum: [user, glossary, metadata, wiktionary, wiktionary-native, wiktionary-translated, llm]
+        key: { type: string }
+        target_key: { type: string }
+        count:
+          type: integer
+          minimum: 0
+        reason: { type: string }
+      required: [step, status]
     DictionaryEntry:
       type: object
       description: A caller-owned dictionary override for one canonical word key.

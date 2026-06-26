@@ -88,6 +88,39 @@ const (
 	structureHintNotConsulted = "not_consulted"
 )
 
+// DefinitionResolution is a resolved definition plus debug-safe metadata for
+// the deterministic lookup path that produced it.
+type DefinitionResolution struct {
+	Definition domain.Definition
+	Trace      DefinitionTrace
+}
+
+// DefinitionTrace summarizes one definition lookup without exposing user IDs,
+// story IDs, prompts, or other tenant-private internals.
+type DefinitionTrace struct {
+	QueryKey      string
+	ResolvedKey   string
+	WinningSource string
+	Steps         []DefinitionTraceStep
+}
+
+// DefinitionTraceStep records one checked source in order.
+type DefinitionTraceStep struct {
+	Step      string
+	Status    string
+	Source    string
+	Key       string
+	TargetKey string
+	Count     int
+	Reason    string
+}
+
+const (
+	defTraceHit     = "hit"
+	defTraceMiss    = "miss"
+	defTraceSkipped = "skipped"
+)
+
 // NewDefinitionService builds the service. client may be nil (live LLM paths then
 // return ErrLLMUnavailable); wik may be nil (Wiktionary hop is skipped);
 // langs may be nil (canonical key plugin extraction disabled).
@@ -98,48 +131,85 @@ func NewDefinitionService(repo db.Repository, client llm.Client, wik WiktionaryS
 // Resolve returns the best available definition for a word key in a story,
 // walking the resolution chain and caching a live result globally.
 func (s *DefinitionService) Resolve(ctx context.Context, userID, storyID, key string) (domain.Definition, error) {
-	_, language, err := s.story(ctx, userID, storyID)
+	res, err := s.ResolveWithTrace(ctx, userID, storyID, key)
 	if err != nil {
 		return domain.Definition{}, err
+	}
+	return res.Definition, nil
+}
+
+// ResolveWithTrace returns the best available definition and the ordered,
+// debug-safe source trace for the lookup.
+func (s *DefinitionService) ResolveWithTrace(ctx context.Context, userID, storyID, key string) (DefinitionResolution, error) {
+	_, language, err := s.story(ctx, userID, storyID)
+	if err != nil {
+		return DefinitionResolution{}, err
+	}
+	trace := DefinitionTrace{QueryKey: key}
+	finish := func(d domain.Definition) (DefinitionResolution, error) {
+		trace.ResolvedKey = d.ItemKey
+		trace.WinningSource = d.Source
+		return DefinitionResolution{Definition: d, Trace: trace}, nil
 	}
 
 	// 1. Per-user dictionary — learner-owned overrides always win.
 	if d, err := s.repo.GetUserDefinition(ctx, userID, language, key); err == nil {
-		return domain.Definition{
+		trace.Steps = append(trace.Steps, DefinitionTraceStep{
+			Step: "user_dictionary", Status: defTraceHit, Source: domain.DefinitionSourceUser, Key: key,
+		})
+		return finish(domain.Definition{
 			Language: language, ItemKey: key, Source: domain.DefinitionSourceUser,
 			Gloss: d.Gloss, Notes: d.Notes, CreatedAt: d.CreatedAt,
-		}, nil
+		})
 	} else if !errors.Is(err, db.ErrNotFound) {
-		return domain.Definition{}, err
+		return DefinitionResolution{}, err
 	}
+	trace.Steps = append(trace.Steps, DefinitionTraceStep{Step: "user_dictionary", Status: defTraceMiss, Source: domain.DefinitionSourceUser, Key: key})
 
 	// 2. Per-story glossary — the generator's own gloss for this word.
 	if entries, err := s.repo.ListStoryGlossary(ctx, storyID); err == nil {
 		for _, g := range entries {
 			if g.ItemKey == key {
-				return domain.Definition{
+				trace.Steps = append(trace.Steps, DefinitionTraceStep{
+					Step: "story_glossary", Status: defTraceHit, Source: domain.DefinitionSourceGlossary, Key: key, Count: len(entries),
+				})
+				return finish(domain.Definition{
 					Language: language, ItemKey: key, Source: domain.DefinitionSourceGlossary,
 					Gloss: g.Gloss, GrammaticalNote: g.GrammaticalNote, Example: g.Example,
-				}, nil
+				})
 			}
 		}
+		trace.Steps = append(trace.Steps, DefinitionTraceStep{
+			Step: "story_glossary", Status: defTraceMiss, Source: domain.DefinitionSourceGlossary, Key: key, Count: len(entries),
+		})
+	} else {
+		trace.Steps = append(trace.Steps, DefinitionTraceStep{
+			Step: "story_glossary", Status: defTraceSkipped, Source: domain.DefinitionSourceGlossary, Key: key, Reason: "lookup_error",
+		})
 	}
 
 	// 3. knowledge_items.metadata — a gloss carried on the item itself.
 	if d, ok, err := s.fromMetadata(ctx, language, key); err != nil {
-		return domain.Definition{}, err
+		return DefinitionResolution{}, err
 	} else if ok {
-		return d, nil
+		trace.Steps = append(trace.Steps, DefinitionTraceStep{
+			Step: "knowledge_metadata", Status: defTraceHit, Source: domain.DefinitionSourceMetadata, Key: key,
+		})
+		return finish(d)
 	}
+	trace.Steps = append(trace.Steps, DefinitionTraceStep{Step: "knowledge_metadata", Status: defTraceMiss, Source: domain.DefinitionSourceMetadata, Key: key})
 
 	// 4. Shared cache — a previously stored Wiktionary/LLM definition.
 	cached, err := s.repo.ListDefinitions(ctx, language, key)
 	if err != nil {
-		return domain.Definition{}, err
+		return DefinitionResolution{}, err
 	}
 	// Track the native gloss for the LLM translate path in step 6.
 	nativeGloss := nativeGlossFrom(cached)
 	if d, ok := pickDefinition(cached); ok {
+		trace.Steps = append(trace.Steps, DefinitionTraceStep{
+			Step: "shared_cache", Status: defTraceHit, Source: d.Source, Key: key, Count: len(cached),
+		})
 		// 4.5 Canonical key follow: if this is a form alias, look up the lemma's
 		// definition. The lemma's entry is the authoritative one (it was the kaikki
 		// headword) and likely has a better English gloss than the form alias,
@@ -154,30 +224,56 @@ func (s *DefinitionService) Resolve(ctx context.Context, userID, storyID, key st
 		if canonKey != "" && canonKey != key {
 			if canonDefs, err2 := s.repo.ListDefinitions(ctx, language, canonKey); err2 == nil {
 				if canon, ok2 := pickDefinition(canonDefs); ok2 {
-					return canon, nil
+					trace.Steps = append(trace.Steps, DefinitionTraceStep{
+						Step: "canonical_key_follow", Status: defTraceHit, Source: canon.Source, Key: key, TargetKey: canonKey, Count: len(canonDefs),
+					})
+					return finish(canon)
 				}
+				trace.Steps = append(trace.Steps, DefinitionTraceStep{
+					Step: "canonical_key_follow", Status: defTraceMiss, Key: key, TargetKey: canonKey, Count: len(canonDefs),
+				})
+			} else {
+				trace.Steps = append(trace.Steps, DefinitionTraceStep{
+					Step: "canonical_key_follow", Status: defTraceSkipped, Key: key, TargetKey: canonKey, Reason: "lookup_error",
+				})
 			}
 		}
-		return d, nil
+		return finish(d)
 	}
+	trace.Steps = append(trace.Steps, DefinitionTraceStep{Step: "shared_cache", Status: defTraceMiss, Key: key, Count: len(cached)})
 
 	// 5. Live Wiktionary (cached on hit).
 	if s.wik != nil {
 		if d, ok, err := s.wik.Lookup(ctx, language, key); err == nil && ok {
 			d.Language, d.ItemKey, d.Source = language, key, domain.DefinitionSourceWiktionary
 			_ = s.repo.UpsertDefinition(ctx, d)
-			return d, nil
+			trace.Steps = append(trace.Steps, DefinitionTraceStep{
+				Step: "wiktionary", Status: defTraceHit, Source: domain.DefinitionSourceWiktionary, Key: key,
+			})
+			return finish(d)
+		} else if err == nil {
+			trace.Steps = append(trace.Steps, DefinitionTraceStep{
+				Step: "wiktionary", Status: defTraceMiss, Source: domain.DefinitionSourceWiktionary, Key: key,
+			})
+		} else {
+			trace.Steps = append(trace.Steps, DefinitionTraceStep{
+				Step: "wiktionary", Status: defTraceSkipped, Source: domain.DefinitionSourceWiktionary, Key: key, Reason: "lookup_error",
+			})
 		}
+	} else {
+		trace.Steps = append(trace.Steps, DefinitionTraceStep{
+			Step: "wiktionary", Status: defTraceSkipped, Source: domain.DefinitionSourceWiktionary, Key: key, Reason: "source_unconfigured",
+		})
 	}
 
 	// 6. Live LLM — translate native gloss if available, otherwise cold generation.
 	if s.client == nil {
-		return domain.Definition{}, ErrLLMUnavailable
+		return DefinitionResolution{}, ErrLLMUnavailable
 	}
 	res, err := llm.CompleteJSON(ctx, s.client, llm.DefinitionBuilder{Key: key, NativeGloss: nativeGloss},
 		domain.LearnerCtx{Language: language}, func(r llm.DefinitionResult) error { return r.Validate() })
 	if err != nil {
-		return domain.Definition{}, err
+		return DefinitionResolution{}, err
 	}
 	d := domain.Definition{
 		Language: language, ItemKey: key, Source: domain.DefinitionSourceLLM,
@@ -185,7 +281,10 @@ func (s *DefinitionService) Resolve(ctx context.Context, userID, storyID, key st
 		CreatedAt: s.now(),
 	}
 	_ = s.repo.UpsertDefinition(ctx, d)
-	return d, nil
+	trace.Steps = append(trace.Steps, DefinitionTraceStep{
+		Step: "llm_fallback", Status: defTraceHit, Source: domain.DefinitionSourceLLM, Key: key,
+	})
+	return finish(d)
 }
 
 // SentenceBreakdown returns the breakdown of the sentence containing position.
