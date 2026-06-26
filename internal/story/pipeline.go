@@ -731,6 +731,7 @@ func (p *Pipeline) buildStepInputs(lc domain.LearnerCtx, priorSteps map[string]a
 func (p *Pipeline) generateStory(ctx context.Context, lc domain.LearnerCtx, step *llm.StepDef, onboardingHint string) (llm.StoryResult, int, error) {
 	if step != nil {
 		inputs := p.buildStepInputs(lc, nil, nil, nil)
+		inputs.OnboardingHint = onboardingHint
 		start := time.Now()
 		out, err := llm.RunDAGStep(ctx, *step, inputs, p.deps.Client)
 		if err != nil {
