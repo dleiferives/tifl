@@ -66,11 +66,13 @@ func (s fixedSelector) Select(context.Context, selector.SelectRequest) (domain.S
 // and which task-type kinds should error (to exercise per-type failure isolation
 // and retry).
 type clientControl struct {
-	stories     []string
-	storyN      int
-	failKind    map[string]bool
-	scopeReject bool   // when true, scope_check returns viable=false
-	scopeReason string // reason text for a rejection (defaults if empty)
+	stories       []string
+	storyN        int
+	failKind      map[string]bool
+	taskResponses map[string][]string
+	taskN         map[string]int
+	scopeReject   bool   // when true, scope_check returns viable=false
+	scopeReason   string // reason text for a rejection (defaults if empty)
 }
 
 func (c *clientControl) client() *llm.FakeClient {
@@ -108,6 +110,19 @@ func (c *clientControl) client() *llm.FakeClient {
 				"glossary": []map[string]string{{"key": "a", "gloss": "letter a"}},
 			})
 			return llm.LLMResponse{Text: string(body), OutputTokens: 50}, nil
+		}
+		if strings.HasPrefix(kind, "task_") {
+			if seq := c.taskResponses[kind]; len(seq) > 0 {
+				if c.taskN == nil {
+					c.taskN = make(map[string]int)
+				}
+				i := c.taskN[kind]
+				c.taskN[kind]++
+				if i >= len(seq) {
+					i = len(seq) - 1
+				}
+				return llm.LLMResponse{Text: seq[i], OutputTokens: 20}, nil
+			}
 		}
 		return llm.LLMResponse{Text: llm.FakeTaskJSON, OutputTokens: 20}, nil
 	}}
@@ -563,6 +578,66 @@ func TestPipeline_TaskTargetsPopulated(t *testing.T) {
 		}
 		if n != 2 {
 			t.Fatalf("task content missing injected target ids: %+v", task.Content)
+		}
+	}
+}
+
+func TestPipeline_InvalidGeneratedTaskDoesNotPersist(t *testing.T) {
+	ctx := context.Background()
+	ctrl := &clientControl{
+		stories: []string{"a a a a"},
+		taskResponses: map[string][]string{
+			"task_comprehension_mc": {
+				`{"question":"Q?","options":["one","two"],"correct_index":2}`,
+			},
+		},
+	}
+	h := newHarness(t, ctrl, []string{tasks.TypeComprehensionMC})
+	sessID := h.newSession(t, "beginner")
+
+	must(t, h.pipeline.Generate(ctx, sessID, nil))
+
+	sess, _ := h.repo.GetSession(ctx, sessID)
+	if sess.Status != domain.StatusFailed {
+		t.Fatalf("want failed when no task type persists, got %q", sess.Status)
+	}
+	if got := h.stageStatus(t, sessID, domain.StageForTask(tasks.TypeComprehensionMC)); got != domain.StageFailed {
+		t.Fatalf("task stage = %q, want failed", got)
+	}
+	tks, _ := h.repo.ListSessionTasks(ctx, sessID)
+	if len(tks) != 0 {
+		t.Fatalf("invalid generated task persisted: %+v", tks)
+	}
+}
+
+func TestPipeline_InvalidGeneratedTaskRetriesBeforePersist(t *testing.T) {
+	ctx := context.Background()
+	ctrl := &clientControl{
+		stories: []string{"a a a a"},
+		taskResponses: map[string][]string{
+			"task_comprehension_mc": {
+				`{"question":"Q?","options":["one","two"],"correct_index":2}`,
+				`{"question":"Q1?","options":["one","two"],"correct_index":1}`,
+				`{"question":"Q2?","options":["one","two"],"correct_index":0}`,
+				`{"question":"Q3?","options":["one","two"],"correct_index":1}`,
+			},
+		},
+	}
+	h := newHarness(t, ctrl, []string{tasks.TypeComprehensionMC})
+	sessID := h.newSession(t, "beginner")
+
+	must(t, h.pipeline.Generate(ctx, sessID, nil))
+
+	if got := h.stageStatus(t, sessID, domain.StageForTask(tasks.TypeComprehensionMC)); got != domain.StageComplete {
+		t.Fatalf("task stage = %q, want complete", got)
+	}
+	tks, _ := h.repo.ListSessionTasks(ctx, sessID)
+	if len(tks) != 3 {
+		t.Fatalf("want 3 valid tasks, got %d: %+v", len(tks), tks)
+	}
+	for _, task := range tks {
+		if err := tasks.ValidateGeneratedContent(tasks.ComprehensionMC{}, task.Content); err != nil {
+			t.Fatalf("persisted invalid task content: %v; content=%+v", err, task.Content)
 		}
 	}
 }
