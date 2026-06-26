@@ -3,6 +3,7 @@ package handler_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -359,6 +360,16 @@ func TestSentenceAndWordBreakdown(t *testing.T) {
 	if sresp.StatusCode != http.StatusOK {
 		t.Fatalf("sentence: want 200, got %d", sresp.StatusCode)
 	}
+	var sentence map[string]any
+	if err := json.NewDecoder(sresp.Body).Decode(&sentence); err != nil {
+		t.Fatal(err)
+	}
+	if _, leaked := sentence["trace"]; leaked {
+		t.Fatalf("sentence endpoint should preserve breakdown JSON shape, got trace in %+v", sentence)
+	}
+	if sentence["translation"] == "" {
+		t.Fatalf("sentence breakdown content missing translation: %+v", sentence)
+	}
 
 	wresp, err := http.Post(srv.URL+"/api/v1/stories/"+storyID+"/word", "application/json",
 		strings.NewReader(`{"key":"a"}`))
@@ -368,6 +379,55 @@ func TestSentenceAndWordBreakdown(t *testing.T) {
 	defer wresp.Body.Close()
 	if wresp.StatusCode != http.StatusOK {
 		t.Fatalf("word: want 200, got %d", wresp.StatusCode)
+	}
+	var word map[string]any
+	if err := json.NewDecoder(wresp.Body).Decode(&word); err != nil {
+		t.Fatal(err)
+	}
+	if _, leaked := word["trace"]; leaked {
+		t.Fatalf("word endpoint should preserve breakdown JSON shape, got trace in %+v", word)
+	}
+	if word["root"] == "" {
+		t.Fatalf("word breakdown content missing root: %+v", word)
+	}
+}
+
+func TestBreakdownOtherUsersStoryReturns404WithoutTrace(t *testing.T) {
+	srv, repo := newServer(t, true)
+	ctx := context.Background()
+	other, err := repo.CreateUser(ctx, domain.User{Email: "other@example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	story, err := repo.CreateStory(ctx, domain.Story{
+		UserID: other.UserID, Language: "xx", Text: "a b", Level: "beginner",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ReplaceStoryTokens(ctx, story.StoryID, []domain.StoryToken{
+		{StoryID: story.StoryID, Position: 0, Surface: "a", ItemKey: "a", SurfaceKey: "a", IsWord: true},
+		{StoryID: story.StoryID, Position: 1, Surface: " ", IsWord: false},
+		{StoryID: story.StoryID, Position: 2, Surface: "b", ItemKey: "b", SurfaceKey: "b", IsWord: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Post(srv.URL+"/api/v1/stories/"+story.StoryID+"/sentence", "application/json",
+		strings.NewReader(`{"position":0}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("want 404 for other user's story, got %d body=%s", resp.StatusCode, string(body))
+	}
+	if strings.Contains(string(body), "trace") || strings.Contains(string(body), story.StoryID) {
+		t.Fatalf("cross-tenant error leaked trace/story details: %s", string(body))
 	}
 }
 

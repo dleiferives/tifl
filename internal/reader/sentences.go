@@ -10,10 +10,10 @@ import (
 // positions. EndPosition is half-open: tokens with position >= StartPosition and
 // < EndPosition are part of the sentence.
 type SentenceSpan struct {
-	Index         int
-	StartPosition int
-	EndPosition   int
-	Text          string
+	Index         int    `json:"index"`
+	StartPosition int    `json:"start_position"`
+	EndPosition   int    `json:"end_position"`
+	Text          string `json:"text"`
 }
 
 // sentenceTerminators are the characters that end a sentence for the
