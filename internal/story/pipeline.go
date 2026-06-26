@@ -307,7 +307,7 @@ func (p *Pipeline) completedContent(ctx context.Context, sess domain.Session, st
 		if err != nil {
 			return "", false
 		}
-		return joinPhrases(ps.Items), true
+		return joinPhraseTexts(ps.Items, func(it domain.PhraseItem) string { return it.TargetText }), true
 	}
 	storyDone := sess.StoryID != nil &&
 		stages[domain.StageStoryGeneration].Status == domain.StageComplete &&
@@ -454,6 +454,17 @@ func (p *Pipeline) runStory(ctx context.Context, sess domain.Session, lc domain.
 		return domain.Story{}, err
 	}
 
+	// Look up the LP's DAG story step; nil falls back to the generic builder.
+	var storyStep *llm.StepDef
+	if cp, ok := plugin.(lang.StoryContractProvider); ok {
+		dag := cp.StorySessionDAG()
+		if err := dag.Validate([]llm.OutputKind{llm.OutputStory, llm.OutputMCTask, llm.OutputFillTask}); err == nil {
+			if s, ok := dag.StepByOutput(llm.OutputStory); ok {
+				storyStep = &s
+			}
+		}
+	}
+
 	var (
 		result   llm.StoryResult
 		tokens   []lang.Token
@@ -461,7 +472,7 @@ func (p *Pipeline) runStory(ctx context.Context, sess domain.Session, lc domain.
 	)
 	attempts := p.cfg.CoverageRetries + 1
 	for attempt := 0; attempt < attempts; attempt++ {
-		res, rate, err := p.generateStory(ctx, lc)
+		res, rate, err := p.generateStory(ctx, lc, storyStep)
 		if err != nil {
 			se := fail(ErrCodeStory, err)
 			p.failStage(ctx, sess.SessionID, domain.StageStoryGeneration, se)
@@ -561,7 +572,7 @@ func (p *Pipeline) runPhraseSet(ctx context.Context, sess domain.Session, lc dom
 	}
 	p.completeStage(ctx, sess.SessionID, stage)
 	emit.emit(Event{Stage: stage, Status: string(domain.StageComplete)})
-	return generatedContent{sourceText: joinPhrases(items)}, nil
+	return generatedContent{sourceText: joinPhraseTexts(items, func(it domain.PhraseItem) string { return it.TargetText })}, nil
 }
 
 // runTasks generates tasks for every supported, composed task type, each in its
@@ -605,13 +616,28 @@ func (p *Pipeline) runTaskType(ctx context.Context, sess domain.Session, lc doma
 	p.beginStage(ctx, sess.SessionID, stage)
 	emit.emit(Event{Stage: stage, Status: string(domain.StageInProgress)})
 
+	// Look up the LP's DAG task step; nil falls back to the generic builder.
+	var taskStep *llm.StepDef
+	if plugin, ok := p.deps.Langs.Get(sess.Language); ok {
+		if cp, ok := plugin.(lang.StoryContractProvider); ok {
+			dag := cp.StorySessionDAG()
+			if err := dag.Validate([]llm.OutputKind{llm.OutputStory, llm.OutputMCTask, llm.OutputFillTask}); err == nil {
+				if outputKind := taskTypeOutputKind(spec.TaskTypeID); outputKind != "" {
+					if s, ok := dag.StepByOutput(outputKind); ok {
+						taskStep = &s
+					}
+				}
+			}
+		}
+	}
+
 	count := spec.Count
 	if count < 1 {
 		count = 1
 	}
 	var priorQuestions []string
 	for i := 0; i < count; i++ {
-		content, err := p.generateTaskContent(ctx, spec.TaskTypeID, sourceText, lc, priorQuestions)
+		content, err := p.generateTaskContent(ctx, spec.TaskTypeID, sourceText, lc, priorQuestions, taskStep)
 		if err != nil {
 			se := fail(ErrCodeTaskGenerate, err)
 			p.failStage(ctx, sess.SessionID, stage, se)
@@ -628,7 +654,7 @@ func (p *Pipeline) runTaskType(ctx context.Context, sess domain.Session, lc doma
 				}
 			}
 			if dup {
-				content, err = p.generateTaskContent(ctx, spec.TaskTypeID, sourceText, lc, priorQuestions)
+				content, err = p.generateTaskContent(ctx, spec.TaskTypeID, sourceText, lc, priorQuestions, taskStep)
 				if err != nil {
 					se := fail(ErrCodeTaskGenerate, err)
 					p.failStage(ctx, sess.SessionID, stage, se)
@@ -656,11 +682,59 @@ func (p *Pipeline) runTaskType(ctx context.Context, sess domain.Session, lc doma
 	return nil
 }
 
+// taskTypeOutputKind maps a task type ID to its OutputKind for DAG step lookup.
+func taskTypeOutputKind(taskTypeID string) llm.OutputKind {
+	switch taskTypeID {
+	case "comprehension_mc":
+		return llm.OutputMCTask
+	case "fill_blank":
+		return llm.OutputFillTask
+	}
+	return ""
+}
+
+// buildStepInputs assembles a StepInputs from a LearnerCtx and optional
+// prior step outputs, prior questions, and content schemas. It is the bridge
+// between the pipeline's LearnerCtx world and the DAG runner's StepInputs
+// contract.
+func (p *Pipeline) buildStepInputs(lc domain.LearnerCtx, priorSteps map[string]any, priorQuestions []string, contentSchemas map[string]string) llm.StepInputs {
+	topic := ""
+	if lc.Guidance != nil {
+		topic = lc.Guidance.Topic
+	}
+	return llm.StepInputs{
+		Targets:        lc.Selected.Targets,
+		Background:     lc.Selected.Background,
+		New:            lc.Selected.New,
+		Skills:         lc.Skills,
+		Level:          lc.Level,
+		Topic:          topic,
+		History:        lc.RecentHistory,
+		PriorQuestions: priorQuestions,
+		ContentSchemas: contentSchemas,
+		Steps:          priorSteps,
+	}
+}
+
 // generateStory runs the story builder through CompleteJSON (which stamps the
 // prompt version, retries malformed JSON once, and records the llm_calls row)
 // and reports an approximate token_rate from the elapsed wall time for the SSE
 // ticker. The story text is never streamed; this is a rate visualization only.
-func (p *Pipeline) generateStory(ctx context.Context, lc domain.LearnerCtx) (llm.StoryResult, int, error) {
+// When step is non-nil the LP's DAG step is used instead of the generic builder.
+func (p *Pipeline) generateStory(ctx context.Context, lc domain.LearnerCtx, step *llm.StepDef) (llm.StoryResult, int, error) {
+	if step != nil {
+		inputs := p.buildStepInputs(lc, nil, nil, nil)
+		start := time.Now()
+		out, err := llm.RunDAGStep(ctx, *step, inputs, p.deps.Client)
+		if err != nil {
+			return llm.StoryResult{}, 0, err
+		}
+		res, ok := out.(llm.StoryResult)
+		if !ok {
+			return llm.StoryResult{}, 0, fmt.Errorf("story step returned unexpected type %T", out)
+		}
+		return res, approxTokenRate(res.Story, time.Since(start)), nil
+	}
 	builder := llm.StoryBuilder{}
 	if len(lc.Selected.Background) == 0 {
 		if plugin, ok := p.deps.Langs.Get(lc.Language); ok {
@@ -687,14 +761,31 @@ func (p *Pipeline) generatePhrases(ctx context.Context, lc domain.LearnerCtx) (l
 	if err != nil {
 		return llm.PhraseSetResult{}, 0, err
 	}
-	return res, approxTokenRate(joinPhraseResults(res.Phrases), time.Since(start)), nil
+	return res, approxTokenRate(joinPhraseTexts(res.Phrases, func(p llm.PhraseResult) string { return p.TargetText }), time.Since(start)), nil
 }
 
 // generateTaskContent builds and sends the task-content prompt for one type,
 // decoding the reply into an opaque content map the task type owns.
 // priorQuestions are question texts already generated this session, passed to
-// the builder so the model avoids repeating them.
-func (p *Pipeline) generateTaskContent(ctx context.Context, taskTypeID, storyText string, lc domain.LearnerCtx, priorQuestions []string) (map[string]any, error) {
+// the builder so the model avoids repeating them. When step is non-nil the
+// LP's DAG step is used instead of the generic TaskBuilder.
+func (p *Pipeline) generateTaskContent(ctx context.Context, taskTypeID, storyText string, lc domain.LearnerCtx, priorQuestions []string, step *llm.StepDef) (map[string]any, error) {
+	if step != nil {
+		schemas := make(map[string]string)
+		if tt, ok := p.deps.Tasks.Get(taskTypeID); ok {
+			schemas[taskTypeID] = tt.ContentSchema()
+		}
+		priorSteps := map[string]any{"story": llm.StoryResult{Story: storyText}}
+		inputs := p.buildStepInputs(lc, priorSteps, priorQuestions, schemas)
+		out, err := llm.RunDAGStep(ctx, *step, inputs, p.deps.Client)
+		if err != nil {
+			return nil, err
+		}
+		if m, ok := out.(map[string]any); ok {
+			return m, nil
+		}
+		return nil, fmt.Errorf("task step %q returned unexpected type %T", taskTypeID, out)
+	}
 	b := llm.TaskBuilder{Story: storyText, TaskTypeID: taskTypeID, PriorQuestions: priorQuestions}
 	if tt, ok := p.deps.Tasks.Get(taskTypeID); ok {
 		b.ContentSchema = tt.ContentSchema()
@@ -891,24 +982,14 @@ func toPhraseItems(phrases []llm.PhraseResult, targetIDs []string) []domain.Phra
 	return out
 }
 
-// joinPhrases concatenates a phrase set's target texts into one block, the source
-// text task generation consumes when the session content is a phrase set.
-func joinPhrases(items []domain.PhraseItem) string {
+// joinPhraseTexts concatenates target texts from a phrase-like slice into one
+// block. getText extracts the phrase text from each element. Used both for
+// persisted domain.PhraseItem slices (source text for task generation) and for
+// raw llm.PhraseResult slices (token-rate estimation before ids are assigned).
+func joinPhraseTexts[T any](items []T, getText func(T) string) string {
 	parts := make([]string, 0, len(items))
 	for _, it := range items {
-		if t := strings.TrimSpace(it.TargetText); t != "" {
-			parts = append(parts, t)
-		}
-	}
-	return strings.Join(parts, "\n")
-}
-
-// joinPhraseResults is joinPhrases for the model's raw result, used only for the
-// token-rate estimate before items are assigned ids.
-func joinPhraseResults(phrases []llm.PhraseResult) string {
-	parts := make([]string, 0, len(phrases))
-	for _, p := range phrases {
-		if t := strings.TrimSpace(p.TargetText); t != "" {
+		if t := strings.TrimSpace(getText(it)); t != "" {
 			parts = append(parts, t)
 		}
 	}
