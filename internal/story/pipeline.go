@@ -641,8 +641,9 @@ func (p *Pipeline) runTaskType(ctx context.Context, sess domain.Session, lc doma
 		count = 1
 	}
 	var priorQuestions []string
+	contents := make([]map[string]any, 0, count)
 	for i := 0; i < count; i++ {
-		content, err := p.generateTaskContent(ctx, spec.TaskTypeID, sourceText, lc, priorQuestions, taskStep)
+		content, err := p.generateValidTaskContent(ctx, tt, spec.TaskTypeID, sourceText, lc, priorQuestions, taskStep)
 		if err != nil {
 			se := fail(ErrCodeTaskGenerate, err)
 			p.failStage(ctx, sess.SessionID, stage, se)
@@ -659,7 +660,7 @@ func (p *Pipeline) runTaskType(ctx context.Context, sess domain.Session, lc doma
 				}
 			}
 			if dup {
-				content, err = p.generateTaskContent(ctx, spec.TaskTypeID, sourceText, lc, priorQuestions, taskStep)
+				content, err = p.generateValidTaskContent(ctx, tt, spec.TaskTypeID, sourceText, lc, priorQuestions, taskStep)
 				if err != nil {
 					se := fail(ErrCodeTaskGenerate, err)
 					p.failStage(ctx, sess.SessionID, stage, se)
@@ -671,7 +672,10 @@ func (p *Pipeline) runTaskType(ctx context.Context, sess domain.Session, lc doma
 				priorQuestions = append(priorQuestions, qt2)
 			}
 		}
-		injectTargets(content, spec.TaskTypeID, lc.Selected.Targets)
+		contents = append(contents, content)
+	}
+
+	for _, content := range contents {
 		if _, err := p.deps.Repo.CreateTask(ctx, domain.Task{
 			SessionID: sess.SessionID, UserID: sess.UserID, TaskType: spec.TaskTypeID,
 			Language: sess.Language, Content: content,
@@ -685,6 +689,23 @@ func (p *Pipeline) runTaskType(ctx context.Context, sess domain.Session, lc doma
 	p.completeStage(ctx, sess.SessionID, stage)
 	emit.emit(Event{Stage: stage, Status: string(domain.StageComplete)})
 	return nil
+}
+
+func (p *Pipeline) generateValidTaskContent(ctx context.Context, tt tasks.TaskType, taskTypeID, storyText string, lc domain.LearnerCtx, priorQuestions []string, step *llm.StepDef) (map[string]any, error) {
+	var lastErr error
+	for range 2 {
+		content, err := p.generateTaskContent(ctx, taskTypeID, storyText, lc, priorQuestions, step)
+		if err != nil {
+			return nil, err
+		}
+		injectTargets(content, taskTypeID, lc.Selected.Targets)
+		if err := tasks.ValidateGeneratedContent(tt, content); err != nil {
+			lastErr = err
+			continue
+		}
+		return content, nil
+	}
+	return nil, lastErr
 }
 
 // taskTypeOutputKind maps a task type ID to its OutputKind for DAG step lookup.
