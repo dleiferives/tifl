@@ -183,9 +183,12 @@ func (g Greek) ExtractCanonicalKey(nativeGloss string) (string, bool) {
 	}
 	after := strings.TrimSpace(last[idx+len("του "):])
 	word := strings.FieldsFunc(after, func(r rune) bool {
-		return !unicode.IsLetter(r) && r != '\'' && r != '’'
+		return !unicode.IsLetter(r) && r != '\'' && r != '\u2019'
 	})
-	if len(word) == 0 {
+	// Form descriptions end with "του LEMMA" — the lemma is the last token.
+	// If there are more words after the candidate, this is a regular definition
+	// containing a genitive article, not a form-alias pointer; bail out.
+	if len(word) != 1 {
 		return "", false
 	}
 	candidate := word[0]

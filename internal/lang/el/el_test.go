@@ -385,3 +385,28 @@ func contains(values []string, want string) bool {
 	}
 	return false
 }
+
+func TestExtractCanonicalKey(t *testing.T) {
+	g := New()
+	cases := []struct {
+		gloss   string
+		wantKey string
+		wantOK  bool
+	}{
+		// form descriptions — lemma is the final token after "του"
+		{"γ΄ πρόσωπο ενικού οριστικής ενεστώτα του κρατάω", "κρατάω", true},
+		{"αδύναμος τύπος του κρατώ", "κρατώ", true},
+		// regular noun definitions with "του" as a genitive article — must NOT match
+		{"τρόφιμο παρασκευαζόμενο από αλεύρι του σίτου και νερό", "", false},
+		{"είδος αρτοσκευάσματος φτιαγμένου από ζύμη του αλευριού με αλάτι", "", false},
+		// no "του" at all
+		{"ρήμα κίνησης", "", false},
+	}
+	for _, c := range cases {
+		key, ok := g.ExtractCanonicalKey(c.gloss)
+		if ok != c.wantOK || key != c.wantKey {
+			t.Errorf("ExtractCanonicalKey(%q) = (%q, %v), want (%q, %v)",
+				c.gloss, key, ok, c.wantKey, c.wantOK)
+		}
+	}
+}

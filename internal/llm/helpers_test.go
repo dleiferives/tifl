@@ -45,6 +45,12 @@ func TestExtractJSON(t *testing.T) {
 		"```json\n{\"a\":1}\n```":         `{"a":1}`,
 		"Sure! {\"a\":1} hope that helps": `{"a":1}`,
 		"no json here":                    "no json here",
+		// literal tab inside a string value must be escaped
+		"{\"story\":\"hello\tworld\"}": `{"story":"hello\tworld"}`,
+		// literal newline inside a string value must be escaped
+		"{\"story\":\"line1\nline2\"}": `{"story":"line1\nline2"}`,
+		// structural whitespace (tab between tokens) must be preserved
+		"{\t\"a\":1}": "{\t\"a\":1}",
 	}
 	for in, want := range cases {
 		if got := ExtractJSON(in); got != want {

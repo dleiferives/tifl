@@ -238,13 +238,58 @@ func withPromptVersion(ctx context.Context, version string) context.Context {
 // ExtractJSON tolerates the common ways a model wraps its JSON object: leading
 // prose, a ```json fence, or trailing text. It returns the substring from the
 // first '{' to the last '}', or the trimmed input if no object is found (letting
-// json.Unmarshal report the real error).
+// json.Unmarshal report the real error). It also sanitizes literal control
+// characters inside JSON string values (e.g. a literal tab in a story field)
+// which are invalid JSON and would otherwise cause "invalid character" errors.
 func ExtractJSON(s string) string {
 	s = strings.TrimSpace(s)
 	start := strings.IndexByte(s, '{')
 	end := strings.LastIndexByte(s, '}')
 	if start >= 0 && end > start {
-		return s[start : end+1]
+		s = s[start : end+1]
 	}
-	return s
+	return sanitizeJSONControlChars(s)
+}
+
+// sanitizeJSONControlChars escapes bare control characters (U+0000–U+001F) that
+// appear inside JSON string values. These are technically illegal in JSON and
+// some models (especially those prompted in non-Latin scripts) occasionally emit
+// a literal tab or newline inside a string field instead of the escape sequence.
+func sanitizeJSONControlChars(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	inString := false
+	escaped := false
+	for _, r := range s {
+		if escaped {
+			b.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if r == '\\' && inString {
+			b.WriteRune(r)
+			escaped = true
+			continue
+		}
+		if r == '"' {
+			inString = !inString
+			b.WriteRune(r)
+			continue
+		}
+		if inString && r < 0x20 {
+			switch r {
+			case '\n':
+				b.WriteString(`\n`)
+			case '\r':
+				b.WriteString(`\r`)
+			case '\t':
+				b.WriteString(`\t`)
+			default:
+				fmt.Fprintf(&b, `\u%04x`, r)
+			}
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
