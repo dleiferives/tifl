@@ -123,6 +123,16 @@ type Repository interface {
 	// generated story to the session (story stage output).
 	SetSessionSelection(ctx context.Context, sessionID, storyID string, targets, new []string) error
 
+	// MarkSessionReading sets reading_started_at and transitions status ready→reading.
+	// Idempotent: if status is already reading or complete, it is a no-op (no error).
+	// Returns ErrNotFound when sessionID does not exist for userID.
+	MarkSessionReading(ctx context.Context, userID, sessionID string) error
+
+	// MarkSessionComplete sets completed_at and transitions status reading→complete.
+	// Idempotent: if status is already complete, it is a no-op (no error).
+	// Returns ErrNotFound when sessionID does not exist for userID.
+	MarkSessionComplete(ctx context.Context, userID, sessionID string) error
+
 	// Generation stages — the per-stage checkpoints a retry resumes from. Upsert
 	// is keyed by (session_id, stage); ListStages returns every stage for a session.
 	UpsertStage(ctx context.Context, st domain.GenerationStage) error

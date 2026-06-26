@@ -150,6 +150,60 @@ func (r *SQLiteRepository) RecentSessionTopics(ctx context.Context, userID, lang
 	return out, rows.Err()
 }
 
+func (r *SQLiteRepository) MarkSessionReading(ctx context.Context, userID, sessionID string) error {
+	ts := float64(time.Now().UnixMilli()) / 1000
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE sessions SET status = 'reading', reading_started_at = ?
+		 WHERE session_id = ? AND user_id = ? AND status = 'ready'`,
+		ts, sessionID, userID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		var count int
+		if err := r.db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM sessions WHERE session_id = ? AND user_id = ?`,
+			sessionID, userID).Scan(&count); err != nil {
+			return err
+		}
+		if count == 0 {
+			return ErrNotFound
+		}
+	}
+	return nil
+}
+
+func (r *SQLiteRepository) MarkSessionComplete(ctx context.Context, userID, sessionID string) error {
+	ts := float64(time.Now().UnixMilli()) / 1000
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE sessions SET status = 'complete', completed_at = ?
+		 WHERE session_id = ? AND user_id = ? AND status = 'reading'`,
+		ts, sessionID, userID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		var count int
+		if err := r.db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM sessions WHERE session_id = ? AND user_id = ?`,
+			sessionID, userID).Scan(&count); err != nil {
+			return err
+		}
+		if count == 0 {
+			return ErrNotFound
+		}
+	}
+	return nil
+}
+
 func (r *SQLiteRepository) SetSessionSelection(ctx context.Context, sessionID, storyID string, targets, new []string) error {
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE sessions SET story_id = ?, selected_targets = ?, selected_new = ? WHERE session_id = ?`,

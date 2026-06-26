@@ -77,6 +77,8 @@ func currentAPIRoutes() []apiRoute {
 		{Method: http.MethodGet, Path: "/api/v1/sessions/{id}", Handler: (*Handler).getSessionDetail, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/sessions/{id}/content", Handler: (*Handler).getSessionContent, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/sessions/{id}/events", Handler: (*Handler).sessionEvents, RequireUser: true},
+		{Method: http.MethodPost, Path: "/api/v1/sessions/{id}/reading", Handler: (*Handler).startReading, RequireUser: true},
+		{Method: http.MethodPost, Path: "/api/v1/sessions/{id}/complete", Handler: (*Handler).completeSession, RequireUser: true},
 		{Method: http.MethodPost, Path: "/api/v1/sessions/{id}/retry", Handler: (*Handler).retrySession, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/sessions/{id}/tasks", Handler: (*Handler).getSessionTasks, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/tasks/{id}", Handler: (*Handler).getTask, RequireUser: true},

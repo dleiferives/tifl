@@ -155,6 +155,42 @@ func (r *FakeRepository) RecentSessionTopics(_ context.Context, userID, language
 	return out, nil
 }
 
+func (r *FakeRepository) MarkSessionReading(_ context.Context, userID, sessionID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s, ok := r.sessions[sessionID]
+	if !ok || s.UserID != userID {
+		return ErrNotFound
+	}
+	if s.Status != domain.StatusReady {
+		// Already reading or complete (or any other non-ready state): idempotent no-op.
+		return nil
+	}
+	s.Status = domain.StatusReading
+	ts := float64(time.Now().UnixMilli()) / 1000
+	s.ReadingStartedAt = &ts
+	r.sessions[sessionID] = cloneSession(s)
+	return nil
+}
+
+func (r *FakeRepository) MarkSessionComplete(_ context.Context, userID, sessionID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s, ok := r.sessions[sessionID]
+	if !ok || s.UserID != userID {
+		return ErrNotFound
+	}
+	if s.Status != domain.StatusReading {
+		// Already complete (or any other non-reading state): idempotent no-op.
+		return nil
+	}
+	s.Status = domain.StatusComplete
+	ts := float64(time.Now().UnixMilli()) / 1000
+	s.CompletedAt = &ts
+	r.sessions[sessionID] = cloneSession(s)
+	return nil
+}
+
 func (r *FakeRepository) SetSessionSelection(_ context.Context, sessionID, storyID string, targets, new []string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

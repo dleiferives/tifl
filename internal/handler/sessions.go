@@ -300,6 +300,28 @@ func (h *Handler) deriveLevel(ctx context.Context, userID, languageCode string) 
 	return result.Level, true, nil
 }
 
+// startReading transitions a session from ready→reading and records the
+// reading_started_at timestamp. Idempotent: repeated calls return 204.
+func (h *Handler) startReading(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.PathValue("id")
+	if err := h.repo.MarkSessionReading(r.Context(), h.currentUserID(r), sessionID); err != nil {
+		h.writeSessionLookupError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// completeSession transitions a session from reading→complete and records the
+// completed_at timestamp. Idempotent: repeated calls return 204.
+func (h *Handler) completeSession(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.PathValue("id")
+	if err := h.repo.MarkSessionComplete(r.Context(), h.currentUserID(r), sessionID); err != nil {
+		h.writeSessionLookupError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *Handler) retrySession(w http.ResponseWriter, r *http.Request) {
 	if h.broker == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("generation is not configured (no LLM gateway)"))

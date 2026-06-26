@@ -425,6 +425,40 @@ paths:
           $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
+  /sessions/{id}/reading:
+    post:
+      summary: Mark a session as reading (ready→reading)
+      description: >
+        Transitions the session status from ready to reading and records
+        reading_started_at. Idempotent: if the session is already reading or
+        complete the call succeeds with 204.
+      operationId: startReading
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      responses:
+        "204":
+          description: Session is now in reading state
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /sessions/{id}/complete:
+    post:
+      summary: Mark a session as complete (reading→complete)
+      description: >
+        Transitions the session status from reading to complete and records
+        completed_at. Idempotent: if the session is already complete the call
+        succeeds with 204.
+      operationId: completeSession
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      responses:
+        "204":
+          description: Session is now in complete state
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /sessions/{id}/retry:
     post:
       summary: Retry a failed generation from its failed stage

@@ -158,6 +158,52 @@ func (r *PostgresRepository) RecentSessionTopics(ctx context.Context, userID, la
 	return out, rows.Err()
 }
 
+func (r *PostgresRepository) MarkSessionReading(ctx context.Context, userID, sessionID string) error {
+	ts := float64(time.Now().UnixMilli()) / 1000
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE sessions SET status = 'reading', reading_started_at = $1
+		 WHERE session_id = $2 AND user_id = $3 AND status = 'ready'`,
+		ts, sessionID, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		var count int
+		if err := r.pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM sessions WHERE session_id = $1 AND user_id = $2`,
+			sessionID, userID).Scan(&count); err != nil {
+			return err
+		}
+		if count == 0 {
+			return ErrNotFound
+		}
+	}
+	return nil
+}
+
+func (r *PostgresRepository) MarkSessionComplete(ctx context.Context, userID, sessionID string) error {
+	ts := float64(time.Now().UnixMilli()) / 1000
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE sessions SET status = 'complete', completed_at = $1
+		 WHERE session_id = $2 AND user_id = $3 AND status = 'reading'`,
+		ts, sessionID, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		var count int
+		if err := r.pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM sessions WHERE session_id = $1 AND user_id = $2`,
+			sessionID, userID).Scan(&count); err != nil {
+			return err
+		}
+		if count == 0 {
+			return ErrNotFound
+		}
+	}
+	return nil
+}
+
 func (r *PostgresRepository) SetSessionSelection(ctx context.Context, sessionID, storyID string, targets, new []string) error {
 	t, _ := marshalStringsB(targets)
 	n, _ := marshalStringsB(new)

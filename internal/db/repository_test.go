@@ -36,6 +36,7 @@ func testRepository(t *testing.T, newRepo repoFactory) {
 	t.Run("ReaderEvents", func(t *testing.T) { testReaderEvents(t, newRepo(t)) })
 	t.Run("DefinitionsBreakdowns", func(t *testing.T) { testDefinitionsBreakdowns(t, newRepo(t)) })
 	t.Run("Pipeline", func(t *testing.T) { testPipeline(t, newRepo(t)) })
+	t.Run("SessionLifecycle", func(t *testing.T) { testSessionLifecycle(t, newRepo(t)) })
 }
 
 func testUserProfile(t *testing.T, repo db.Repository) {
@@ -1086,5 +1087,87 @@ func testSkills(t *testing.T, repo db.Repository) {
 		SkillID: "el-case-accusative", XPDelta: 1, XPAfter: 100, LoggedAt: 1920,
 	}); err == nil {
 		t.Fatal("expected duplicate XP log id to be rejected")
+	}
+}
+
+// testSessionLifecycle exercises MarkSessionReading and MarkSessionComplete:
+// valid transitions, idempotency, and ErrNotFound for unknown/cross-tenant sessions.
+func testSessionLifecycle(t *testing.T, repo db.Repository) {
+	ctx := context.Background()
+	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "grc", Name: "Greek", KeyStrategy: "lemma", Enabled: true}))
+	user, err := repo.CreateUser(ctx, domain.User{Email: "lifecycle@example.com"})
+	must(t, err)
+	other, err := repo.CreateUser(ctx, domain.User{Email: "lifecycle-other@example.com"})
+	must(t, err)
+
+	// Create a session in ready state.
+	sess, err := repo.CreateSession(ctx, domain.Session{
+		UserID: user.UserID, Language: "grc", Level: "beginner",
+		Status: domain.StatusReady,
+	})
+	must(t, err)
+
+	before := float64(1_000_000) // a floor; real ts will be much higher but we test set/not-nil
+
+	// ErrNotFound for unknown session ID.
+	if err := repo.MarkSessionReading(ctx, user.UserID, "no-such-session"); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("MarkSessionReading missing id: want ErrNotFound, got %v", err)
+	}
+
+	// ErrNotFound when the session belongs to another user.
+	if err := repo.MarkSessionReading(ctx, other.UserID, sess.SessionID); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("MarkSessionReading cross-tenant: want ErrNotFound, got %v", err)
+	}
+
+	// Valid transition: ready → reading.
+	must(t, repo.MarkSessionReading(ctx, user.UserID, sess.SessionID))
+	got, err := repo.GetSession(ctx, sess.SessionID)
+	must(t, err)
+	if got.Status != domain.StatusReading {
+		t.Fatalf("status after MarkSessionReading = %q, want reading", got.Status)
+	}
+	if got.ReadingStartedAt == nil || *got.ReadingStartedAt <= before {
+		t.Fatalf("reading_started_at not set properly: %v", got.ReadingStartedAt)
+	}
+
+	// Idempotent: reading → reading is a no-op (no error).
+	if err := repo.MarkSessionReading(ctx, user.UserID, sess.SessionID); err != nil {
+		t.Fatalf("idempotent MarkSessionReading (already reading): %v", err)
+	}
+
+	// ErrNotFound for unknown session ID for complete.
+	if err := repo.MarkSessionComplete(ctx, user.UserID, "no-such-session"); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("MarkSessionComplete missing id: want ErrNotFound, got %v", err)
+	}
+
+	// ErrNotFound when the session belongs to another user.
+	if err := repo.MarkSessionComplete(ctx, other.UserID, sess.SessionID); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("MarkSessionComplete cross-tenant: want ErrNotFound, got %v", err)
+	}
+
+	// Valid transition: reading → complete.
+	must(t, repo.MarkSessionComplete(ctx, user.UserID, sess.SessionID))
+	got, err = repo.GetSession(ctx, sess.SessionID)
+	must(t, err)
+	if got.Status != domain.StatusComplete {
+		t.Fatalf("status after MarkSessionComplete = %q, want complete", got.Status)
+	}
+	if got.CompletedAt == nil || *got.CompletedAt <= before {
+		t.Fatalf("completed_at not set properly: %v", got.CompletedAt)
+	}
+
+	// Idempotent: complete → complete is a no-op (no error).
+	if err := repo.MarkSessionComplete(ctx, user.UserID, sess.SessionID); err != nil {
+		t.Fatalf("idempotent MarkSessionComplete (already complete): %v", err)
+	}
+
+	// Idempotent: complete → reading is also a no-op (no error, state unchanged).
+	if err := repo.MarkSessionReading(ctx, user.UserID, sess.SessionID); err != nil {
+		t.Fatalf("idempotent MarkSessionReading (already complete): %v", err)
+	}
+	got, err = repo.GetSession(ctx, sess.SessionID)
+	must(t, err)
+	if got.Status != domain.StatusComplete {
+		t.Fatalf("status after idempotent MarkSessionReading on complete session = %q, want complete", got.Status)
 	}
 }

@@ -924,6 +924,209 @@ func TestSessionEventsFailedTerminalIncludesError(t *testing.T) {
 	}
 }
 
+// TestStartReadingLifecycle covers the POST /sessions/{id}/reading endpoint:
+// valid transition, idempotency, and 404 cases.
+func TestStartReadingLifecycle(t *testing.T) {
+	srv, repo := newServer(t, false)
+	ctx := context.Background()
+
+	sess, err := repo.CreateSession(ctx, domain.Session{
+		UserID: domain.LocalUserID, Language: "xx", Level: "beginner",
+		Status: domain.StatusReady,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 204 on valid transition: ready → reading.
+	resp, err := http.Post(srv.URL+"/api/v1/sessions/"+sess.SessionID+"/reading", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("ready→reading: want 204, got %d", resp.StatusCode)
+	}
+
+	got, err := repo.GetSession(ctx, sess.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != domain.StatusReading {
+		t.Fatalf("status after startReading = %q, want reading", got.Status)
+	}
+	if got.ReadingStartedAt == nil {
+		t.Fatal("reading_started_at not set after startReading")
+	}
+
+	// Idempotent: reading → reading still 204.
+	resp, err = http.Post(srv.URL+"/api/v1/sessions/"+sess.SessionID+"/reading", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("idempotent reading→reading: want 204, got %d", resp.StatusCode)
+	}
+
+	// 404 for non-existent session.
+	resp, err = http.Post(srv.URL+"/api/v1/sessions/nope/reading", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing session: want 404, got %d", resp.StatusCode)
+	}
+}
+
+// TestCompleteSessionLifecycle covers the POST /sessions/{id}/complete endpoint:
+// valid transition, idempotency, and 404 cases.
+func TestCompleteSessionLifecycle(t *testing.T) {
+	srv, repo := newServer(t, false)
+	ctx := context.Background()
+
+	sess, err := repo.CreateSession(ctx, domain.Session{
+		UserID: domain.LocalUserID, Language: "xx", Level: "beginner",
+		Status: domain.StatusReading,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 204 on valid transition: reading → complete.
+	resp, err := http.Post(srv.URL+"/api/v1/sessions/"+sess.SessionID+"/complete", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("reading→complete: want 204, got %d", resp.StatusCode)
+	}
+
+	got, err := repo.GetSession(ctx, sess.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != domain.StatusComplete {
+		t.Fatalf("status after completeSession = %q, want complete", got.Status)
+	}
+	if got.CompletedAt == nil {
+		t.Fatal("completed_at not set after completeSession")
+	}
+
+	// Idempotent: complete → complete still 204.
+	resp, err = http.Post(srv.URL+"/api/v1/sessions/"+sess.SessionID+"/complete", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("idempotent complete→complete: want 204, got %d", resp.StatusCode)
+	}
+
+	// 404 for non-existent session.
+	resp, err = http.Post(srv.URL+"/api/v1/sessions/nope/complete", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing session: want 404, got %d", resp.StatusCode)
+	}
+}
+
+// TestSessionLifecycleFullFlow exercises the full ready→reading→complete flow
+// via the HTTP endpoints and verifies timestamps are set.
+func TestSessionLifecycleFullFlow(t *testing.T) {
+	srv, repo := newServer(t, false)
+	ctx := context.Background()
+
+	sess, err := repo.CreateSession(ctx, domain.Session{
+		UserID: domain.LocalUserID, Language: "xx", Level: "beginner",
+		Status: domain.StatusReady,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	before := float64(time.Now().UnixMilli()) / 1000
+
+	// Transition to reading.
+	resp, err := http.Post(srv.URL+"/api/v1/sessions/"+sess.SessionID+"/reading", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("reading: want 204, got %d", resp.StatusCode)
+	}
+
+	// Transition to complete.
+	resp, err = http.Post(srv.URL+"/api/v1/sessions/"+sess.SessionID+"/complete", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("complete: want 204, got %d", resp.StatusCode)
+	}
+
+	after := float64(time.Now().UnixMilli()) / 1000
+
+	got, err := repo.GetSession(ctx, sess.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != domain.StatusComplete {
+		t.Fatalf("final status = %q, want complete", got.Status)
+	}
+	if got.ReadingStartedAt == nil || *got.ReadingStartedAt < before || *got.ReadingStartedAt > after {
+		t.Fatalf("reading_started_at out of range: %v", got.ReadingStartedAt)
+	}
+	if got.CompletedAt == nil || *got.CompletedAt < before || *got.CompletedAt > after {
+		t.Fatalf("completed_at out of range: %v", got.CompletedAt)
+	}
+}
+
+// TestLifecycleEndpointsTenantIsolation checks that another user's session
+// cannot be transitioned via the lifecycle endpoints.
+func TestLifecycleEndpointsTenantIsolation(t *testing.T) {
+	srv, repo := newAuthServer(t)
+	service, err := authn.NewService(repo, authTestSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := service.Register(context.Background(), "lifecycle-owner@example.com", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := service.Register(context.Background(), "lifecycle-other@example.com", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := repo.CreateSession(context.Background(), domain.Session{
+		UserID: owner.User.UserID, Language: "xx", Level: "beginner",
+		Status: domain.StatusReady,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{"/reading", "/complete"} {
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/sessions/"+sess.SessionID+path, nil)
+		req.Header.Set("Authorization", "Bearer "+other.AccessToken)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("cross-tenant %s: want 404, got %d", path, resp.StatusCode)
+		}
+	}
+}
+
 func readDoneEvent(t *testing.T, r io.Reader) generationEventPayload {
 	t.Helper()
 	sc := bufio.NewScanner(r)
