@@ -281,6 +281,96 @@ func (r *SQLiteRepository) RevokeAllRefreshTokens(ctx context.Context, userID st
 	return err
 }
 
+// --- auth security events --------------------------------------------------
+
+func (r *SQLiteRepository) InsertAuthSecurityEvent(ctx context.Context, event domain.AuthSecurityEvent) (domain.AuthSecurityEvent, bool, error) {
+	if err := validateAuthSecurityEvent(event); err != nil {
+		return domain.AuthSecurityEvent{}, false, err
+	}
+	if event.EventID == "" {
+		event.EventID = id.New()
+	}
+	if event.CreatedAt == 0 {
+		event.CreatedAt = float64(time.Now().Unix())
+	}
+	details, err := marshalJSON(event.Details)
+	if err != nil {
+		return domain.AuthSecurityEvent{}, false, err
+	}
+	res, err := r.db.ExecContext(ctx,
+		`INSERT OR IGNORE INTO auth_security_events(
+		   event_id, event_type, flow, email_hash, source_address_bucket, user_id, created_at, details)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+		event.EventID, string(event.EventType), string(event.Flow), event.EmailHash,
+		event.SourceAddressBucket, nullString(event.UserID), event.CreatedAt, details)
+	if err != nil {
+		return domain.AuthSecurityEvent{}, false, err
+	}
+	inserted, _ := res.RowsAffected()
+	return event, inserted > 0, nil
+}
+
+func (r *SQLiteRepository) ListAuthSecurityEvents(ctx context.Context, opts domain.ListAuthSecurityEventsOptions) ([]domain.AuthSecurityEvent, error) {
+	opts = normalizeListAuthSecurityEventsOptions(opts)
+	query := `SELECT event_id, event_type, flow, email_hash, source_address_bucket, user_id, created_at, details
+	          FROM auth_security_events WHERE 1 = 1`
+	var args []any
+	if opts.UserID != "" {
+		query += ` AND user_id = ?`
+		args = append(args, opts.UserID)
+	}
+	if opts.EventType != "" {
+		query += ` AND event_type = ?`
+		args = append(args, string(opts.EventType))
+	}
+	if opts.Flow != "" {
+		query += ` AND flow = ?`
+		args = append(args, string(opts.Flow))
+	}
+	if opts.EmailHash != "" {
+		query += ` AND email_hash = ?`
+		args = append(args, opts.EmailHash)
+	}
+	if opts.SourceAddressBucket != "" {
+		query += ` AND source_address_bucket = ?`
+		args = append(args, opts.SourceAddressBucket)
+	}
+	if opts.CreatedAfter != nil {
+		query += ` AND created_at >= ?`
+		args = append(args, *opts.CreatedAfter)
+	}
+	if opts.CreatedBefore != nil {
+		query += ` AND created_at <= ?`
+		args = append(args, *opts.CreatedBefore)
+	}
+	query += ` ORDER BY created_at DESC, event_id DESC`
+	if opts.Limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, opts.Limit)
+		if opts.Offset > 0 {
+			query += ` OFFSET ?`
+			args = append(args, opts.Offset)
+		}
+	} else if opts.Offset > 0 {
+		query += ` LIMIT -1 OFFSET ?`
+		args = append(args, opts.Offset)
+	}
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.AuthSecurityEvent
+	for rows.Next() {
+		event, err := scanSQLiteAuthSecurityEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, event)
+	}
+	return out, rows.Err()
+}
+
 func scanUser(row *sql.Row) (domain.User, error) {
 	var (
 		u         domain.User
@@ -1188,6 +1278,31 @@ func scanSQLiteLLMCall(row interface {
 	call.ParsedOutput = stringPtrFromNull(parsedOutput)
 	call.ErrorPayload = stringPtrFromNull(errorPayload)
 	return call, nil
+}
+
+func scanSQLiteAuthSecurityEvent(row interface {
+	Scan(dest ...any) error
+}) (domain.AuthSecurityEvent, error) {
+	var (
+		event           domain.AuthSecurityEvent
+		eventType, flow string
+		userID, details sql.NullString
+	)
+	if err := row.Scan(
+		&event.EventID, &eventType, &flow, &event.EmailHash, &event.SourceAddressBucket,
+		&userID, &event.CreatedAt, &details,
+	); err != nil {
+		return domain.AuthSecurityEvent{}, err
+	}
+	event.EventType = domain.AuthSecurityEventType(eventType)
+	event.Flow = domain.AuthFlow(flow)
+	event.UserID = stringPtrFromNull(userID)
+	detailsMap, err := unmarshalJSON(details)
+	if err != nil {
+		return domain.AuthSecurityEvent{}, err
+	}
+	event.Details = detailsMap
+	return event, nil
 }
 
 // --- helpers ---------------------------------------------------------------

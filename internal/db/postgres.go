@@ -317,6 +317,90 @@ func (r *PostgresRepository) RevokeAllRefreshTokens(ctx context.Context, userID 
 	return err
 }
 
+// --- auth security events --------------------------------------------------
+
+func (r *PostgresRepository) InsertAuthSecurityEvent(ctx context.Context, event domain.AuthSecurityEvent) (domain.AuthSecurityEvent, bool, error) {
+	if err := validateAuthSecurityEvent(event); err != nil {
+		return domain.AuthSecurityEvent{}, false, err
+	}
+	if event.EventID == "" {
+		event.EventID = id.New()
+	}
+	if event.CreatedAt == 0 {
+		event.CreatedAt = float64(time.Now().Unix())
+	}
+	details, err := marshalJSONB(event.Details)
+	if err != nil {
+		return domain.AuthSecurityEvent{}, false, err
+	}
+	tag, err := r.pool.Exec(ctx,
+		`INSERT INTO auth_security_events(
+		   event_id, event_type, flow, email_hash, source_address_bucket, user_id, created_at, details)
+		 VALUES($1, $2, $3, $4, $5, $6, $7, $8)
+		 ON CONFLICT (event_id) DO NOTHING`,
+		event.EventID, string(event.EventType), string(event.Flow), event.EmailHash,
+		event.SourceAddressBucket, event.UserID, event.CreatedAt, details)
+	if err != nil {
+		return domain.AuthSecurityEvent{}, false, err
+	}
+	return event, tag.RowsAffected() > 0, nil
+}
+
+func (r *PostgresRepository) ListAuthSecurityEvents(ctx context.Context, opts domain.ListAuthSecurityEventsOptions) ([]domain.AuthSecurityEvent, error) {
+	opts = normalizeListAuthSecurityEventsOptions(opts)
+	query := `SELECT event_id, event_type, flow, email_hash, source_address_bucket, user_id, created_at, details
+	          FROM auth_security_events WHERE 1 = 1`
+	var args []any
+	addFilter := func(condition string, value any) {
+		args = append(args, value)
+		query += fmt.Sprintf(condition, len(args))
+	}
+	if opts.UserID != "" {
+		addFilter(` AND user_id = $%d`, opts.UserID)
+	}
+	if opts.EventType != "" {
+		addFilter(` AND event_type = $%d`, string(opts.EventType))
+	}
+	if opts.Flow != "" {
+		addFilter(` AND flow = $%d`, string(opts.Flow))
+	}
+	if opts.EmailHash != "" {
+		addFilter(` AND email_hash = $%d`, opts.EmailHash)
+	}
+	if opts.SourceAddressBucket != "" {
+		addFilter(` AND source_address_bucket = $%d`, opts.SourceAddressBucket)
+	}
+	if opts.CreatedAfter != nil {
+		addFilter(` AND created_at >= $%d`, *opts.CreatedAfter)
+	}
+	if opts.CreatedBefore != nil {
+		addFilter(` AND created_at <= $%d`, *opts.CreatedBefore)
+	}
+	query += ` ORDER BY created_at DESC, event_id DESC`
+	if opts.Limit > 0 {
+		args = append(args, opts.Limit)
+		query += fmt.Sprintf(` LIMIT $%d`, len(args))
+	}
+	if opts.Offset > 0 {
+		args = append(args, opts.Offset)
+		query += fmt.Sprintf(` OFFSET $%d`, len(args))
+	}
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.AuthSecurityEvent
+	for rows.Next() {
+		event, err := scanPgAuthSecurityEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, event)
+	}
+	return out, rows.Err()
+}
+
 func scanPgUser(row pgx.Row) (domain.User, error) {
 	var (
 		u        domain.User
@@ -1185,6 +1269,30 @@ func scanPgLLMCall(row interface {
 		return domain.LLMCall{}, err
 	}
 	return call, nil
+}
+
+func scanPgAuthSecurityEvent(row interface {
+	Scan(dest ...any) error
+}) (domain.AuthSecurityEvent, error) {
+	var (
+		event           domain.AuthSecurityEvent
+		eventType, flow string
+		details         []byte
+	)
+	if err := row.Scan(
+		&event.EventID, &eventType, &flow, &event.EmailHash, &event.SourceAddressBucket,
+		&event.UserID, &event.CreatedAt, &details,
+	); err != nil {
+		return domain.AuthSecurityEvent{}, err
+	}
+	event.EventType = domain.AuthSecurityEventType(eventType)
+	event.Flow = domain.AuthFlow(flow)
+	detailsMap, err := unmarshalJSONB(details)
+	if err != nil {
+		return domain.AuthSecurityEvent{}, err
+	}
+	event.Details = detailsMap
+	return event, nil
 }
 
 func derefStr(p *string) string {

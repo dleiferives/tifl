@@ -23,6 +23,8 @@ type FakeRepository struct {
 	users       map[string]domain.User // user_id -> user
 	emailIndex  map[string]string      // email -> user_id (unique)
 	refresh     map[string]domain.RefreshToken
+	authEvents  []domain.AuthSecurityEvent
+	authIDs     map[string]bool
 	languages   map[string]domain.Language
 	items       map[string]domain.KnowledgeItem // item_id -> item
 	itemKeys    map[string]string               // language\x00type\x00key -> item_id
@@ -63,6 +65,7 @@ func NewFake() *FakeRepository {
 		users:       make(map[string]domain.User),
 		emailIndex:  make(map[string]string),
 		refresh:     make(map[string]domain.RefreshToken),
+		authIDs:     make(map[string]bool),
 		languages:   make(map[string]domain.Language),
 		items:       make(map[string]domain.KnowledgeItem),
 		itemKeys:    make(map[string]string),
@@ -280,6 +283,92 @@ func (r *FakeRepository) RevokeAllRefreshTokens(_ context.Context, userID string
 		}
 	}
 	return nil
+}
+
+// --- auth security events --------------------------------------------------
+
+func (r *FakeRepository) InsertAuthSecurityEvent(_ context.Context, event domain.AuthSecurityEvent) (domain.AuthSecurityEvent, bool, error) {
+	if err := validateAuthSecurityEvent(event); err != nil {
+		return domain.AuthSecurityEvent{}, false, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if event.UserID != nil {
+		if _, ok := r.users[*event.UserID]; !ok {
+			return domain.AuthSecurityEvent{}, false, errFakeFK("auth_security_events.user_id")
+		}
+	}
+	if event.EventID == "" {
+		event.EventID = id.New()
+	}
+	if event.CreatedAt == 0 {
+		event.CreatedAt = float64(time.Now().Unix())
+	}
+	if r.authIDs[event.EventID] {
+		return cloneAuthSecurityEvent(event), false, nil
+	}
+	r.authIDs[event.EventID] = true
+	r.authEvents = append(r.authEvents, cloneAuthSecurityEvent(event))
+	return cloneAuthSecurityEvent(event), true, nil
+}
+
+func (r *FakeRepository) ListAuthSecurityEvents(_ context.Context, opts domain.ListAuthSecurityEventsOptions) ([]domain.AuthSecurityEvent, error) {
+	opts = normalizeListAuthSecurityEventsOptions(opts)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []domain.AuthSecurityEvent
+	for _, event := range r.authEvents {
+		if !authSecurityEventMatches(event, opts) {
+			continue
+		}
+		out = append(out, cloneAuthSecurityEvent(event))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt != out[j].CreatedAt {
+			return out[i].CreatedAt > out[j].CreatedAt
+		}
+		return out[i].EventID > out[j].EventID
+	})
+	if opts.Offset >= len(out) {
+		return nil, nil
+	}
+	out = out[opts.Offset:]
+	if opts.Limit > 0 && opts.Limit < len(out) {
+		out = out[:opts.Limit]
+	}
+	return out, nil
+}
+
+// AuthSecurityEvents returns recorded auth security events, newest first. It is
+// not part of the Repository interface — only the in-memory backend exposes it.
+func (r *FakeRepository) AuthSecurityEvents() []domain.AuthSecurityEvent {
+	out, _ := r.ListAuthSecurityEvents(context.Background(), domain.ListAuthSecurityEventsOptions{})
+	return out
+}
+
+func authSecurityEventMatches(event domain.AuthSecurityEvent, opts domain.ListAuthSecurityEventsOptions) bool {
+	if opts.UserID != "" && (event.UserID == nil || *event.UserID != opts.UserID) {
+		return false
+	}
+	if opts.EventType != "" && event.EventType != opts.EventType {
+		return false
+	}
+	if opts.Flow != "" && event.Flow != opts.Flow {
+		return false
+	}
+	if opts.EmailHash != "" && event.EmailHash != opts.EmailHash {
+		return false
+	}
+	if opts.SourceAddressBucket != "" && event.SourceAddressBucket != opts.SourceAddressBucket {
+		return false
+	}
+	if opts.CreatedAfter != nil && event.CreatedAt < *opts.CreatedAfter {
+		return false
+	}
+	if opts.CreatedBefore != nil && event.CreatedAt > *opts.CreatedBefore {
+		return false
+	}
+	return true
 }
 
 // --- languages -------------------------------------------------------------
@@ -865,6 +954,12 @@ func cloneReaderEvent(e domain.ReaderEvent) domain.ReaderEvent {
 	e.SessionID = cloneStr(e.SessionID)
 	e.Position = cloneInt(e.Position)
 	e.Value = cloneStr(e.Value)
+	return e
+}
+
+func cloneAuthSecurityEvent(e domain.AuthSecurityEvent) domain.AuthSecurityEvent {
+	e.UserID = cloneStr(e.UserID)
+	e.Details = cloneJSONMap(e.Details)
 	return e
 }
 
