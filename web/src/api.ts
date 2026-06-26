@@ -162,6 +162,20 @@ export async function retrySession(sessionID: string): Promise<APIResponse<"retr
   );
 }
 
+export async function startReading(sessionID: string): Promise<APIResponse<"startReading", 204>> {
+  return apiFetch<APIResponse<"startReading", 204>>(
+    `/sessions/${encodeURIComponent(sessionID)}/reading`,
+    { method: "POST" },
+  );
+}
+
+export async function completeSession(sessionID: string): Promise<APIResponse<"completeSession", 204>> {
+  return apiFetch<APIResponse<"completeSession", 204>>(
+    `/sessions/${encodeURIComponent(sessionID)}/complete`,
+    { method: "POST" },
+  );
+}
+
 export interface GenerationStreamHandlers {
   /** Called for each parsed SSE generation event, including the terminal stage="done". */
   onEvent: (event: GenerationEvent) => void;

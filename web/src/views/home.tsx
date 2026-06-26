@@ -367,7 +367,7 @@ function SessionActions(props: {
         <a class="button-link secondary-link" href={generationHref(session.session_id)}>Generation</a>
       </Show>
       <Show when={session.story_id && (session.status === "ready" || session.status === "reading" || session.status === "complete")}>
-        <a class="button-link" href={readerHref(session.story_id || "")}>Reader</a>
+        <a class="button-link" href={readerHref(session.story_id || "", session.session_id)}>Reader</a>
       </Show>
       <Show when={session.content_type === "phrase_set" && (session.status === "ready" || session.status === "reading" || session.status === "complete")}>
         <a class="button-link" href={phrasesHref(session.session_id)}>Phrases</a>
@@ -480,8 +480,8 @@ function generationHref(sessionID: string): string {
   return routeHref(`/generation/${encodeURIComponent(sessionID)}`);
 }
 
-function readerHref(storyID: string): string {
-  return routeHref(`/reader/${encodeURIComponent(storyID)}`);
+function readerHref(storyID: string, sessionID: string): string {
+  return routeHref(`/reader/${encodeURIComponent(storyID)}?sessionId=${encodeURIComponent(sessionID)}`);
 }
 
 function phrasesHref(sessionID: string): string {

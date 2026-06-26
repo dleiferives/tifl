@@ -2,11 +2,13 @@ import { createEffect, createSignal, For, Match, onCleanup, onMount, Show, Switc
 import type { JSX } from "solid-js";
 import { createStore } from "solid-js/store";
 import {
+  completeSession,
   getDefinition,
   getStory,
   postReaderEvents,
   setReaderSurfaceKnowledge,
   sentenceBreakdown,
+  startReading,
   setWordKnowledge,
   wordBreakdown,
 } from "../api";
@@ -38,8 +40,9 @@ const LEVELS: { value: KnowledgeLevel; event: string; label: string; hint: strin
   { value: "ignored", event: "i", label: "i", hint: "ignored" },
 ];
 
-export function ReaderView(props: { storyId: string }) {
+export function ReaderView(props: { storyId: string; sessionId?: string }) {
   const [status, setStatus] = createSignal<"loading" | "ready" | "error">("loading");
+  const [completeStatus, setCompleteStatus] = createSignal<"idle" | "saving" | "done">("idle");
   const [tokens, setTokens] = createSignal<StoryToken[]>([]);
   const [language, setLanguage] = createSignal("");
   const [knowledge, setKnowledge] = createStore<Record<string, ReaderKnowledge>>({});
@@ -57,6 +60,7 @@ export function ReaderView(props: { storyId: string }) {
   const wordEls: (HTMLElement | undefined)[] = [];
   let pending: ReaderEvent[] = [];
   let flushTimer: number | undefined;
+  let readingStart: Promise<void> | null = null;
 
   const currentToken = () => tokens()[cursor()];
 
@@ -80,6 +84,11 @@ export function ReaderView(props: { storyId: string }) {
 
   async function load() {
     try {
+      if (props.sessionId) {
+        readingStart = startReading(props.sessionId).catch(() => {
+          appStore.showToast("This session could not be marked as started.", "error");
+        });
+      }
       const story = await getStory(props.storyId);
       // Seed every canonical key and exact-form key so per-span subscriptions are
       // fine-grained from the first render; untouched words stay unseen ("").
@@ -275,6 +284,26 @@ export function ReaderView(props: { storyId: string }) {
     return active.mode === "sentence" ? sentences[active.position] : words[active.key];
   }
 
+  async function completeCurrentSession() {
+    if (!props.sessionId || completeStatus() === "saving") {
+      return;
+    }
+    setCompleteStatus("saving");
+    const finish = appStore.beginOperation();
+    try {
+      await readingStart;
+      await flush();
+      await completeSession(props.sessionId);
+      setCompleteStatus("done");
+      appStore.showToast("Session marked complete.");
+    } catch {
+      setCompleteStatus("idle");
+      appStore.showToast("This session could not be completed.", "error");
+    } finally {
+      finish();
+    }
+  }
+
   function closeOverlays() {
     if (analysis()) {
       setAnalysis(null);
@@ -293,6 +322,7 @@ export function ReaderView(props: { storyId: string }) {
     pending.push({
       event_id: randomEventID(),
       story_id: props.storyId,
+      session_id: props.sessionId,
       occurred_at: Math.floor(Date.now() / 1000),
       ...event,
     });
@@ -411,6 +441,16 @@ export function ReaderView(props: { storyId: string }) {
           <span><kbd>i</kbd> ignore</span>
           <span><kbd>s</kbd> sentence</span>
         </p>
+        <Show when={props.sessionId}>
+          <button
+            class="primary-button reader-complete-button"
+            type="button"
+            disabled={status() !== "ready" || completeStatus() === "saving" || completeStatus() === "done"}
+            onClick={() => void completeCurrentSession()}
+          >
+            {completeStatus() === "done" ? "Completed" : completeStatus() === "saving" ? "Completing..." : "Complete session"}
+          </button>
+        </Show>
       </header>
 
       <Switch>

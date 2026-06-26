@@ -195,7 +195,7 @@ export function GenerationView(props: { sessionId: string }) {
                 </a>
               </Show>
               <Show when={result()?.content_type !== "phrase_set" && result()?.story_id}>
-                <a class="button-link" href={routeHref(`/reader/${encodeURIComponent(result()?.story_id ?? "")}`)}>
+                <a class="button-link" href={routeHref(`/reader/${encodeURIComponent(result()?.story_id ?? "")}?sessionId=${encodeURIComponent(props.sessionId)}`)}>
                   Start reading
                 </a>
               </Show>

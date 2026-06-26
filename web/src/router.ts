@@ -7,7 +7,7 @@ export type Route =
   | { name: "settings"; path: "/settings" }
   | { name: "generation"; path: string; sessionId: string }
   | { name: "debug"; path: string; sessionId: string }
-  | { name: "reader"; path: string; storyId: string }
+  | { name: "reader"; path: string; storyId: string; sessionId?: string }
   | { name: "phrases"; path: string; sessionId: string }
   | { name: "tasks"; path: string; sessionId: string }
   | { name: "skills"; path: "/skills" }
@@ -24,8 +24,9 @@ export function createHashRouter(): Accessor<Route> {
 }
 
 export function parseHash(hash: string): Route {
-  const rawPath = hash.replace(/^#/, "").split("?")[0] || "/";
+  const [rawPath, rawQuery = ""] = hash.replace(/^#/, "").split("?");
   const path = normalizePath(rawPath);
+  const query = new URLSearchParams(rawQuery);
   const segments = path.split("/").filter(Boolean).map(decodeSegment);
 
   if (segments.length === 0 || (segments.length === 1 && segments[0] === "home")) {
@@ -50,7 +51,7 @@ export function parseHash(hash: string): Route {
     return { name: "debug", path, sessionId: segments[1] };
   }
   if (segments.length === 2 && segments[0] === "reader") {
-    return { name: "reader", path, storyId: segments[1] };
+    return { name: "reader", path, storyId: segments[1], sessionId: query.get("sessionId") || undefined };
   }
   if (segments.length === 2 && segments[0] === "phrases") {
     return { name: "phrases", path, sessionId: segments[1] };

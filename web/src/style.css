@@ -1059,6 +1059,10 @@ select {
   font-size: 1.25rem;
 }
 
+.reader-complete-button {
+  white-space: nowrap;
+}
+
 .reader-hints {
   display: flex;
   flex-wrap: wrap;

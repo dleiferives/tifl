@@ -43,7 +43,10 @@ function App() {
               <DebugView sessionId={(route() as Extract<Route, { name: "debug" }>).sessionId} />
             </Match>
             <Match when={route().name === "reader"}>
-              <ReaderView storyId={(route() as Extract<Route, { name: "reader" }>).storyId} />
+              <ReaderView
+                storyId={(route() as Extract<Route, { name: "reader" }>).storyId}
+                sessionId={(route() as Extract<Route, { name: "reader" }>).sessionId}
+              />
             </Match>
             <Match when={route().name === "phrases"}>
               <PhrasesView sessionId={(route() as Extract<Route, { name: "phrases" }>).sessionId} />
