@@ -1275,12 +1275,12 @@ select {
   position: fixed;
   inset: 0 0 0 auto;
   z-index: 25;
-  width: min(26rem, 100vw);
+  width: min(34rem, 100vw);
   padding: 1rem 1.25rem;
   border-left: 1px solid var(--border);
   background: var(--surface);
   box-shadow: -0.5rem 0 1.5rem var(--shadow);
-  overflow-y: auto;
+  overflow: auto;
 }
 
 .reader-breakdown-head {
@@ -1312,6 +1312,167 @@ select {
 
 .reader-breakdown-error {
   color: var(--danger);
+}
+
+.reader-sentence-breakdown {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.reader-syntax {
+  display: grid;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.reader-syntax-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.reader-syntax-head h3 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.reader-syntax-head span {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.reader-syntax-scroll {
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 0.25rem;
+}
+
+.reader-syntax-tree,
+.reader-syntax-children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.reader-syntax-tree {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 24rem;
+}
+
+.reader-syntax-children {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+  margin-left: 0.8rem;
+  padding-left: 0.85rem;
+  border-left: 1px solid var(--border);
+}
+
+.reader-syntax-item {
+  min-width: 0;
+}
+
+.reader-syntax-node {
+  display: grid;
+  grid-template-columns: minmax(4.75rem, auto) minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.35rem 0.55rem;
+  min-width: 0;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  background: var(--surface-subtle);
+}
+
+.reader-syntax-node[data-kind="sentence"] {
+  border-color: var(--reader-cursor);
+}
+
+.reader-syntax-node[data-kind="token"] {
+  background: var(--surface);
+}
+
+.reader-syntax-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.reader-syntax-kind,
+.reader-syntax-relation,
+.reader-syntax-span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.35rem;
+  padding: 0 0.35rem;
+  border-radius: 0.3rem;
+  font-size: 0.72rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.reader-syntax-kind {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-weight: 700;
+}
+
+.reader-syntax-relation,
+.reader-syntax-span {
+  background: var(--surface);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.reader-syntax-copy {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.reader-syntax-copy strong,
+.reader-syntax-surface,
+.reader-syntax-gloss {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.reader-syntax-copy strong {
+  color: var(--text);
+  font-size: 0.93rem;
+}
+
+.reader-syntax-surface {
+  color: var(--text);
+}
+
+.reader-syntax-gloss {
+  color: var(--text-muted);
+  font-size: 0.86rem;
+}
+
+.reader-syntax-span {
+  justify-self: end;
+}
+
+.reader-breakdown-details {
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+}
+
+.reader-breakdown-details summary {
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.reader-breakdown-details .reader-json {
+  margin-top: 0.65rem;
 }
 
 .reader-json {

@@ -25,6 +25,33 @@ type ReaderEvent = APISchema<"ReaderEvent">;
 
 type Loadable<T> = "loading" | "error" | T;
 type Analysis = { mode: "sentence"; position: number } | { mode: "word"; key: string } | null;
+type SyntaxGraph = {
+  version?: string;
+  roots: string[];
+  nodes: SyntaxNode[];
+  edges: SyntaxEdge[];
+};
+type SyntaxNode = {
+  id: string;
+  kind: string;
+  label?: string;
+  surface?: string;
+  gloss?: string;
+  itemKey?: string;
+  spanStart?: number;
+  spanEnd?: number;
+};
+type SyntaxEdge = {
+  source: string;
+  target: string;
+  relation?: string;
+  label?: string;
+};
+type SyntaxTreeBranch = {
+  node: SyntaxNode;
+  relation?: string;
+  children: SyntaxTreeBranch[];
+};
 
 const FLUSH_DELAY_MS = 4000;
 
@@ -582,7 +609,7 @@ export function ReaderView(props: { storyId: string; sessionId?: string }) {
               <h2>{active().mode === "sentence" ? "Sentence" : "Word"} breakdown</h2>
               <button type="button" aria-label="Close" onClick={() => setAnalysis(null)}>×</button>
             </header>
-            {breakdownBody(breakdownEntry(active()))}
+            {breakdownBody(breakdownEntry(active()), active().mode)}
           </aside>
         )}
       </Show>
@@ -611,14 +638,225 @@ function definitionBody(entry: Loadable<Definition> | undefined, lang: string): 
   );
 }
 
-function breakdownBody(entry: Loadable<unknown> | undefined): JSX.Element {
+function breakdownBody(entry: Loadable<unknown> | undefined, mode: Exclude<Analysis, null>["mode"]): JSX.Element {
   if (!entry || entry === "loading") {
     return <p class="reader-breakdown-loading" aria-busy="true">Analyzing…</p>;
   }
   if (entry === "error") {
     return <p class="reader-breakdown-error">This breakdown is unavailable right now.</p>;
   }
+  const graph = mode === "sentence" ? syntaxGraphFromBreakdown(entry) : null;
+  if (graph) {
+    return (
+      <div class="reader-sentence-breakdown">
+        <SyntaxGraphView graph={graph} />
+        <details class="reader-breakdown-details">
+          <summary>Flat details</summary>
+          <div class="reader-json">{renderJSON(entry)}</div>
+        </details>
+      </div>
+    );
+  }
   return <div class="reader-json">{renderJSON(entry)}</div>;
+}
+
+function SyntaxGraphView(props: { graph: SyntaxGraph }): JSX.Element {
+  const forest = buildSyntaxForest(props.graph);
+  return (
+    <section class="reader-syntax" aria-label="Syntax tree">
+      <div class="reader-syntax-head">
+        <h3>Syntax tree</h3>
+        <Show when={props.graph.version}>
+          {(version) => <span>{version()}</span>}
+        </Show>
+      </div>
+      <div class="reader-syntax-scroll">
+        <ol class="reader-syntax-tree">
+          <For each={forest}>{(branch) => <SyntaxTreeItem branch={branch} />}</For>
+        </ol>
+      </div>
+    </section>
+  );
+}
+
+function SyntaxTreeItem(props: { branch: SyntaxTreeBranch }): JSX.Element {
+  const node = () => props.branch.node;
+  return (
+    <li class="reader-syntax-item">
+      <article class="reader-syntax-node" data-kind={node().kind}>
+        <div class="reader-syntax-meta">
+          <span class="reader-syntax-kind">{humanize(node().kind)}</span>
+          <Show when={props.branch.relation}>
+            {(relation) => <span class="reader-syntax-relation">{humanize(relation())}</span>}
+          </Show>
+        </div>
+        <div class="reader-syntax-copy">
+          <strong>{syntaxNodeTitle(node())}</strong>
+          <Show when={node().surface}>
+            {(surface) => <span class="reader-syntax-surface">{surface()}</span>}
+          </Show>
+          <Show when={node().gloss}>
+            {(gloss) => <span class="reader-syntax-gloss">{gloss()}</span>}
+          </Show>
+        </div>
+        <Show when={formatSpan(node())}>
+          {(span) => <span class="reader-syntax-span">{span()}</span>}
+        </Show>
+      </article>
+      <Show when={props.branch.children.length > 0}>
+        <ol class="reader-syntax-children">
+          <For each={props.branch.children}>{(child) => <SyntaxTreeItem branch={child} />}</For>
+        </ol>
+      </Show>
+    </li>
+  );
+}
+
+function syntaxGraphFromBreakdown(value: unknown): SyntaxGraph | null {
+  const root = asRecord(value);
+  const rawGraph = asRecord(root?.syntax_graph);
+  const rawNodes = rawGraph?.nodes;
+  if (!Array.isArray(rawNodes)) {
+    return null;
+  }
+  const nodes: SyntaxNode[] = [];
+  for (const rawNode of rawNodes) {
+    const node = asRecord(rawNode);
+    const id = stringValue(node?.id);
+    if (!id) {
+      continue;
+    }
+    nodes.push({
+      id,
+      kind: stringValue(node?.kind) ?? "node",
+      label: stringValue(node?.label),
+      surface: stringValue(node?.surface),
+      gloss: stringValue(node?.gloss),
+      itemKey: stringValue(node?.item_key),
+      spanStart: numberValue(node?.span_start),
+      spanEnd: numberValue(node?.span_end),
+    });
+  }
+  if (nodes.length === 0) {
+    return null;
+  }
+
+  const edges: SyntaxEdge[] = [];
+  if (Array.isArray(rawGraph?.edges)) {
+    for (const rawEdge of rawGraph.edges) {
+      const edge = asRecord(rawEdge);
+      const source = stringValue(edge?.source);
+      const target = stringValue(edge?.target);
+      if (!source || !target) {
+        continue;
+      }
+      edges.push({
+        source,
+        target,
+        relation: stringValue(edge?.relation),
+        label: stringValue(edge?.label),
+      });
+    }
+  }
+
+  const roots = Array.isArray(rawGraph?.roots) ? rawGraph.roots.map(stringValue).filter(isString) : [];
+  return {
+    version: stringValue(rawGraph?.version),
+    roots,
+    nodes,
+    edges,
+  };
+}
+
+function buildSyntaxForest(graph: SyntaxGraph): SyntaxTreeBranch[] {
+  const nodesByID = new Map(graph.nodes.map((node) => [node.id, node]));
+  const childrenBySource = new Map<string, SyntaxEdge[]>();
+  const targeted = new Set<string>();
+  for (const edge of graph.edges) {
+    if (!nodesByID.has(edge.source) || !nodesByID.has(edge.target) || edge.source === edge.target) {
+      continue;
+    }
+    targeted.add(edge.target);
+    const children = childrenBySource.get(edge.source) ?? [];
+    children.push(edge);
+    childrenBySource.set(edge.source, children);
+  }
+  for (const children of childrenBySource.values()) {
+    children.sort((a, b) => compareSyntaxNodes(nodesByID.get(a.target), nodesByID.get(b.target)));
+  }
+
+  let rootIDs = graph.roots.filter((id) => nodesByID.has(id));
+  if (rootIDs.length === 0) {
+    rootIDs = graph.nodes.filter((node) => !targeted.has(node.id)).sort(compareSyntaxNodes).map((node) => node.id);
+  }
+  if (rootIDs.length === 0) {
+    rootIDs = [...graph.nodes].sort(compareSyntaxNodes).map((node) => node.id);
+  }
+
+  return rootIDs.map((id) => buildSyntaxBranch(id, nodesByID, childrenBySource, new Set()));
+}
+
+function buildSyntaxBranch(
+  id: string,
+  nodesByID: Map<string, SyntaxNode>,
+  childrenBySource: Map<string, SyntaxEdge[]>,
+  path: Set<string>,
+  relation?: string,
+): SyntaxTreeBranch {
+  const node = nodesByID.get(id);
+  if (!node) {
+    throw new Error(`missing syntax node ${id}`);
+  }
+  const nextPath = new Set(path);
+  nextPath.add(id);
+  const children = (childrenBySource.get(id) ?? [])
+    .filter((edge) => !nextPath.has(edge.target))
+    .map((edge) => buildSyntaxBranch(edge.target, nodesByID, childrenBySource, nextPath, edge.label || edge.relation));
+  return { node, relation, children };
+}
+
+function compareSyntaxNodes(a: SyntaxNode | undefined, b: SyntaxNode | undefined): number {
+  if (!a || !b) {
+    return a ? -1 : b ? 1 : 0;
+  }
+  const aStart = a.spanStart ?? Number.MAX_SAFE_INTEGER;
+  const bStart = b.spanStart ?? Number.MAX_SAFE_INTEGER;
+  if (aStart !== bStart) {
+    return aStart - bStart;
+  }
+  const aEnd = a.spanEnd ?? aStart;
+  const bEnd = b.spanEnd ?? bStart;
+  if (aEnd !== bEnd) {
+    return bEnd - aEnd;
+  }
+  return a.id.localeCompare(b.id);
+}
+
+function syntaxNodeTitle(node: SyntaxNode): string {
+  return node.label || node.surface || node.itemKey || node.id;
+}
+
+function formatSpan(node: SyntaxNode): string | undefined {
+  if (node.spanStart === undefined || node.spanEnd === undefined) {
+    return undefined;
+  }
+  return `${node.spanStart}-${node.spanEnd}`;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function isString(value: string | undefined): value is string {
+  return value !== undefined;
 }
 
 // Renders whatever JSON the prompt builder returns: objects as labelled rows,
