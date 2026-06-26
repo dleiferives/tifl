@@ -569,6 +569,35 @@ paths:
           $ref: "#/components/responses/NotFound"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
+  /stories/import:
+    post:
+      summary: Import pasted text as a reader story
+      description: >
+        Persists caller-provided target-language text as a tokenized story the
+        normal reader can load via GET /stories/{id}. This MVP accepts raw text
+        only; upload/PDF/EPUB extraction is deferred. If language or level is
+        omitted, the current profile defaults are used. Imported stories are
+        standalone reader content and do not create generation sessions or tasks.
+      operationId: importStory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportStoryRequest"
+      responses:
+        "201":
+          description: Imported story
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportStoryResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /stories/{id}:
     get:
       summary: Load a story for the reader (tokens + knowledge in one call)
@@ -1058,6 +1087,29 @@ components:
           type: string
           enum: [phrases, story]
           description: "expression_guided only"
+    ImportStoryRequest:
+      type: object
+      properties:
+        language:
+          type: string
+          description: "registered enabled language code, e.g. 'el'; defaults to profile.active_language"
+        level:
+          type: string
+          description: "beginner|elementary|intermediate|upper-intermediate|advanced; defaults to profile.level"
+        title:
+          type: string
+          description: "optional user-facing label stored as imported-story metadata"
+        text:
+          type: string
+          description: "raw target-language text to tokenize for the reader"
+      required: [text]
+    ImportStoryResponse:
+      type: object
+      properties:
+        story_id: { type: string }
+        language: { type: string }
+        title: { type: string }
+      required: [story_id, language]
     Profile:
       type: object
       properties:

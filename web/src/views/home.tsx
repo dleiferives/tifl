@@ -193,6 +193,7 @@ export function HomeView() {
             {starting() ? "Starting..." : "Start session"}
           </button>
           <a class="button-link secondary-link" href={routeHref("/start")}>Guided session…</a>
+          <a class="button-link secondary-link" href={routeHref("/import")}>Import text</a>
         </div>
       </header>
 

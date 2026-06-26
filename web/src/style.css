@@ -1890,6 +1890,54 @@ select {
   gap: 0.75rem;
 }
 
+/* Paste/import reader content (#132). */
+.import-form {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.import-settings {
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 1rem 1.1rem 1.2rem;
+  background: var(--surface);
+  display: grid;
+  gap: 0.9rem;
+}
+
+.import-settings legend {
+  font-weight: 700;
+  padding: 0 0.4rem;
+}
+
+.import-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.75rem;
+}
+
+.import-settings .field textarea {
+  width: 100%;
+  min-height: 18rem;
+  resize: vertical;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.import-settings .field textarea:focus {
+  border-color: var(--accent);
+  outline: 3px solid var(--focus-ring);
+}
+
+.import-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 /* Generation progress screen */
 .generation-view {
   display: grid;
