@@ -1,0 +1,69 @@
+{
+  "_comment": "Offline fixture for scripts/test_introduce_harness.py. Run with: python3 scripts/test_introduce_harness.py. No API key, network, or live model call is required.",
+  "levels": [
+    {
+      "id": "introduce-genitive",
+      "name": "introduce-genitive",
+      "allowed": [
+        "ονομαστική πτώση",
+        "αιτιατική πτώση",
+        "ενεστώτας",
+        "άρθρα και συμφωνία γένους"
+      ],
+      "introduce": [
+        "γενική πτώση για απλή κατοχή"
+      ],
+      "avoid": [],
+      "vocab_range": "κοινές καθημερινές λέξεις"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "bike-owner",
+      "topic": "ένα παιδί βρίσκει ποιος έχει το κόκκινο ποδήλατο",
+      "targets": [
+        {
+          "word": "ποδήλατο",
+          "gloss": "bicycle",
+          "pos": "ουσιαστικό"
+        }
+      ],
+      "background": [
+        {
+          "word": "Μαρία",
+          "gloss": "Maria"
+        },
+        {
+          "word": "κόκκινος",
+          "gloss": "red"
+        },
+        {
+          "word": "μικρός",
+          "gloss": "small"
+        }
+      ],
+      "new": [],
+      "introduce_checks": [
+        {
+          "id": "genitive-possession",
+          "construction": "γενική πτώση για απλή κατοχή",
+          "patterns": [
+            "\\bποδηλατο\\s+της\\s+μαριας\\b"
+          ],
+          "context_terms": [
+            "ειχε",
+            "δικο",
+            "ανηκε",
+            "κρατουσε"
+          ],
+          "window_chars": 90
+        }
+      ]
+    }
+  ],
+  "fixtures": {
+    "supported": "Η Μαρία είχε ένα μικρό κόκκινο ποδήλατο. Το ποδήλατο της Μαρίας ήταν έξω από την πόρτα. Ο φίλος της το είδε και είπε ότι ήταν δικό της.",
+    "missing_construction": "Η Μαρία είχε ένα μικρό κόκκινο ποδήλατο. Το παιδί είδε το ποδήλατο έξω από την πόρτα. Ο φίλος είπε ότι ήταν κόκκινο.",
+    "unsupported_construction": "Το παιδί είδε ένα κόκκινο ποδήλατο έξω από την πόρτα. Το ποδήλατο της Μαρίας ήταν κοντά στον δρόμο. Ο φίλος πέρασε γρήγορα και χαμογέλασε."
+  }
+}

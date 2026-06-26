@@ -18,3 +18,12 @@ Judge: gpt-oss-120b. Metric of record: judge.overall (mean), tie-broken by requi
 | v2 | +Greek-only char ban in MC, +exact-form-first in fill acceptable_forms | no Cyrillic contamination | forms = exact story form (correct: grammar fixes inflection) | unchanged | KEEP — ship as baseline |
 
 **Direction change after iter1:** Dropped `Avoid entirely` from both `serialize_skill_constraints` (prompt_dag.py) and production `serializeSkillConstraints` (learnerctx.go). Negative instruction doesn't work reliably against automatic model behavior; constraint enforcement deferred to a future editor/gate step (BACKLOG). Harness focus shifts to task generation quality.
+
+## Introduce constraint harness
+
+Issue #142 adds a network-free fixture check for `Introduce with clear contextual support`:
+
+- Run: `python3 scripts/test_introduce_harness.py`
+- Fixture: `scripts/prompts/introduce_harness_fixtures.json`
+- Passing example uses the target construction `γενική πτώση για απλή κατοχή` as `ποδήλατο της Μαρίας` near possession context such as `είχε` / `δικό`.
+- Failure examples cover both missing target construction and target construction with no nearby contextual support.

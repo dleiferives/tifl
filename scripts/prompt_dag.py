@@ -35,6 +35,7 @@ The pipeline's FINAL output is the last step's text.
 import argparse
 import collections
 import json
+import re
 import sys
 import threading
 import time
@@ -281,10 +282,62 @@ def check_required_phrases(text: str, scenario: dict):
     return (len(missing) == 0, {"missing": missing})
 
 
+def check_introduce_constraints(text: str, scenario: dict):
+    """Fixture-driven check for Introduce constraints.
+
+    Scenarios can define introduce_checks entries with:
+      - construction: human-readable construction name
+      - patterns: folded regular expressions that prove construction usage
+      - context_terms: folded nearby terms that scaffold the construction's meaning
+      - window_chars: optional character window around each match
+
+    This is intentionally deterministic and narrow: it is a harness for focused
+    prompt fixtures, not a full grammar parser.
+    """
+    checks = scenario.get("introduce_checks", [])
+    if not checks:
+        return (True, {"missing": [], "unsupported": []})
+
+    tl = _fold(text)
+    missing = []
+    unsupported = []
+    for spec in checks:
+        construction = spec.get("construction") or spec.get("id") or "(unnamed construction)"
+        matches = []
+        for pattern in spec.get("patterns", []):
+            for m in re.finditer(pattern, tl):
+                matches.append({"span": m.group(0), "start": m.start(), "end": m.end()})
+        if not matches:
+            missing.append(construction)
+            continue
+
+        terms = [_fold(t) for t in spec.get("context_terms", []) if t]
+        if not terms:
+            continue
+        window = int(spec.get("window_chars", 120))
+        supported = False
+        for m in matches:
+            left = max(0, m["start"] - window)
+            right = min(len(tl), m["end"] + window)
+            excerpt = tl[left:right]
+            if any(term in excerpt for term in terms):
+                supported = True
+                break
+        if not supported:
+            unsupported.append({
+                "construction": construction,
+                "matches": [m["span"] for m in matches],
+                "needed_context_terms": terms,
+            })
+
+    return (not missing and not unsupported, {"missing": missing, "unsupported": unsupported})
+
+
 CHECKS = {
     "greek_only": check_greek_only,
     "required_vocab": check_required_vocab,
     "required_phrases": check_required_phrases,
+    "introduce_constraints": check_introduce_constraints,
 }
 
 

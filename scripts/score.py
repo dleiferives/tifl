@@ -37,10 +37,12 @@ def deterministic(text: str, scenario: dict) -> dict:
     _, greek = pd.check_greek_only(text, scenario)
     _, vocab = pd.check_required_vocab(text, scenario)
     _, phr = pd.check_required_phrases(text, scenario)
+    _, intro = pd.check_introduce_constraints(text, scenario)
     paras = [p for p in re.split(r"\n\s*\n", text.strip()) if p.strip()]
     return {
         "foreign_chars": greek["count"], "foreign_set": greek["offending"],
         "vocab_missing": vocab["missing"], "phrases_missing": phr["missing"],
+        "introduce_missing": intro["missing"], "introduce_unsupported": intro["unsupported"],
         "paragraphs": len(paras), "markdown_leak": len(re.findall(r"\*\*|^#{1,6}\s", text, re.M)),
     }
 
@@ -125,7 +127,10 @@ def main():
             gstr = f" overall={g.get('overall','?')} lvlfit={g.get('level_fit','?')} reqs={g.get('requirements_met','?')}" if g else ""
             print(f"  {r['pipeline']}/{r['level']}/{r['scenario']}: "
                   f"foreign={m['foreign_chars']} vocab_miss={len(m['vocab_missing'])} "
-                  f"phr_miss={len(m['phrases_missing'])} paras={m['paragraphs']} md={m['markdown_leak']}{gstr}")
+                  f"phr_miss={len(m['phrases_missing'])} "
+                  f"intro_miss={len(m['introduce_missing'])} "
+                  f"intro_unsup={len(m['introduce_unsupported'])} "
+                  f"paras={m['paragraphs']} md={m['markdown_leak']}{gstr}")
 
     for r in results:
         t = threading.Thread(target=work, args=(r,), daemon=True); threads.append(t); t.start()
@@ -141,6 +146,8 @@ def main():
                "foreign_chars": round(sum(r["metrics"]["foreign_chars"] for r in rows) / n, 2),
                "vocab_miss": round(sum(len(r["metrics"]["vocab_missing"]) for r in rows) / n, 2),
                "phr_miss": round(sum(len(r["metrics"]["phrases_missing"]) for r in rows) / n, 2),
+               "intro_miss": round(sum(len(r["metrics"]["introduce_missing"]) for r in rows) / n, 2),
+               "intro_unsup": round(sum(len(r["metrics"]["introduce_unsupported"]) for r in rows) / n, 2),
                "markdown": round(sum(r["metrics"]["markdown_leak"] for r in rows) / n, 2)}
         graded = [r["grade"] for r in rows if r.get("grade", {}).get("status") == "ok"]
         for k in SCORE_KEYS:
@@ -149,7 +156,8 @@ def main():
         summary[f"{pl}@{lv}"] = agg
         gline = "  ".join(f"{k}={agg[k]}" for k in SCORE_KEYS if k in agg)
         print(f"{pl}@{lv} (n={n}): foreign={agg['foreign_chars']} vocab_miss={agg['vocab_miss']} "
-              f"phr_miss={agg['phr_miss']} md={agg['markdown']}\n    {gline}")
+              f"phr_miss={agg['phr_miss']} intro_miss={agg['intro_miss']} "
+              f"intro_unsup={agg['intro_unsup']} md={agg['markdown']}\n    {gline}")
 
     if args.out:
         json.dump({"scored": scored, "summary": summary}, open(args.out, "w"), ensure_ascii=False, indent=2)
