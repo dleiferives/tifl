@@ -224,13 +224,20 @@ func TestSkillXPAcceptance48ThresholdSetsPendingVerify(t *testing.T) {
 		t.Fatalf("threshold crossing response mismatch: %+v", out.SkillXP)
 	}
 	// In local mode (nil LLM client) the background goroutine auto-approves.
-	// Give it a moment to write, then assert the resolved persisted state.
-	time.Sleep(10 * time.Millisecond)
-	xp, err := repo.GetUserSkillXP(ctx, domain.LocalUserID, "xx-basic-words")
-	if err != nil {
-		t.Fatalf("GetUserSkillXP: %v", err)
-	}
-	if xp.XP != 100 || xp.Tier != 1 || xp.PendingVerify || xp.LastVerifiedAt == nil {
-		t.Fatalf("persisted threshold state after auto-approve mismatch: %+v", xp)
+	var xp domain.UserSkillXP
+	deadline := time.Now().Add(time.Second)
+	for {
+		var err error
+		xp, err = repo.GetUserSkillXP(ctx, domain.LocalUserID, "xx-basic-words")
+		if err == nil && xp.XP == 100 && xp.Tier == 1 && !xp.PendingVerify && xp.LastVerifiedAt != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			if err != nil {
+				t.Fatalf("GetUserSkillXP: %v", err)
+			}
+			t.Fatalf("persisted threshold state after auto-approve mismatch: %+v", xp)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

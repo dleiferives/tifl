@@ -724,6 +724,25 @@ func (r *FakeRepository) InsertLLMCall(_ context.Context, c domain.LLMCall) erro
 	return nil
 }
 
+func (r *FakeRepository) ListSessionLLMCalls(_ context.Context, userID, sessionID string) ([]domain.LLMCall, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []domain.LLMCall
+	for _, c := range r.llmCalls {
+		if c.UserID == nil || c.SessionID == nil || *c.UserID != userID || *c.SessionID != sessionID {
+			continue
+		}
+		out = append(out, cloneLLMCall(c))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CalledAt != out[j].CalledAt {
+			return out[i].CalledAt < out[j].CalledAt
+		}
+		return out[i].CallID < out[j].CallID
+	})
+	return out, nil
+}
+
 // --- reader events ---------------------------------------------------------
 
 func (r *FakeRepository) InsertReaderEvents(_ context.Context, events []domain.ReaderEvent) ([]domain.ReaderEvent, error) {

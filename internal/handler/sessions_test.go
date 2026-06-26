@@ -495,6 +495,99 @@ func TestGetSessionDetailLocalMode(t *testing.T) {
 	}
 }
 
+func TestGetSessionDebugIncludesOwnedLLMCalls(t *testing.T) {
+	srv, repo := newServer(t, false)
+	ctx := context.Background()
+
+	sess, err := repo.CreateSession(ctx, domain.Session{
+		UserID: domain.LocalUserID, Language: "xx", Level: "beginner",
+		Status: domain.StatusFailed, CreatedAt: 100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpsertStage(ctx, domain.GenerationStage{
+		SessionID: sess.SessionID, Stage: domain.StageStoryGeneration, Status: domain.StageFailed,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	otherUser := "debug-other-user"
+	if _, err := repo.CreateUser(ctx, domain.User{UserID: otherUser, Email: "debug-other@example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	otherSess, err := repo.CreateSession(ctx, domain.Session{
+		UserID: otherUser, Language: "xx", Level: "beginner", Status: domain.StatusReady,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	input, output, latency := 12, 8, 345
+	detail := "model timeout"
+	localUser := domain.LocalUserID
+	mustInsertLLMCall(t, repo, domain.LLMCall{
+		CallID: "debug-call-1", SessionID: &sess.SessionID, UserID: &localUser, Kind: "story_generator",
+		PromptVersion: "story/v1", Model: "debug-model", InputTokens: &input, OutputTokens: &output,
+		LatencyMs: &latency, Status: "success", CalledAt: 200,
+	})
+	mustInsertLLMCall(t, repo, domain.LLMCall{
+		CallID: "debug-call-2", SessionID: &sess.SessionID, UserID: &localUser, Kind: "task_comprehension_mc",
+		PromptVersion: "task/v1", Model: "debug-model", Status: "error", ErrorDetail: &detail, CalledAt: 201,
+	})
+	mustInsertLLMCall(t, repo, domain.LLMCall{
+		CallID: "debug-other-user", SessionID: &sess.SessionID, UserID: &otherUser, Kind: "story_generator",
+		PromptVersion: "story/v1", Model: "debug-model", Status: "success", CalledAt: 199,
+	})
+	mustInsertLLMCall(t, repo, domain.LLMCall{
+		CallID: "debug-other-session", SessionID: &otherSess.SessionID, UserID: &localUser, Kind: "story_generator",
+		PromptVersion: "story/v1", Model: "debug-model", Status: "success", CalledAt: 199,
+	})
+
+	resp, err := http.Get(srv.URL + "/api/v1/sessions/" + sess.SessionID + "/debug")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("debug = %d", resp.StatusCode)
+	}
+	var out struct {
+		Session struct {
+			SessionID    string `json:"session_id"`
+			StageSummary struct {
+				Failed int `json:"failed"`
+			} `json:"stage_summary"`
+		} `json:"session"`
+		LLMCalls []struct {
+			CallID      string  `json:"call_id"`
+			Kind        string  `json:"kind"`
+			InputTokens *int    `json:"input_tokens"`
+			LatencyMs   *int    `json:"latency_ms"`
+			Status      string  `json:"status"`
+			ErrorDetail *string `json:"error_detail"`
+			CalledAt    float64 `json:"called_at"`
+		} `json:"llm_calls"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Session.SessionID != sess.SessionID || out.Session.StageSummary.Failed != 1 {
+		t.Fatalf("debug session mismatch: %+v", out.Session)
+	}
+	if len(out.LLMCalls) != 2 {
+		t.Fatalf("debug llm calls = %d, want 2: %+v", len(out.LLMCalls), out.LLMCalls)
+	}
+	if out.LLMCalls[0].CallID != "debug-call-1" || out.LLMCalls[1].CallID != "debug-call-2" {
+		t.Fatalf("debug llm call filter/order mismatch: %+v", out.LLMCalls)
+	}
+	if out.LLMCalls[0].InputTokens == nil || *out.LLMCalls[0].InputTokens != input || out.LLMCalls[0].LatencyMs == nil || *out.LLMCalls[0].LatencyMs != latency {
+		t.Fatalf("debug llm call metrics mismatch: %+v", out.LLMCalls[0])
+	}
+	if out.LLMCalls[1].ErrorDetail == nil || *out.LLMCalls[1].ErrorDetail != detail {
+		t.Fatalf("debug llm error detail mismatch: %+v", out.LLMCalls[1])
+	}
+}
+
 func TestSessionReadAPITenantIsolation(t *testing.T) {
 	srv, repo := newAuthServer(t)
 	service, err := authn.NewService(repo, authTestSecret)
@@ -528,6 +621,17 @@ func TestSessionReadAPITenantIsolation(t *testing.T) {
 		t.Fatalf("cross-tenant detail = %d", resp.StatusCode)
 	}
 
+	req, _ = http.NewRequest(http.MethodGet, srv.URL+"/api/v1/sessions/"+sess.SessionID+"/debug", nil)
+	req.Header.Set("Authorization", "Bearer "+other.AccessToken)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("cross-tenant debug = %d", resp.StatusCode)
+	}
+
 	req, _ = http.NewRequest(http.MethodGet, srv.URL+"/api/v1/sessions", nil)
 	req.Header.Set("Authorization", "Bearer "+other.AccessToken)
 	resp, err = http.DefaultClient.Do(req)
@@ -550,6 +654,13 @@ func TestSessionReadAPITenantIsolation(t *testing.T) {
 		if s.SessionID == sess.SessionID {
 			t.Fatalf("other user's list leaked session %q", sess.SessionID)
 		}
+	}
+}
+
+func mustInsertLLMCall(t *testing.T, repo db.Repository, call domain.LLMCall) {
+	t.Helper()
+	if err := repo.InsertLLMCall(context.Background(), call); err != nil {
+		t.Fatal(err)
 	}
 }
 

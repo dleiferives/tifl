@@ -266,6 +266,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions/{id}/debug": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get session debug timeline and LLM audit calls
+         * @description Returns the same tenant-scoped session detail and generation-stage timeline as GET /sessions/{id}, plus llm_calls rows for that session/current-user pair ordered by call time. Another user's session returns 404. This bounded slice is authenticated-user scoped; broader dev/admin-only gating is a follow-up.
+         */
+        get: operations["getSessionDebug"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{id}/content": {
         parameters: {
             query?: never;
@@ -300,6 +320,46 @@ export interface paths {
         get: operations["sessionEvents"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/reading": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark a session as reading (ready→reading)
+         * @description Transitions the session status from ready to reading and records reading_started_at. Idempotent: if the session is already reading or complete the call succeeds with 204.
+         */
+        post: operations["startReading"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark a session as complete (reading→complete)
+         * @description Transitions the session status from reading to complete and records completed_at. Idempotent: if the session is already complete the call succeeds with 204.
+         */
+        post: operations["completeSession"];
         delete?: never;
         options?: never;
         head?: never;
@@ -756,6 +816,26 @@ export interface components {
             stage_summary: components["schemas"]["StageSummary"];
             stages: components["schemas"]["GenerationStageRecord"][];
         };
+        /** @description One llm_calls audit row scoped to a session and current user. */
+        LLMCall: {
+            call_id: string;
+            session_id?: string;
+            user_id?: string;
+            kind: string;
+            prompt_version: string;
+            model: string;
+            input_tokens?: number;
+            output_tokens?: number;
+            latency_ms?: number;
+            /** @enum {string} */
+            status: "success" | "error" | "timeout";
+            error_detail?: string;
+            called_at: number;
+        };
+        SessionDebug: {
+            session: components["schemas"]["SessionDetail"];
+            llm_calls: components["schemas"]["LLMCall"][];
+        };
         /** @description A session's content, discriminated by content_type. Exactly one of story or phrase_set is present. */
         SessionContent: {
             session_id: string;
@@ -992,6 +1072,8 @@ export interface components {
             grade: components["schemas"]["Grade"];
             /** @description Skill XP deltas persisted for this accepted grade. */
             skill_xp: components["schemas"]["SkillXPDelta"][];
+            /** @description How many times this task has been submitted (1 = first submission). */
+            attempt_count: number;
         };
         SkillXPDelta: {
             skill_id: string;
@@ -1456,6 +1538,31 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    getSessionDebug: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session debug detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionDebug"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     getSessionContent: {
         parameters: {
             query?: never;
@@ -1504,6 +1611,50 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
+        };
+    };
+    startReading: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session is now in reading state */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    completeSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session is now in complete state */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
         };
     };
     retrySession: {

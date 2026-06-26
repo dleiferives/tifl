@@ -144,7 +144,10 @@ export function GenerationView(props: { sessionId: string }) {
           <h1>{headingFor(result())}</h1>
           <p>{subtitleFor(result())}</p>
         </div>
-        <a class="button-link secondary-link" href={routeHref("/")}>Home</a>
+        <div class="view-heading-actions">
+          <a class="button-link secondary-link" href={routeHref(`/debug/${encodeURIComponent(props.sessionId)}`)}>Debug</a>
+          <a class="button-link secondary-link" href={routeHref("/")}>Home</a>
+        </div>
       </header>
 
       <ol class="stage-list" aria-label="Generation progress">

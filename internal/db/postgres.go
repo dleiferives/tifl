@@ -724,6 +724,29 @@ func (r *PostgresRepository) InsertLLMCall(ctx context.Context, c domain.LLMCall
 	return err
 }
 
+func (r *PostgresRepository) ListSessionLLMCalls(ctx context.Context, userID, sessionID string) ([]domain.LLMCall, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT call_id, session_id, user_id, kind, prompt_version, model,
+		        input_tokens, output_tokens, latency_ms, status, error_detail, called_at
+		   FROM llm_calls
+		  WHERE user_id = $1 AND session_id = $2
+		  ORDER BY called_at, call_id`,
+		userID, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.LLMCall
+	for rows.Next() {
+		call, err := scanPgLLMCall(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, call)
+	}
+	return out, rows.Err()
+}
+
 // --- reader events ---------------------------------------------------------
 
 func (r *PostgresRepository) InsertReaderEvents(ctx context.Context, events []domain.ReaderEvent) ([]domain.ReaderEvent, error) {
@@ -1144,6 +1167,19 @@ func scanPostgresPhrase(row interface {
 		}
 	}
 	return p, nil
+}
+
+func scanPgLLMCall(row interface {
+	Scan(dest ...any) error
+}) (domain.LLMCall, error) {
+	var call domain.LLMCall
+	if err := row.Scan(
+		&call.CallID, &call.SessionID, &call.UserID, &call.Kind, &call.PromptVersion, &call.Model,
+		&call.InputTokens, &call.OutputTokens, &call.LatencyMs, &call.Status, &call.ErrorDetail, &call.CalledAt,
+	); err != nil {
+		return domain.LLMCall{}, err
+	}
+	return call, nil
 }
 
 func derefStr(p *string) string {

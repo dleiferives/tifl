@@ -93,6 +93,7 @@ type Repository interface {
 	// LLM calls — the audit/cost log written by the gateway client after every
 	// outbound model call. Append-only; the call_id is the caller's idempotency key.
 	InsertLLMCall(ctx context.Context, c domain.LLMCall) error
+	ListSessionLLMCalls(ctx context.Context, userID, sessionID string) ([]domain.LLMCall, error)
 
 	// Reader events — the high-volume behavioural signal log the reader flushes in
 	// batches. InsertReaderEvents is append-only and idempotent on event_id (a

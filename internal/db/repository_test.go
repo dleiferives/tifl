@@ -23,20 +23,27 @@ func must(t *testing.T, err error) {
 // implementation (SQLite, Postgres, fake) must pass it identically, so the same
 // behaviour is guaranteed regardless of which backend a deployment selects.
 func testRepository(t *testing.T, newRepo repoFactory) {
-	t.Run("Users", func(t *testing.T) { testUsers(t, newRepo(t)) })
-	t.Run("UserProfile", func(t *testing.T) { testUserProfile(t, newRepo(t)) })
-	t.Run("RefreshTokens", func(t *testing.T) { testRefreshTokens(t, newRepo(t)) })
-	t.Run("Languages", func(t *testing.T) { testLanguages(t, newRepo(t)) })
-	t.Run("KnowledgeItems", func(t *testing.T) { testKnowledgeItems(t, newRepo(t)) })
-	t.Run("UserKnowledge", func(t *testing.T) { testUserKnowledge(t, newRepo(t)) })
-	t.Run("KnowledgePredictions", func(t *testing.T) { testKnowledgePredictions(t, newRepo(t)) })
-	t.Run("Skills", func(t *testing.T) { testSkills(t, newRepo(t)) })
-	t.Run("TenantIsolation", func(t *testing.T) { testTenantIsolation(t, newRepo(t)) })
-	t.Run("LLMCalls", func(t *testing.T) { testLLMCalls(t, newRepo(t)) })
-	t.Run("ReaderEvents", func(t *testing.T) { testReaderEvents(t, newRepo(t)) })
-	t.Run("DefinitionsBreakdowns", func(t *testing.T) { testDefinitionsBreakdowns(t, newRepo(t)) })
-	t.Run("Pipeline", func(t *testing.T) { testPipeline(t, newRepo(t)) })
-	t.Run("SessionLifecycle", func(t *testing.T) { testSessionLifecycle(t, newRepo(t)) })
+	run := func(name string, test func(*testing.T, db.Repository)) {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			test(t, newRepo(t))
+		})
+	}
+
+	run("Users", testUsers)
+	run("UserProfile", testUserProfile)
+	run("RefreshTokens", testRefreshTokens)
+	run("Languages", testLanguages)
+	run("KnowledgeItems", testKnowledgeItems)
+	run("UserKnowledge", testUserKnowledge)
+	run("KnowledgePredictions", testKnowledgePredictions)
+	run("Skills", testSkills)
+	run("TenantIsolation", testTenantIsolation)
+	run("LLMCalls", testLLMCalls)
+	run("ReaderEvents", testReaderEvents)
+	run("DefinitionsBreakdowns", testDefinitionsBreakdowns)
+	run("Pipeline", testPipeline)
+	run("SessionLifecycle", testSessionLifecycle)
 }
 
 func testUserProfile(t *testing.T, repo db.Repository) {
@@ -645,7 +652,7 @@ func testPipeline(t *testing.T, repo db.Repository) {
 func testLLMCalls(t *testing.T, repo db.Repository) {
 	ctx := context.Background()
 
-	sess, uid := "sess-1", "user-1"
+	sess, otherSess, uid, otherUID := "sess-1", "sess-2", "user-1", "user-2"
 	in, out, lat := 120, 64, 875
 	detail := "upstream 429"
 	must(t, repo.InsertLLMCall(ctx, domain.LLMCall{
@@ -653,12 +660,36 @@ func testLLMCalls(t *testing.T, repo db.Repository) {
 		PromptVersion: "v1", Model: "test-model", InputTokens: &in, OutputTokens: &out,
 		LatencyMs: &lat, Status: "success", CalledAt: 1700.0,
 	}))
+	must(t, repo.InsertLLMCall(ctx, domain.LLMCall{
+		CallID: "call-2", SessionID: &sess, UserID: &uid, Kind: "task_comprehension_mc",
+		PromptVersion: "v2", Model: "test-model", Status: "success", CalledAt: 1800.0,
+	}))
+	must(t, repo.InsertLLMCall(ctx, domain.LLMCall{
+		CallID: "call-other-user", SessionID: &sess, UserID: &otherUID, Kind: "story_generator",
+		PromptVersion: "v1", Model: "test-model", Status: "success", CalledAt: 1600.0,
+	}))
+	must(t, repo.InsertLLMCall(ctx, domain.LLMCall{
+		CallID: "call-other-session", SessionID: &otherSess, UserID: &uid, Kind: "story_generator",
+		PromptVersion: "v1", Model: "test-model", Status: "success", CalledAt: 1600.0,
+	}))
 
 	// Sparse row: no session/user/usage, an error detail, and a defaulted call_id.
 	must(t, repo.InsertLLMCall(ctx, domain.LLMCall{
 		Kind: "scope_check", PromptVersion: "v1", Model: "test-model",
 		Status: "error", ErrorDetail: &detail,
 	}))
+
+	got, err := repo.ListSessionLLMCalls(ctx, uid, sess)
+	must(t, err)
+	if len(got) != 2 {
+		t.Fatalf("ListSessionLLMCalls returned %d rows, want 2: %+v", len(got), got)
+	}
+	if got[0].CallID != "call-1" || got[1].CallID != "call-2" {
+		t.Fatalf("ListSessionLLMCalls ordering/filter mismatch: %+v", got)
+	}
+	if got[0].InputTokens == nil || *got[0].InputTokens != in || got[0].LatencyMs == nil || *got[0].LatencyMs != lat {
+		t.Fatalf("ListSessionLLMCalls did not round-trip nullable metrics: %+v", got[0])
+	}
 }
 
 func testUsers(t *testing.T, repo db.Repository) {

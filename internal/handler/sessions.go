@@ -112,6 +112,26 @@ type sessionDetailDTO struct {
 	Stages       []generationStageDTO `json:"stages"`
 }
 
+type llmCallDTO struct {
+	CallID        string  `json:"call_id"`
+	SessionID     *string `json:"session_id,omitempty"`
+	UserID        *string `json:"user_id,omitempty"`
+	Kind          string  `json:"kind"`
+	PromptVersion string  `json:"prompt_version"`
+	Model         string  `json:"model"`
+	InputTokens   *int    `json:"input_tokens,omitempty"`
+	OutputTokens  *int    `json:"output_tokens,omitempty"`
+	LatencyMs     *int    `json:"latency_ms,omitempty"`
+	Status        string  `json:"status"`
+	ErrorDetail   *string `json:"error_detail,omitempty"`
+	CalledAt      float64 `json:"called_at"`
+}
+
+type sessionDebugDTO struct {
+	Session  sessionDetailDTO `json:"session"`
+	LLMCalls []llmCallDTO     `json:"llm_calls"`
+}
+
 type sessionListResponse struct {
 	Sessions []sessionOverviewDTO `json:"sessions"`
 	Limit    int                  `json:"limit"`
@@ -162,6 +182,25 @@ func (h *Handler) getSessionDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toSessionDetailDTO(detail))
+}
+
+func (h *Handler) getSessionDebug(w http.ResponseWriter, r *http.Request) {
+	userID := h.currentUserID(r)
+	sessionID := r.PathValue("id")
+	detail, err := h.repo.GetSessionDetail(r.Context(), userID, sessionID)
+	if err != nil {
+		h.writeSessionLookupError(w, err)
+		return
+	}
+	calls, err := h.repo.ListSessionLLMCalls(r.Context(), userID, sessionID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, sessionDebugDTO{
+		Session:  toSessionDetailDTO(detail),
+		LLMCalls: toLLMCallDTOs(calls),
+	})
 }
 
 func (h *Handler) generateSession(w http.ResponseWriter, r *http.Request) {
@@ -422,6 +461,27 @@ func toSessionDetailDTO(detail domain.SessionDetail) sessionDetailDTO {
 		StageSummary:       summarizeStages(ordered),
 		Stages:             stages,
 	}
+}
+
+func toLLMCallDTOs(calls []domain.LLMCall) []llmCallDTO {
+	out := make([]llmCallDTO, 0, len(calls))
+	for _, c := range calls {
+		out = append(out, llmCallDTO{
+			CallID:        c.CallID,
+			SessionID:     c.SessionID,
+			UserID:        c.UserID,
+			Kind:          c.Kind,
+			PromptVersion: c.PromptVersion,
+			Model:         c.Model,
+			InputTokens:   c.InputTokens,
+			OutputTokens:  c.OutputTokens,
+			LatencyMs:     c.LatencyMs,
+			Status:        c.Status,
+			ErrorDetail:   c.ErrorDetail,
+			CalledAt:      c.CalledAt,
+		})
+	}
+	return out
 }
 
 func summarizeStages(stages []domain.GenerationStage) stageSummaryDTO {

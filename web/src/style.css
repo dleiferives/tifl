@@ -532,12 +532,15 @@ select {
 
 .status-chip[data-status="ready"],
 .status-chip[data-status="reading"],
-.status-chip[data-status="complete"] {
+.status-chip[data-status="complete"],
+.status-chip[data-status="success"] {
   border-color: color-mix(in srgb, var(--success), var(--border) 55%);
   color: var(--success);
 }
 
-.status-chip[data-status="failed"] {
+.status-chip[data-status="failed"],
+.status-chip[data-status="error"],
+.status-chip[data-status="timeout"] {
   border-color: color-mix(in srgb, var(--danger), var(--border) 55%);
   background: var(--danger-subtle);
   color: var(--danger);
@@ -1866,6 +1869,128 @@ select {
 .panel-code {
   color: var(--text-muted);
   font-size: 0.8rem;
+}
+
+/* Session debug */
+.debug-view {
+  display: grid;
+  gap: 1.35rem;
+}
+
+.debug-summary {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.debug-section {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.debug-section h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.debug-timeline,
+.debug-call-list {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.debug-stage-row,
+.debug-call-row {
+  min-width: 0;
+  padding: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  background: var(--surface);
+}
+
+.debug-stage-row {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.debug-stage-row[data-status="complete"] {
+  border-color: color-mix(in srgb, var(--success), var(--border) 55%);
+}
+
+.debug-stage-row[data-status="failed"],
+.debug-call-row[data-status="error"],
+.debug-call-row[data-status="timeout"] {
+  border-color: color-mix(in srgb, var(--danger), var(--border) 45%);
+  background: var(--danger-subtle);
+}
+
+.debug-stage-row > div:first-child,
+.debug-call-row > header {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.debug-stage-row strong,
+.debug-call-row h3 {
+  overflow-wrap: anywhere;
+}
+
+.debug-stage-row strong,
+.debug-stage-row span,
+.debug-call-row h3,
+.debug-call-row p {
+  margin: 0;
+}
+
+.debug-stage-row span,
+.debug-call-row p,
+.debug-empty {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.debug-stage-row dl,
+.debug-call-row dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem 1rem;
+  margin: 0;
+}
+
+.debug-stage-row dl div,
+.debug-call-row dl div {
+  min-width: 7rem;
+}
+
+.debug-stage-row dt,
+.debug-call-row dt {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.debug-stage-row dd,
+.debug-call-row dd {
+  margin: 0.1rem 0 0;
+  overflow-wrap: anywhere;
+  font-size: 0.88rem;
+}
+
+.debug-call-row {
+  display: grid;
+  gap: 0.65rem;
+}
+
+@media (max-width: 760px) {
+  .debug-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 /* Phrase set view (#74) — the phrase-session counterpart to the reader. */

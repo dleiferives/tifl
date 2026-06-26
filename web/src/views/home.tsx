@@ -301,6 +301,7 @@ function SessionActions(props: {
       <Show when={session.status === "ready" && !session.story_id && session.content_type !== "phrase_set"}>
         <a class="button-link secondary-link" href={generationHref(session.session_id)}>Generation</a>
       </Show>
+      <a class="button-link secondary-link" href={debugHref(session.session_id)}>Debug</a>
     </>
   );
 }
@@ -391,6 +392,10 @@ function phrasesHref(sessionID: string): string {
 
 function tasksHref(sessionID: string): string {
   return routeHref(`/tasks/${encodeURIComponent(sessionID)}`);
+}
+
+function debugHref(sessionID: string): string {
+  return routeHref(`/debug/${encodeURIComponent(sessionID)}`);
 }
 
 function sessionListErrorMessage(error: unknown): string {

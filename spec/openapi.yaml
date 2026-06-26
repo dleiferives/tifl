@@ -369,6 +369,31 @@ paths:
           $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
+  /sessions/{id}/debug:
+    get:
+      summary: Get session debug timeline and LLM audit calls
+      description: >
+        Returns the same tenant-scoped session detail and generation-stage
+        timeline as GET /sessions/{id}, plus llm_calls rows for that
+        session/current-user pair ordered by call time. Another user's session
+        returns 404. This bounded slice is authenticated-user scoped; broader
+        dev/admin-only gating is a follow-up.
+      operationId: getSessionDebug
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      responses:
+        "200":
+          description: Session debug detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionDebug"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /sessions/{id}/content:
     get:
       summary: Get a session's content (story reference or phrase set)
@@ -1214,6 +1239,41 @@ components:
               items:
                 $ref: "#/components/schemas/GenerationStageRecord"
           required: [stage_summary, stages]
+    LLMCall:
+      type: object
+      description: One llm_calls audit row scoped to a session and current user.
+      properties:
+        call_id: { type: string }
+        session_id: { type: string }
+        user_id: { type: string }
+        kind: { type: string }
+        prompt_version: { type: string }
+        model: { type: string }
+        input_tokens: { type: integer }
+        output_tokens: { type: integer }
+        latency_ms: { type: integer }
+        status:
+          type: string
+          enum: [success, error, timeout]
+        error_detail: { type: string }
+        called_at: { type: number }
+      required:
+        - call_id
+        - kind
+        - prompt_version
+        - model
+        - status
+        - called_at
+    SessionDebug:
+      type: object
+      properties:
+        session:
+          $ref: "#/components/schemas/SessionDetail"
+        llm_calls:
+          type: array
+          items:
+            $ref: "#/components/schemas/LLMCall"
+      required: [session, llm_calls]
     SessionContent:
       type: object
       description: >

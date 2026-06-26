@@ -699,6 +699,29 @@ func (r *SQLiteRepository) InsertLLMCall(ctx context.Context, c domain.LLMCall) 
 	return err
 }
 
+func (r *SQLiteRepository) ListSessionLLMCalls(ctx context.Context, userID, sessionID string) ([]domain.LLMCall, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT call_id, session_id, user_id, kind, prompt_version, model,
+		        input_tokens, output_tokens, latency_ms, status, error_detail, called_at
+		   FROM llm_calls
+		  WHERE user_id = ? AND session_id = ?
+		  ORDER BY called_at, call_id`,
+		userID, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.LLMCall
+	for rows.Next() {
+		call, err := scanSQLiteLLMCall(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, call)
+	}
+	return out, rows.Err()
+}
+
 // --- reader events ---------------------------------------------------------
 
 func (r *SQLiteRepository) InsertReaderEvents(ctx context.Context, events []domain.ReaderEvent) ([]domain.ReaderEvent, error) {
@@ -1132,6 +1155,29 @@ func scanSQLitePhrase(rows interface {
 	return p, nil
 }
 
+func scanSQLiteLLMCall(row interface {
+	Scan(dest ...any) error
+}) (domain.LLMCall, error) {
+	var (
+		call                       domain.LLMCall
+		sessionID, userID, errText sql.NullString
+		input, output, latency     sql.NullInt64
+	)
+	if err := row.Scan(
+		&call.CallID, &sessionID, &userID, &call.Kind, &call.PromptVersion, &call.Model,
+		&input, &output, &latency, &call.Status, &errText, &call.CalledAt,
+	); err != nil {
+		return domain.LLMCall{}, err
+	}
+	call.SessionID = stringPtrFromNull(sessionID)
+	call.UserID = stringPtrFromNull(userID)
+	call.InputTokens = intPtrFromNull(input)
+	call.OutputTokens = intPtrFromNull(output)
+	call.LatencyMs = intPtrFromNull(latency)
+	call.ErrorDetail = stringPtrFromNull(errText)
+	return call, nil
+}
+
 // --- helpers ---------------------------------------------------------------
 
 // emptyToNull stores an empty optional string as SQL NULL.
@@ -1217,6 +1263,22 @@ func floatPtr(n sql.NullFloat64) *float64 {
 		return nil
 	}
 	v := n.Float64
+	return &v
+}
+
+func stringPtrFromNull(n sql.NullString) *string {
+	if !n.Valid {
+		return nil
+	}
+	v := n.String
+	return &v
+}
+
+func intPtrFromNull(n sql.NullInt64) *int {
+	if !n.Valid {
+		return nil
+	}
+	v := int(n.Int64)
 	return &v
 }
 

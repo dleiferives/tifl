@@ -3,6 +3,7 @@ import { render } from "solid-js/web";
 import { initializeAuthentication } from "./auth";
 import { createHashRouter, routeHref, type Route } from "./router";
 import { appStore } from "./store";
+import { DebugView } from "./views/debug";
 import { GenerationView } from "./views/generation";
 import { HomeView } from "./views/home";
 import { LoginView } from "./views/login";
@@ -37,6 +38,9 @@ function App() {
             <Match when={route().name === "skills"}><SkillsView /></Match>
             <Match when={route().name === "generation"}>
               <GenerationView sessionId={(route() as Extract<Route, { name: "generation" }>).sessionId} />
+            </Match>
+            <Match when={route().name === "debug"}>
+              <DebugView sessionId={(route() as Extract<Route, { name: "debug" }>).sessionId} />
             </Match>
             <Match when={route().name === "reader"}>
               <ReaderView storyId={(route() as Extract<Route, { name: "reader" }>).storyId} />
