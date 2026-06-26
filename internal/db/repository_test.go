@@ -40,12 +40,128 @@ func testRepository(t *testing.T, newRepo repoFactory) {
 	run("KnowledgePredictions", testKnowledgePredictions)
 	run("Skills", testSkills)
 	run("TenantIsolation", testTenantIsolation)
+	run("AuthSecurityEvents", testAuthSecurityEvents)
 	run("LLMCalls", testLLMCalls)
 	run("ReaderEvents", testReaderEvents)
 	run("DefinitionsBreakdowns", testDefinitionsBreakdowns)
 	run("Pipeline", testPipeline)
 	run("SessionLifecycle", testSessionLifecycle)
 	run("SessionArchiveDelete", testSessionArchiveDelete)
+}
+
+func testAuthSecurityEvents(t *testing.T, repo db.Repository) {
+	ctx := context.Background()
+	user, err := repo.CreateUser(ctx, domain.User{Email: "auth-events@example.com"})
+	must(t, err)
+
+	_, _, err = repo.InsertAuthSecurityEvent(ctx, domain.AuthSecurityEvent{
+		EventType:           domain.AuthSecurityEventFailedAttempt,
+		Flow:                domain.AuthFlowLogin,
+		SourceAddressBucket: "ip:203.0.113.0/24",
+	})
+	if !errors.Is(err, db.ErrInvalidAuthSecurityEvent) {
+		t.Fatalf("missing email hash should return ErrInvalidAuthSecurityEvent, got %v", err)
+	}
+	_, _, err = repo.InsertAuthSecurityEvent(ctx, domain.AuthSecurityEvent{
+		EventType:           domain.AuthSecurityEventFailedAttempt,
+		Flow:                "password-reset",
+		EmailHash:           "sha256:bad-flow",
+		SourceAddressBucket: "ip:203.0.113.0/24",
+	})
+	if !errors.Is(err, db.ErrInvalidAuthSecurityEvent) {
+		t.Fatalf("invalid flow should return ErrInvalidAuthSecurityEvent, got %v", err)
+	}
+
+	uid := user.UserID
+	first := domain.AuthSecurityEvent{
+		EventID:             "auth-1",
+		EventType:           domain.AuthSecurityEventFailedAttempt,
+		Flow:                domain.AuthFlowLogin,
+		EmailHash:           "sha256:email-a",
+		SourceAddressBucket: "ip:203.0.113.0/24",
+		UserID:              &uid,
+		CreatedAt:           100,
+		Details:             map[string]any{"reason": "bad_password", "handler": "login", "throttled": false},
+	}
+	insertedEvent, inserted, err := repo.InsertAuthSecurityEvent(ctx, first)
+	must(t, err)
+	if !inserted || insertedEvent.EventID != "auth-1" {
+		t.Fatalf("first insert mismatch: inserted=%v event=%+v", inserted, insertedEvent)
+	}
+	_, inserted, err = repo.InsertAuthSecurityEvent(ctx, first)
+	must(t, err)
+	if inserted {
+		t.Fatal("duplicate auth event should be idempotent")
+	}
+
+	must(t, func() error {
+		_, _, err := repo.InsertAuthSecurityEvent(ctx, domain.AuthSecurityEvent{
+			EventID:             "auth-2",
+			EventType:           domain.AuthSecurityEventThrottledAttempt,
+			Flow:                domain.AuthFlowRegister,
+			EmailHash:           "sha256:email-b",
+			SourceAddressBucket: "ip:198.51.100.0/24",
+			CreatedAt:           200,
+			Details:             map[string]any{"reason": "rate_limit", "handler": "register"},
+		})
+		return err
+	}())
+	must(t, func() error {
+		_, _, err := repo.InsertAuthSecurityEvent(ctx, domain.AuthSecurityEvent{
+			EventID:             "auth-3",
+			EventType:           domain.AuthSecurityEventThrottledAttempt,
+			Flow:                domain.AuthFlowLogin,
+			EmailHash:           "sha256:email-a",
+			SourceAddressBucket: "ip:203.0.113.0/24",
+			UserID:              &uid,
+			CreatedAt:           200,
+			Details:             map[string]any{"reason": "rate_limit", "handler": "login"},
+		})
+		return err
+	}())
+
+	emailEvents, err := repo.ListAuthSecurityEvents(ctx, domain.ListAuthSecurityEventsOptions{EmailHash: "sha256:email-a"})
+	must(t, err)
+	if len(emailEvents) != 2 || emailEvents[0].EventID != "auth-3" || emailEvents[1].EventID != "auth-1" {
+		t.Fatalf("email filter/order mismatch: %+v", emailEvents)
+	}
+	if emailEvents[0].UserID == nil || *emailEvents[0].UserID != user.UserID ||
+		emailEvents[0].EventType != domain.AuthSecurityEventThrottledAttempt ||
+		emailEvents[0].Flow != domain.AuthFlowLogin ||
+		emailEvents[0].SourceAddressBucket != "ip:203.0.113.0/24" ||
+		emailEvents[0].Details["reason"] != "rate_limit" {
+		t.Fatalf("auth event metadata did not round-trip: %+v", emailEvents[0])
+	}
+
+	registerEvents, err := repo.ListAuthSecurityEvents(ctx, domain.ListAuthSecurityEventsOptions{
+		Flow:                domain.AuthFlowRegister,
+		EventType:           domain.AuthSecurityEventThrottledAttempt,
+		SourceAddressBucket: "ip:198.51.100.0/24",
+	})
+	must(t, err)
+	if len(registerEvents) != 1 || registerEvents[0].EventID != "auth-2" || registerEvents[0].UserID != nil {
+		t.Fatalf("flow/type/source filter mismatch: %+v", registerEvents)
+	}
+
+	after, before := 150.0, 200.0
+	window, err := repo.ListAuthSecurityEvents(ctx, domain.ListAuthSecurityEventsOptions{
+		CreatedAfter: &after, CreatedBefore: &before, Limit: 1, Offset: 1,
+	})
+	must(t, err)
+	if len(window) != 1 || window[0].EventID != "auth-2" {
+		t.Fatalf("time window/limit/offset mismatch: %+v", window)
+	}
+
+	generated, inserted, err := repo.InsertAuthSecurityEvent(ctx, domain.AuthSecurityEvent{
+		EventType:           domain.AuthSecurityEventFailedAttempt,
+		Flow:                domain.AuthFlowLogin,
+		EmailHash:           "sha256:generated",
+		SourceAddressBucket: "ip:192.0.2.0/24",
+	})
+	must(t, err)
+	if !inserted || generated.EventID == "" || generated.CreatedAt == 0 {
+		t.Fatalf("id-less event should get id/created_at: inserted=%v event=%+v", inserted, generated)
+	}
 }
 
 func testUserProfile(t *testing.T, repo db.Repository) {

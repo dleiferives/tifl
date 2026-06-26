@@ -29,6 +29,10 @@ var ErrInvalidProfile = errors.New("db: invalid profile")
 // again. The backend atomically revokes that token family before returning it.
 var ErrRefreshTokenReuse = errors.New("db: refresh token reuse detected")
 
+// ErrInvalidAuthSecurityEvent is returned when an auth security event is missing
+// repository-required metadata.
+var ErrInvalidAuthSecurityEvent = errors.New("db: invalid auth security event")
+
 // Repository is the storage boundary. The surface grows method-by-method as each
 // subsystem is implemented; both backends satisfy it identically.
 type Repository interface {
@@ -54,6 +58,13 @@ type Repository interface {
 	RotateRefreshToken(ctx context.Context, oldHash string, next domain.RefreshToken, now float64) error
 	RevokeRefreshToken(ctx context.Context, tokenHash string, now float64) error
 	RevokeAllRefreshTokens(ctx context.Context, userID string, now float64) error
+
+	// Auth security events — append-only audit rows for login/register security
+	// decisions. Inserts are idempotent on event_id, so retried handler writes do
+	// not duplicate rows. ListAuthSecurityEvents returns newest rows first and
+	// accepts the filters future auth handlers need for throttling windows.
+	InsertAuthSecurityEvent(ctx context.Context, event domain.AuthSecurityEvent) (domain.AuthSecurityEvent, bool, error)
+	ListAuthSecurityEvents(ctx context.Context, opts domain.ListAuthSecurityEventsOptions) ([]domain.AuthSecurityEvent, error)
 
 	// Languages — the catalogue, populated at startup from compiled-in plugins.
 	UpsertLanguage(ctx context.Context, l domain.Language) error
@@ -228,4 +239,23 @@ func normalizeListSessionsOptions(opts domain.ListSessionsOptions) domain.ListSe
 		opts.Offset = 0
 	}
 	return opts
+}
+
+func normalizeListAuthSecurityEventsOptions(opts domain.ListAuthSecurityEventsOptions) domain.ListAuthSecurityEventsOptions {
+	if opts.Offset < 0 {
+		opts.Offset = 0
+	}
+	return opts
+}
+
+func validateAuthSecurityEvent(e domain.AuthSecurityEvent) error {
+	if e.EventType == "" || e.EmailHash == "" || e.SourceAddressBucket == "" {
+		return ErrInvalidAuthSecurityEvent
+	}
+	switch e.Flow {
+	case domain.AuthFlowLogin, domain.AuthFlowRegister:
+		return nil
+	default:
+		return ErrInvalidAuthSecurityEvent
+	}
 }
