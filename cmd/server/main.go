@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -34,11 +35,15 @@ import (
 
 func main() {
 	cfgPath := flag.String("config", config.DefaultPath, "path to the YAML config file (optional)")
+	addrFlag := flag.String("addr", "", "listen address override (use 127.0.0.1:0 for a random local port)")
 	flag.Parse()
 
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
 		log.Fatalf("config: %v", err)
+	}
+	if *addrFlag != "" {
+		cfg.Addr = *addrFlag
 	}
 
 	ctx := context.Background()
@@ -122,10 +127,14 @@ func main() {
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	ln, err := net.Listen("tcp", cfg.Addr)
+	if err != nil {
+		log.Fatalf("listen %s: %v", cfg.Addr, err)
+	}
 
+	log.Printf("tifl server listening on %s (storage=%s auth=%s)", httpURL(ln.Addr()), cfg.StorageMode, cfg.AuthMode)
 	go func() {
-		log.Printf("tifl server listening on http://%s (storage=%s auth=%s)", cfg.Addr, cfg.StorageMode, cfg.AuthMode)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("server error: %v", err)
 		}
 	}()
@@ -140,6 +149,14 @@ func main() {
 		log.Printf("shutdown error: %v", err)
 	}
 	log.Println("tifl server stopped")
+}
+
+func httpURL(addr net.Addr) string {
+	host, port, err := net.SplitHostPort(addr.String())
+	if err != nil {
+		return "http://" + addr.String()
+	}
+	return "http://" + net.JoinHostPort(host, port)
 }
 
 func openRepo(ctx context.Context, cfg config.Config) (db.Repository, error) {
