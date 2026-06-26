@@ -112,6 +112,8 @@ type Repository interface {
 	ListSessions(ctx context.Context, userID string, opts domain.ListSessionsOptions) ([]domain.SessionOverview, error)
 	GetSessionDetail(ctx context.Context, userID, sessionID string) (domain.SessionDetail, error)
 	UpdateSessionStatus(ctx context.Context, sessionID string, status domain.SessionStatus) error
+	SetSessionArchived(ctx context.Context, userID, sessionID string, archived bool) error
+	DeleteSession(ctx context.Context, userID, sessionID string) error
 	// SetSessionTopic records the chosen topic on a session. The system-driven
 	// topic chooser writes it before story generation so the topic is reproducible
 	// and inspectable (context/session-types.md "System-Driven").

@@ -276,6 +276,8 @@ paths:
         generation status, story_id when available, selected target/new counts,
         and compact task progress counts without opening the SSE stream or
         fetching task bodies.
+        By default archived sessions are excluded. Pass archived=true to list
+        archived sessions for restore/delete workflows.
       operationId: listSessions
       parameters:
         - name: limit
@@ -293,6 +295,12 @@ paths:
             type: integer
             minimum: 0
             default: 0
+        - name: archived
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
       responses:
         "200":
           description: Session overview page
@@ -369,6 +377,26 @@ paths:
           $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
+    delete:
+      summary: Hard-delete a session and its owned generated content
+      description: >
+        Removes the caller's session plus session-owned generated content such as
+        generation stages, tasks, phrase sets, story tokens and glossary entries.
+        User knowledge and reader exposure history are preserved; if reader
+        events reference the generated story, the story row remains as their
+        historical anchor.
+      operationId: deleteSession
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      responses:
+        "204":
+          description: Session deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /sessions/{id}/debug:
     get:
       summary: Get session debug timeline and LLM audit calls
@@ -388,6 +416,41 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SessionDebug"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /sessions/{id}/archive:
+    post:
+      summary: Archive a session
+      description: >
+        Soft-archives the caller's session so it disappears from the default
+        session list while remaining restorable from archived=true.
+      operationId: archiveSession
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      responses:
+        "204":
+          description: Session archived
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      summary: Restore an archived session
+      description: >
+        Clears archived_at so the caller's session returns to the default session
+        list.
+      operationId: unarchiveSession
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      responses:
+        "204":
+          description: Session restored
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -1176,6 +1239,7 @@ components:
           type: string
           enum: [pending, generating, ready, reading, complete, failed]
         created_at: { type: number }
+        archived_at: { type: number }
         reading_started_at: { type: number }
         completed_at: { type: number }
         selected_counts:

@@ -139,6 +139,18 @@ export async function getSessionDebug(sessionID: string): Promise<APIResponse<"g
   return apiFetch<APIResponse<"getSessionDebug", 200>>(`/sessions/${encodeURIComponent(sessionID)}/debug`);
 }
 
+export async function archiveSession(sessionID: string): Promise<void> {
+  return apiFetch<void>(`/sessions/${encodeURIComponent(sessionID)}/archive`, { method: "POST" });
+}
+
+export async function unarchiveSession(sessionID: string): Promise<void> {
+  return apiFetch<void>(`/sessions/${encodeURIComponent(sessionID)}/archive`, { method: "DELETE" });
+}
+
+export async function deleteSession(sessionID: string): Promise<void> {
+  return apiFetch<void>(`/sessions/${encodeURIComponent(sessionID)}`, { method: "DELETE" });
+}
+
 export async function getSessionContent(sessionID: string): Promise<APIResponse<"getSessionContent", 200>> {
   return apiFetch<APIResponse<"getSessionContent", 200>>(`/sessions/${encodeURIComponent(sessionID)}/content`);
 }

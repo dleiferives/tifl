@@ -213,7 +213,7 @@ export interface paths {
         };
         /**
          * List sessions for the current user
-         * @description Newest-first session overview page for home/resume screens. Includes generation status, story_id when available, selected target/new counts, and compact task progress counts without opening the SSE stream or fetching task bodies.
+         * @description Newest-first session overview page for home/resume screens. Includes generation status, story_id when available, selected target/new counts, and compact task progress counts without opening the SSE stream or fetching task bodies. By default archived sessions are excluded. Pass archived=true to list archived sessions for restore/delete workflows.
          */
         get: operations["listSessions"];
         put?: never;
@@ -260,7 +260,11 @@ export interface paths {
         get: operations["getSessionDetail"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Hard-delete a session and its owned generated content
+         * @description Removes the caller's session plus session-owned generated content such as generation stages, tasks, phrase sets, story tokens and glossary entries. User knowledge and reader exposure history are preserved; if reader events reference the generated story, the story row remains as their historical anchor.
+         */
+        delete: operations["deleteSession"];
         options?: never;
         head?: never;
         patch?: never;
@@ -281,6 +285,30 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Archive a session
+         * @description Soft-archives the caller's session so it disappears from the default session list while remaining restorable from archived=true.
+         */
+        post: operations["archiveSession"];
+        /**
+         * Restore an archived session
+         * @description Clears archived_at so the caller's session returns to the default session list.
+         */
+        delete: operations["unarchiveSession"];
         options?: never;
         head?: never;
         patch?: never;
@@ -782,6 +810,7 @@ export interface components {
             /** @enum {string} */
             status: "pending" | "generating" | "ready" | "reading" | "complete" | "failed";
             created_at: number;
+            archived_at?: number;
             reading_started_at?: number;
             completed_at?: number;
             selected_counts: components["schemas"]["SelectedItemCounts"];
@@ -1464,6 +1493,7 @@ export interface operations {
             query?: {
                 limit?: number;
                 offset?: number;
+                archived?: boolean;
             };
             header?: never;
             path?: never;
@@ -1538,6 +1568,29 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    deleteSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     getSessionDebug: {
         parameters: {
             query?: never;
@@ -1557,6 +1610,52 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SessionDebug"];
                 };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    archiveSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session archived */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    unarchiveSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session restored */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];

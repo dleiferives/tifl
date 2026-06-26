@@ -21,7 +21,7 @@ import (
 // Every SELECT from the sessions table must use this constant to stay in sync.
 const pgSessionColumns = "session_id, user_id, story_id, language, level, selected_targets, selected_new," +
 	" session_type, topic, user_expressions, expression_output, status," +
-	" created_at, reading_started_at, completed_at"
+	" created_at, archived_at, reading_started_at, completed_at"
 
 func (r *PostgresRepository) CreateSession(ctx context.Context, s domain.Session) (domain.Session, error) {
 	if s.SessionID == "" {
@@ -43,11 +43,11 @@ func (r *PostgresRepository) CreateSession(ctx context.Context, s domain.Session
 		`INSERT INTO sessions(
 		   session_id, user_id, story_id, language, level, selected_targets, selected_new,
 		   session_type, topic, user_expressions, expression_output, status,
-		   created_at, reading_started_at, completed_at)
-		 VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+		   created_at, archived_at, reading_started_at, completed_at)
+		 VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
 		s.SessionID, s.UserID, s.StoryID, s.Language, s.Level, targets, news,
 		string(s.SessionType), pgText(s.Topic), exprs, pgText(s.ExpressionOutput),
-		string(s.Status), s.CreatedAt, s.ReadingStartedAt, s.CompletedAt)
+		string(s.Status), s.CreatedAt, s.ArchivedAt, s.ReadingStartedAt, s.CompletedAt)
 	if err != nil {
 		return domain.Session{}, err
 	}
@@ -71,8 +71,9 @@ func (r *PostgresRepository) ListSessions(ctx context.Context, userID string, op
 		            AND (t.graded_at IS NOT NULL OR COALESCE(t.graded_by, '') <> ''))
 		 FROM sessions s
 		 WHERE s.user_id = $1
+		   AND (($2 = TRUE AND s.archived_at IS NOT NULL) OR ($2 = FALSE AND s.archived_at IS NULL))
 		 ORDER BY s.created_at DESC, s.session_id DESC
-		 LIMIT $2 OFFSET $3`, userID, opts.Limit, opts.Offset)
+		 LIMIT $3 OFFSET $4`, userID, opts.Archived, opts.Limit, opts.Offset)
 	if err != nil {
 		return nil, err
 	}
@@ -119,6 +120,89 @@ func (r *PostgresRepository) UpdateSessionStatus(ctx context.Context, sessionID 
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (r *PostgresRepository) SetSessionArchived(ctx context.Context, userID, sessionID string, archived bool) error {
+	var archivedAt *float64
+	if archived {
+		ts := float64(time.Now().UnixMilli()) / 1000
+		archivedAt = &ts
+	}
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE sessions
+		 SET archived_at = CASE WHEN $1 THEN COALESCE(archived_at, $2) ELSE NULL END
+		 WHERE session_id = $3 AND user_id = $4`,
+		archived, archivedAt, sessionID, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *PostgresRepository) DeleteSession(ctx context.Context, userID, sessionID string) error {
+	return r.inTx(ctx, func(tx pgx.Tx) error {
+		var storyID *string
+		err := tx.QueryRow(ctx,
+			`SELECT story_id FROM sessions WHERE session_id = $1 AND user_id = $2`,
+			sessionID, userID).Scan(&storyID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+
+		if _, err := tx.Exec(ctx, `DELETE FROM session_phrase_sets WHERE session_id = $1`, sessionID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx,
+			`DELETE FROM task_targets WHERE task_id IN (SELECT task_id FROM tasks WHERE session_id = $1)`,
+			sessionID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM tasks WHERE session_id = $1`, sessionID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM session_generation_stages WHERE session_id = $1`, sessionID); err != nil {
+			return err
+		}
+
+		if storyID != nil {
+			if _, err := tx.Exec(ctx, `DELETE FROM story_glossary WHERE story_id = $1`, *storyID); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `DELETE FROM story_tokens WHERE story_id = $1`, *storyID); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `DELETE FROM story_audio WHERE story_id = $1`, *storyID); err != nil {
+				return err
+			}
+		}
+
+		if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE session_id = $1 AND user_id = $2`, sessionID, userID); err != nil {
+			return err
+		}
+
+		if storyID != nil {
+			var readerEvents int
+			if err := tx.QueryRow(ctx,
+				`SELECT COUNT(*) FROM reader_events WHERE story_id = $1`,
+				*storyID).Scan(&readerEvents); err != nil {
+				return err
+			}
+			if readerEvents == 0 {
+				if _, err := tx.Exec(ctx,
+					`DELETE FROM stories WHERE story_id = $1 AND user_id = $2 AND session_id = $3`,
+					*storyID, userID, sessionID); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
 }
 
 func (r *PostgresRepository) SetSessionTopic(ctx context.Context, sessionID, topic string) error {
@@ -594,7 +678,7 @@ func scanPgSessionPrefix(row rowScanner, extra ...any) (domain.Session, error) {
 	)
 	dest := []any{&s.SessionID, &s.UserID, &storyID, &s.Language, &s.Level,
 		&targets, &news, &sessType, &topic, &exprs, &exprOut, &status,
-		&s.CreatedAt, &s.ReadingStartedAt, &s.CompletedAt}
+		&s.CreatedAt, &s.ArchivedAt, &s.ReadingStartedAt, &s.CompletedAt}
 	dest = append(dest, extra...)
 	err := row.Scan(dest...)
 	if errors.Is(err, pgx.ErrNoRows) {

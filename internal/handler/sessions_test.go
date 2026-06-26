@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -405,6 +406,119 @@ func TestListSessionsIncludesNewlyGeneratedSession(t *testing.T) {
 		}
 	}
 	t.Fatalf("generated session %q not found in list: %+v", gen.SessionID, out.Sessions)
+}
+
+func TestArchiveUnarchiveDeleteSessionEndpoints(t *testing.T) {
+	srv, repo := newServer(t, false)
+	ctx := context.Background()
+	suffix := strings.NewReplacer("/", "-", " ", "-").Replace(t.Name())
+	sessionID := "handler-archive-delete-" + suffix
+	sess, err := repo.CreateSession(ctx, domain.Session{
+		SessionID: sessionID,
+		UserID:    domain.LocalUserID, Language: "xx", Level: "beginner",
+		Status: domain.StatusReady, CreatedAt: 1700,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Post(srv.URL+"/api/v1/sessions/"+sess.SessionID+"/archive", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("archive = %d, want 204", resp.StatusCode)
+	}
+	got, err := repo.GetSession(ctx, sess.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ArchivedAt == nil {
+		t.Fatal("archive endpoint did not set archived_at")
+	}
+
+	active := getSessionIDs(t, srv.URL+"/api/v1/sessions")
+	if containsString(active, sess.SessionID) {
+		t.Fatalf("default list should exclude archived session, got %v", active)
+	}
+	archived := getSessionIDs(t, srv.URL+"/api/v1/sessions?archived=true")
+	if !containsString(archived, sess.SessionID) {
+		t.Fatalf("archived list should include session, got %v", archived)
+	}
+
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/v1/sessions/"+sess.SessionID+"/archive", nil)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("unarchive = %d, want 204", resp.StatusCode)
+	}
+	got, err = repo.GetSession(ctx, sess.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ArchivedAt != nil {
+		t.Fatalf("unarchive endpoint did not clear archived_at: %v", got.ArchivedAt)
+	}
+
+	req, _ = http.NewRequest(http.MethodDelete, srv.URL+"/api/v1/sessions/"+sess.SessionID, nil)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete = %d, want 204", resp.StatusCode)
+	}
+	if _, err := repo.GetSession(ctx, sess.SessionID); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("deleted session lookup: want ErrNotFound, got %v", err)
+	}
+
+	resp, err = http.Get(srv.URL + "/api/v1/sessions?archived=not-a-bool")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid archived query = %d, want 400", resp.StatusCode)
+	}
+}
+
+func getSessionIDs(t *testing.T, url string) []string {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("list sessions = %d", resp.StatusCode)
+	}
+	var out struct {
+		Sessions []struct {
+			SessionID string `json:"session_id"`
+		} `json:"sessions"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, 0, len(out.Sessions))
+	for _, session := range out.Sessions {
+		ids = append(ids, session.SessionID)
+	}
+	return ids
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestGetSessionDetailLocalMode(t *testing.T) {

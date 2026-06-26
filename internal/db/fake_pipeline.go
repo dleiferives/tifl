@@ -55,7 +55,7 @@ func (r *FakeRepository) ListSessions(_ context.Context, userID string, opts dom
 
 	var sessions []domain.Session
 	for _, s := range r.sessions {
-		if s.UserID == userID {
+		if s.UserID == userID && ((opts.Archived && s.ArchivedAt != nil) || (!opts.Archived && s.ArchivedAt == nil)) {
 			sessions = append(sessions, cloneSession(s))
 		}
 	}
@@ -113,6 +113,65 @@ func (r *FakeRepository) UpdateSessionStatus(_ context.Context, sessionID string
 	s.Status = status
 	r.sessions[sessionID] = s
 	return nil
+}
+
+func (r *FakeRepository) SetSessionArchived(_ context.Context, userID, sessionID string, archived bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s, ok := r.sessions[sessionID]
+	if !ok || s.UserID != userID {
+		return ErrNotFound
+	}
+	if archived {
+		if s.ArchivedAt == nil {
+			ts := float64(time.Now().UnixMilli()) / 1000
+			s.ArchivedAt = &ts
+		}
+	} else {
+		s.ArchivedAt = nil
+	}
+	r.sessions[sessionID] = cloneSession(s)
+	return nil
+}
+
+func (r *FakeRepository) DeleteSession(_ context.Context, userID, sessionID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s, ok := r.sessions[sessionID]
+	if !ok || s.UserID != userID {
+		return ErrNotFound
+	}
+
+	delete(r.phraseSets, sessionID)
+	delete(r.stages, sessionID)
+	for taskID, task := range r.tasks {
+		if task.SessionID == sessionID {
+			delete(r.tasks, taskID)
+			delete(r.targets, taskID)
+		}
+	}
+
+	if s.StoryID != nil {
+		delete(r.tokens, *s.StoryID)
+		delete(r.glossary, *s.StoryID)
+	}
+	delete(r.sessions, sessionID)
+
+	if s.StoryID != nil && !r.hasReaderEventsForStoryLocked(*s.StoryID) {
+		if story, ok := r.stories[*s.StoryID]; ok && story.UserID == userID && story.SessionID != nil && *story.SessionID == sessionID {
+			delete(r.stories, *s.StoryID)
+		}
+	}
+	return nil
+}
+
+func (r *FakeRepository) hasReaderEventsForStoryLocked(storyID string) bool {
+	for _, ev := range r.readerEvts {
+		if ev.StoryID == storyID {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *FakeRepository) SetSessionTopic(_ context.Context, sessionID, topic string) error {
@@ -447,6 +506,7 @@ func cloneSession(s domain.Session) domain.Session {
 	s.SelectedTargets = append([]string(nil), s.SelectedTargets...)
 	s.SelectedNew = append([]string(nil), s.SelectedNew...)
 	s.UserExpressions = append([]string(nil), s.UserExpressions...)
+	s.ArchivedAt = cloneFloat(s.ArchivedAt)
 	s.ReadingStartedAt = cloneFloat(s.ReadingStartedAt)
 	s.CompletedAt = cloneFloat(s.CompletedAt)
 	return s

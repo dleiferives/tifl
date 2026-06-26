@@ -100,6 +100,7 @@ type sessionOverviewDTO struct {
 	ExpressionOutput string            `json:"expression_output,omitempty"`
 	Status           string            `json:"status"`
 	CreatedAt        float64           `json:"created_at"`
+	ArchivedAt       *float64          `json:"archived_at,omitempty"`
 	ReadingStartedAt *float64          `json:"reading_started_at,omitempty"`
 	CompletedAt      *float64          `json:"completed_at,omitempty"`
 	SelectedCounts   selectedCountsDTO `json:"selected_counts"`
@@ -361,6 +362,33 @@ func (h *Handler) completeSession(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h *Handler) archiveSession(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.PathValue("id")
+	if err := h.repo.SetSessionArchived(r.Context(), h.currentUserID(r), sessionID, true); err != nil {
+		h.writeSessionLookupError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) unarchiveSession(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.PathValue("id")
+	if err := h.repo.SetSessionArchived(r.Context(), h.currentUserID(r), sessionID, false); err != nil {
+		h.writeSessionLookupError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) deleteSession(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.PathValue("id")
+	if err := h.repo.DeleteSession(r.Context(), h.currentUserID(r), sessionID); err != nil {
+		h.writeSessionLookupError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *Handler) retrySession(w http.ResponseWriter, r *http.Request) {
 	if h.broker == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("generation is not configured (no LLM gateway)"))
@@ -388,7 +416,11 @@ func parseSessionListOptions(r *http.Request) (domain.ListSessionsOptions, error
 	if err != nil {
 		return domain.ListSessionsOptions{}, err
 	}
-	return domain.ListSessionsOptions{Limit: limit, Offset: offset}, nil
+	archived, err := parseQueryBool(r, "archived", false)
+	if err != nil {
+		return domain.ListSessionsOptions{}, err
+	}
+	return domain.ListSessionsOptions{Limit: limit, Offset: offset, Archived: archived}, nil
 }
 
 func parseBoundedQueryInt(r *http.Request, name string, def, min, max int) (int, error) {
@@ -406,6 +438,18 @@ func parseBoundedQueryInt(r *http.Request, name string, def, min, max int) (int,
 	return n, nil
 }
 
+func parseQueryBool(r *http.Request, name string, def bool) (bool, error) {
+	raw := r.URL.Query().Get(name)
+	if raw == "" {
+		return def, nil
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("%s must be a boolean", name)
+	}
+	return v, nil
+}
+
 func toSessionOverviewDTO(overview domain.SessionOverview) sessionOverviewDTO {
 	s := overview.Session
 	return sessionOverviewDTO{
@@ -420,6 +464,7 @@ func toSessionOverviewDTO(overview domain.SessionOverview) sessionOverviewDTO {
 		ExpressionOutput: s.ExpressionOutput,
 		Status:           string(s.Status),
 		CreatedAt:        s.CreatedAt,
+		ArchivedAt:       s.ArchivedAt,
 		ReadingStartedAt: s.ReadingStartedAt,
 		CompletedAt:      s.CompletedAt,
 		SelectedCounts: selectedCountsDTO{

@@ -46,6 +46,7 @@ type Session struct {
 	SelectedNew      []string // item_ids introduced this session
 	Status           SessionStatus
 	CreatedAt        float64
+	ArchivedAt       *float64
 	ReadingStartedAt *float64
 	CompletedAt      *float64
 }
@@ -54,8 +55,9 @@ type Session struct {
 // Offset pagination is sufficient for the first home/resume surface and keeps
 // the storage contract portable across SQLite and Postgres.
 type ListSessionsOptions struct {
-	Limit  int
-	Offset int
+	Limit    int
+	Offset   int
+	Archived bool
 }
 
 // SelectedItemCounts is the persisted selection summary for a session. The

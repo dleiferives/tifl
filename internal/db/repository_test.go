@@ -3,6 +3,7 @@ package db_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/dleiferives/tifl/internal/db"
@@ -44,6 +45,7 @@ func testRepository(t *testing.T, newRepo repoFactory) {
 	run("DefinitionsBreakdowns", testDefinitionsBreakdowns)
 	run("Pipeline", testPipeline)
 	run("SessionLifecycle", testSessionLifecycle)
+	run("SessionArchiveDelete", testSessionArchiveDelete)
 }
 
 func testUserProfile(t *testing.T, repo db.Repository) {
@@ -1200,5 +1202,169 @@ func testSessionLifecycle(t *testing.T, repo db.Repository) {
 	must(t, err)
 	if got.Status != domain.StatusComplete {
 		t.Fatalf("status after idempotent MarkSessionReading on complete session = %q, want complete", got.Status)
+	}
+}
+
+func testSessionArchiveDelete(t *testing.T, repo db.Repository) {
+	ctx := context.Background()
+	suffix := strings.NewReplacer("/", "-", " ", "-").Replace(t.Name())
+	language := "arc"
+	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: language, Name: "Archive Test", KeyStrategy: "lemma", Enabled: true}))
+	user, err := repo.CreateUser(ctx, domain.User{Email: "archive-delete-" + suffix + "@example.com"})
+	must(t, err)
+	other, err := repo.CreateUser(ctx, domain.User{Email: "archive-delete-other-" + suffix + "@example.com"})
+	must(t, err)
+	itemID, err := repo.UpsertKnowledgeItem(ctx, domain.KnowledgeItem{Language: language, ItemType: "word", Key: "alpha-" + suffix})
+	must(t, err)
+
+	active, err := repo.CreateSession(ctx, domain.Session{
+		SessionID: "session-archive-" + suffix,
+		UserID:    user.UserID, Language: language, Level: "beginner", Status: domain.StatusReady, CreatedAt: 100,
+	})
+	must(t, err)
+	otherActive, err := repo.CreateSession(ctx, domain.Session{
+		SessionID: "session-other-" + suffix,
+		UserID:    other.UserID, Language: language, Level: "beginner", Status: domain.StatusReady, CreatedAt: 200,
+	})
+	must(t, err)
+
+	must(t, repo.SetSessionArchived(ctx, user.UserID, active.SessionID, true))
+	got, err := repo.GetSession(ctx, active.SessionID)
+	must(t, err)
+	if got.ArchivedAt == nil {
+		t.Fatal("archive should set archived_at")
+	}
+	page, err := repo.ListSessions(ctx, user.UserID, domain.ListSessionsOptions{Limit: 10})
+	must(t, err)
+	if len(page) != 0 {
+		t.Fatalf("default list should exclude archived sessions, got %+v", page)
+	}
+	page, err = repo.ListSessions(ctx, user.UserID, domain.ListSessionsOptions{Limit: 10, Archived: true})
+	must(t, err)
+	if len(page) != 1 || page[0].Session.SessionID != active.SessionID {
+		t.Fatalf("archived list mismatch: %+v", page)
+	}
+	if err := repo.SetSessionArchived(ctx, other.UserID, active.SessionID, false); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("cross-tenant unarchive: want ErrNotFound, got %v", err)
+	}
+	must(t, repo.SetSessionArchived(ctx, user.UserID, active.SessionID, false))
+	got, err = repo.GetSession(ctx, active.SessionID)
+	must(t, err)
+	if got.ArchivedAt != nil {
+		t.Fatalf("unarchive should clear archived_at, got %v", got.ArchivedAt)
+	}
+	page, err = repo.ListSessions(ctx, user.UserID, domain.ListSessionsOptions{Limit: 10})
+	must(t, err)
+	if len(page) != 1 || page[0].Session.SessionID != active.SessionID {
+		t.Fatalf("default list after restore mismatch: %+v", page)
+	}
+
+	if err := repo.DeleteSession(ctx, other.UserID, active.SessionID); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("cross-tenant delete: want ErrNotFound, got %v", err)
+	}
+	if _, err := repo.GetSession(ctx, otherActive.SessionID); err != nil {
+		t.Fatalf("cross-tenant delete touched another session: %v", err)
+	}
+
+	story, err := repo.CreateStory(ctx, domain.Story{
+		StoryID: "story-archive-" + suffix,
+		UserID:  user.UserID, Language: language, Text: "alpha beta", Level: "beginner", SessionID: &active.SessionID,
+	})
+	must(t, err)
+	must(t, repo.SetSessionSelection(ctx, active.SessionID, story.StoryID, []string{itemID}, nil))
+	must(t, repo.ReplaceStoryTokens(ctx, story.StoryID, []domain.StoryToken{
+		{StoryID: story.StoryID, Position: 0, Surface: "alpha", ItemKey: "alpha-" + suffix, IsWord: true},
+	}))
+	must(t, repo.ReplaceStoryGlossary(ctx, story.StoryID, []domain.StoryGlossaryEntry{
+		{StoryID: story.StoryID, ItemKey: "alpha-" + suffix, Gloss: "alpha"},
+	}))
+	must(t, repo.UpsertStage(ctx, domain.GenerationStage{SessionID: active.SessionID, Stage: domain.StageStoryGeneration, Status: domain.StageComplete}))
+	task, err := repo.CreateTask(ctx, domain.Task{
+		TaskID:    "task-archive-" + suffix,
+		SessionID: active.SessionID, UserID: user.UserID, TaskType: "comprehension_mc", Language: language,
+		Content: map[string]any{"question": "q"},
+	}, []string{itemID})
+	must(t, err)
+	must(t, repo.UpsertUserKnowledge(ctx, domain.UserKnowledge{
+		UserID: user.UserID, ItemID: itemID, AcquisitionStage: domain.StageRecognizing, ExposureCount: 1,
+	}))
+	_, err = repo.InsertReaderEvents(ctx, []domain.ReaderEvent{{
+		EventID: "event-archive-" + suffix, UserID: user.UserID, StoryID: story.StoryID,
+		SessionID: &active.SessionID, EventType: domain.ReaderEventNavigate, OccurredAt: 1700,
+	}})
+	must(t, err)
+
+	must(t, repo.DeleteSession(ctx, user.UserID, active.SessionID))
+	if _, err := repo.GetSession(ctx, active.SessionID); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("deleted session lookup: want ErrNotFound, got %v", err)
+	}
+	stages, err := repo.ListStages(ctx, active.SessionID)
+	must(t, err)
+	if len(stages) != 0 {
+		t.Fatalf("delete should remove generation stages, got %+v", stages)
+	}
+	tasks, err := repo.ListSessionTasks(ctx, active.SessionID)
+	must(t, err)
+	if len(tasks) != 0 {
+		t.Fatalf("delete should remove tasks, got %+v", tasks)
+	}
+	if _, err := repo.GetTask(ctx, user.UserID, task.TaskID); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("deleted task lookup: want ErrNotFound, got %v", err)
+	}
+	tokens, err := repo.ListStoryTokens(ctx, story.StoryID)
+	must(t, err)
+	if len(tokens) != 0 {
+		t.Fatalf("delete should remove story tokens, got %+v", tokens)
+	}
+	glossary, err := repo.ListStoryGlossary(ctx, story.StoryID)
+	must(t, err)
+	if len(glossary) != 0 {
+		t.Fatalf("delete should remove story glossary, got %+v", glossary)
+	}
+	knowledge, err := repo.UserKnowledge(ctx, user.UserID, language)
+	must(t, err)
+	if len(knowledge) != 1 || knowledge[0].ItemID != itemID || knowledge[0].ExposureCount != 1 {
+		t.Fatalf("delete should preserve user knowledge, got %+v", knowledge)
+	}
+	hasEvents, err := repo.HasReaderEvents(ctx, user.UserID, story.StoryID)
+	must(t, err)
+	if !hasEvents {
+		t.Fatal("delete should preserve reader exposure history")
+	}
+	if _, err := repo.GetStory(ctx, story.StoryID); err != nil {
+		t.Fatalf("story with reader events should remain as exposure anchor: %v", err)
+	}
+
+	phraseSession, err := repo.CreateSession(ctx, domain.Session{
+		SessionID: "session-phrase-delete-" + suffix,
+		UserID:    user.UserID, Language: language, Level: "beginner",
+		SessionType: domain.SessionExpressionGuided, ExpressionOutput: domain.ExpressionOutputPhrases,
+	})
+	must(t, err)
+	if _, err := repo.CreatePhraseSet(ctx, domain.PhraseSet{
+		SessionID: phraseSession.SessionID, UserID: user.UserID, Language: language,
+		Items: []domain.PhraseItem{{PhraseID: "phrase-" + suffix, TargetText: "alpha", Gloss: "alpha"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	must(t, repo.DeleteSession(ctx, user.UserID, phraseSession.SessionID))
+	if _, err := repo.GetPhraseSet(ctx, phraseSession.SessionID); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("delete should remove phrase set, got %v", err)
+	}
+
+	noEventSession, err := repo.CreateSession(ctx, domain.Session{
+		SessionID: "session-no-events-delete-" + suffix,
+		UserID:    user.UserID, Language: language, Level: "beginner",
+	})
+	must(t, err)
+	noEventStory, err := repo.CreateStory(ctx, domain.Story{
+		StoryID: "story-no-events-delete-" + suffix,
+		UserID:  user.UserID, Language: language, Text: "unused", Level: "beginner", SessionID: &noEventSession.SessionID,
+	})
+	must(t, err)
+	must(t, repo.SetSessionSelection(ctx, noEventSession.SessionID, noEventStory.StoryID, nil, nil))
+	must(t, repo.DeleteSession(ctx, user.UserID, noEventSession.SessionID))
+	if _, err := repo.GetStory(ctx, noEventStory.StoryID); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("story without reader events should be deleted, got %v", err)
 	}
 }

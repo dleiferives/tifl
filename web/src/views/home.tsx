@@ -1,9 +1,12 @@
 import { createMemo, createSignal, For, Match, onMount, Show, Switch } from "solid-js";
 import {
   APIError,
+  archiveSession,
+  deleteSession,
   generateSession,
   listSessions,
   retrySession,
+  unarchiveSession,
   type APIRequest,
   type APISchema,
 } from "../api";
@@ -63,6 +66,8 @@ export function HomeView() {
   const [actionError, setActionError] = createSignal("");
   const [starting, setStarting] = createSignal(false);
   const [retryingSessionID, setRetryingSessionID] = createSignal("");
+  const [archivedView, setArchivedView] = createSignal(false);
+  const [busyAction, setBusyAction] = createSignal("");
 
   const totalTasks = createMemo(() => sessions().reduce((sum, session) => sum + session.tasks.total, 0));
   const completedTasks = createMemo(() => sessions().reduce((sum, session) => sum + session.tasks.completed, 0));
@@ -73,7 +78,7 @@ export function HomeView() {
     void loadSessions(true);
   });
 
-  const loadSessions = async (reset: boolean) => {
+  const loadSessions = async (reset: boolean, archived = archivedView()) => {
     setListError("");
     if (reset) {
       setLoading(true);
@@ -83,7 +88,7 @@ export function HomeView() {
     const finish = appStore.beginOperation();
     try {
       const offset = reset ? 0 : sessions().length;
-      const page = await listSessions({ limit: PAGE_SIZE, offset });
+      const page = await listSessions({ limit: PAGE_SIZE, offset, archived });
       setSessions(reset ? page.sessions : [...sessions(), ...page.sessions]);
       setHasMore(page.has_more);
     } catch (error) {
@@ -93,6 +98,17 @@ export function HomeView() {
       setLoading(false);
       setLoadingMore(false);
     }
+  };
+
+  const showArchived = (archived: boolean) => {
+    if (archivedView() === archived) {
+      return;
+    }
+    setArchivedView(archived);
+    setSessions([]);
+    setHasMore(false);
+    setActionError("");
+    void loadSessions(true, archived);
   };
 
   const startSystemSession = async () => {
@@ -132,6 +148,37 @@ export function HomeView() {
     }
   };
 
+  const archiveCurrentSession = async (sessionID: string) => {
+    await runSessionAction("archive", sessionID, async () => archiveSession(sessionID));
+  };
+
+  const restoreSession = async (sessionID: string) => {
+    await runSessionAction("restore", sessionID, async () => unarchiveSession(sessionID));
+  };
+
+  const deleteCurrentSession = async (session: SessionOverview) => {
+    const title = sessionTitle(session);
+    if (!window.confirm(`Delete "${title}"? This removes generated content and cannot be undone.`)) {
+      return;
+    }
+    await runSessionAction("delete", session.session_id, async () => deleteSession(session.session_id));
+  };
+
+  const runSessionAction = async (kind: string, sessionID: string, action: () => Promise<void>) => {
+    setActionError("");
+    setBusyAction(`${kind}:${sessionID}`);
+    const finish = appStore.beginOperation();
+    try {
+      await action();
+      setSessions(sessions().filter((session) => session.session_id !== sessionID));
+    } catch (error) {
+      setActionError(sessionActionErrorMessage(kind, error));
+    } finally {
+      finish();
+      setBusyAction("");
+    }
+  };
+
   const sessionsFor = (group: SessionGroup) => sessions().filter((session) => group.statuses.includes(session.status));
 
   return (
@@ -159,6 +206,17 @@ export function HomeView() {
         <Metric label="Tasks" value={`${completedTasks()}/${totalTasks()}`} />
       </div>
 
+      <div class="home-list-toolbar" aria-label="Session list filter">
+        <div class="segmented-control">
+          <button type="button" aria-pressed={!archivedView()} onClick={() => showArchived(false)}>
+            Active
+          </button>
+          <button type="button" aria-pressed={archivedView()} onClick={() => showArchived(true)}>
+            Archived
+          </button>
+        </div>
+      </div>
+
       <Switch>
         <Match when={loading()}>
           <div class="home-state" aria-busy="true">Loading sessions...</div>
@@ -173,8 +231,8 @@ export function HomeView() {
         </Match>
         <Match when={sessions().length === 0}>
           <div class="home-state empty-state">
-            <h2>No sessions yet</h2>
-            <p>Start a session to generate your first story and tasks.</p>
+            <h2>{archivedView() ? "No archived sessions" : "No sessions yet"}</h2>
+            <p>{archivedView() ? "Archived sessions will appear here." : "Start a session to generate your first story and tasks."}</p>
           </div>
         </Match>
         <Match when={sessions().length > 0}>
@@ -198,7 +256,12 @@ export function HomeView() {
                             <SessionRow
                               session={session}
                               retrying={retryingSessionID() === session.session_id}
+                              archivedView={archivedView()}
+                              busyAction={busyAction()}
                               onRetry={retryFailedSession}
+                              onArchive={archiveCurrentSession}
+                              onRestore={restoreSession}
+                              onDelete={deleteCurrentSession}
                             />
                           )}
                         </For>
@@ -234,7 +297,12 @@ function Metric(props: { label: string; value: number | string }) {
 function SessionRow(props: {
   session: SessionOverview;
   retrying: boolean;
+  archivedView: boolean;
+  busyAction: string;
   onRetry: (sessionID: string) => Promise<void>;
+  onArchive: (sessionID: string) => Promise<void>;
+  onRestore: (sessionID: string) => Promise<void>;
+  onDelete: (session: SessionOverview) => Promise<void>;
 }) {
   return (
     <article class="session-row">
@@ -266,7 +334,16 @@ function SessionRow(props: {
         </p>
       </div>
       <div class="session-actions">
-        <SessionActions session={props.session} retrying={props.retrying} onRetry={props.onRetry} />
+        <SessionActions
+          session={props.session}
+          retrying={props.retrying}
+          archivedView={props.archivedView}
+          busyAction={props.busyAction}
+          onRetry={props.onRetry}
+          onArchive={props.onArchive}
+          onRestore={props.onRestore}
+          onDelete={props.onDelete}
+        />
       </div>
     </article>
   );
@@ -275,9 +352,15 @@ function SessionRow(props: {
 function SessionActions(props: {
   session: SessionOverview;
   retrying: boolean;
+  archivedView: boolean;
+  busyAction: string;
   onRetry: (sessionID: string) => Promise<void>;
+  onArchive: (sessionID: string) => Promise<void>;
+  onRestore: (sessionID: string) => Promise<void>;
+  onDelete: (session: SessionOverview) => Promise<void>;
 }) {
   const session = props.session;
+  const isBusy = (kind: string) => props.busyAction === `${kind}:${session.session_id}`;
   return (
     <>
       <Show when={session.status === "pending" || session.status === "generating"}>
@@ -302,6 +385,21 @@ function SessionActions(props: {
         <a class="button-link secondary-link" href={generationHref(session.session_id)}>Generation</a>
       </Show>
       <a class="button-link secondary-link" href={debugHref(session.session_id)}>Debug</a>
+      <Show
+        when={props.archivedView}
+        fallback={
+          <button class="secondary-button" type="button" disabled={isBusy("archive")} onClick={() => void props.onArchive(session.session_id)}>
+            {isBusy("archive") ? "Archiving..." : "Archive"}
+          </button>
+        }
+      >
+        <button class="secondary-button" type="button" disabled={isBusy("restore")} onClick={() => void props.onRestore(session.session_id)}>
+          {isBusy("restore") ? "Restoring..." : "Restore"}
+        </button>
+      </Show>
+      <button class="danger-button" type="button" disabled={isBusy("delete")} onClick={() => void props.onDelete(session)}>
+        {isBusy("delete") ? "Deleting..." : "Delete"}
+      </button>
     </>
   );
 }
@@ -422,4 +520,17 @@ function retrySessionErrorMessage(error: unknown): string {
     return "Generation is not configured. Start the gateway before retrying.";
   }
   return "The session could not be retried.";
+}
+
+function sessionActionErrorMessage(kind: string, error: unknown): string {
+  if (error instanceof APIError && error.status === 404) {
+    return "That session is no longer available.";
+  }
+  if (kind === "archive") {
+    return "The session could not be archived.";
+  }
+  if (kind === "restore") {
+    return "The session could not be restored.";
+  }
+  return "The session could not be deleted.";
 }

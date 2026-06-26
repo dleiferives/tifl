@@ -20,7 +20,7 @@ import (
 // Every SELECT from the sessions table must use this constant to stay in sync.
 const sessionColumns = "session_id, user_id, story_id, language, level, selected_targets, selected_new," +
 	" session_type, topic, user_expressions, expression_output, status," +
-	" created_at, reading_started_at, completed_at"
+	" created_at, archived_at, reading_started_at, completed_at"
 
 func (r *SQLiteRepository) CreateSession(ctx context.Context, s domain.Session) (domain.Session, error) {
 	if s.SessionID == "" {
@@ -39,13 +39,13 @@ func (r *SQLiteRepository) CreateSession(ctx context.Context, s domain.Session) 
 		`INSERT INTO sessions(
 		   session_id, user_id, story_id, language, level, selected_targets, selected_new,
 		   session_type, topic, user_expressions, expression_output, status,
-		   created_at, reading_started_at, completed_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		   created_at, archived_at, reading_started_at, completed_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		s.SessionID, s.UserID, s.StoryID, s.Language, s.Level,
 		marshalStrings(s.SelectedTargets), marshalStrings(s.SelectedNew),
 		string(s.SessionType), nullEmpty(s.Topic), marshalStrings(s.UserExpressions),
 		nullEmpty(s.ExpressionOutput), string(s.Status), s.CreatedAt,
-		nullFloat(s.ReadingStartedAt), nullFloat(s.CompletedAt))
+		nullFloat(s.ArchivedAt), nullFloat(s.ReadingStartedAt), nullFloat(s.CompletedAt))
 	if err != nil {
 		return domain.Session{}, err
 	}
@@ -68,9 +68,9 @@ func (r *SQLiteRepository) ListSessions(ctx context.Context, userID string, opts
 		          WHERE t.session_id = s.session_id AND t.user_id = s.user_id
 		            AND (t.graded_at IS NOT NULL OR COALESCE(t.graded_by, '') <> ''))
 		 FROM sessions s
-		 WHERE s.user_id = ?
+		 WHERE s.user_id = ? AND ((? = 1 AND s.archived_at IS NOT NULL) OR (? = 0 AND s.archived_at IS NULL))
 		 ORDER BY s.created_at DESC, s.session_id DESC
-		 LIMIT ? OFFSET ?`, userID, opts.Limit, opts.Offset)
+		 LIMIT ? OFFSET ?`, userID, boolToInt(opts.Archived), boolToInt(opts.Archived), opts.Limit, opts.Offset)
 	if err != nil {
 		return nil, err
 	}
@@ -114,6 +114,86 @@ func (r *SQLiteRepository) UpdateSessionStatus(ctx context.Context, sessionID st
 		return err
 	}
 	return requireRow(res)
+}
+
+func (r *SQLiteRepository) SetSessionArchived(ctx context.Context, userID, sessionID string, archived bool) error {
+	var archivedAt any
+	if archived {
+		ts := float64(time.Now().UnixMilli()) / 1000
+		archivedAt = ts
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE sessions
+		 SET archived_at = CASE WHEN ? = 1 THEN COALESCE(archived_at, ?) ELSE NULL END
+		 WHERE session_id = ? AND user_id = ?`,
+		boolToInt(archived), archivedAt, sessionID, userID)
+	if err != nil {
+		return err
+	}
+	return requireRow(res)
+}
+
+func (r *SQLiteRepository) DeleteSession(ctx context.Context, userID, sessionID string) error {
+	return r.inTx(ctx, func(tx *sql.Tx) error {
+		var storyID sql.NullString
+		err := tx.QueryRowContext(ctx,
+			`SELECT story_id FROM sessions WHERE session_id = ? AND user_id = ?`,
+			sessionID, userID).Scan(&storyID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+
+		if _, err := tx.ExecContext(ctx, `DELETE FROM session_phrase_sets WHERE session_id = ?`, sessionID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM task_targets WHERE task_id IN (SELECT task_id FROM tasks WHERE session_id = ?)`,
+			sessionID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM tasks WHERE session_id = ?`, sessionID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM session_generation_stages WHERE session_id = ?`, sessionID); err != nil {
+			return err
+		}
+
+		if storyID.Valid {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM story_glossary WHERE story_id = ?`, storyID.String); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM story_tokens WHERE story_id = ?`, storyID.String); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM story_audio WHERE story_id = ?`, storyID.String); err != nil {
+				return err
+			}
+		}
+
+		if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE session_id = ? AND user_id = ?`, sessionID, userID); err != nil {
+			return err
+		}
+
+		if storyID.Valid {
+			var readerEvents int
+			if err := tx.QueryRowContext(ctx,
+				`SELECT COUNT(*) FROM reader_events WHERE story_id = ?`,
+				storyID.String).Scan(&readerEvents); err != nil {
+				return err
+			}
+			if readerEvents == 0 {
+				if _, err := tx.ExecContext(ctx,
+					`DELETE FROM stories WHERE story_id = ? AND user_id = ? AND session_id = ?`,
+					storyID.String, userID, sessionID); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
 }
 
 func (r *SQLiteRepository) SetSessionTopic(ctx context.Context, sessionID, topic string) error {
@@ -592,16 +672,16 @@ func scanSessionOverview(row rowScanner) (domain.SessionOverview, error) {
 
 func scanSessionPrefix(row rowScanner, extra ...any) (domain.Session, error) {
 	var (
-		s                         domain.Session
-		sessType, status          string
-		storyIDNull               sql.NullString
-		topic, exprOut            sql.NullString
-		targets, news, exprs      sql.NullString
-		readingStarted, completed sql.NullFloat64
+		s                                   domain.Session
+		sessType, status                    string
+		storyIDNull                         sql.NullString
+		topic, exprOut                      sql.NullString
+		targets, news, exprs                sql.NullString
+		archived, readingStarted, completed sql.NullFloat64
 	)
 	dest := []any{&s.SessionID, &s.UserID, &storyIDNull, &s.Language, &s.Level,
 		&targets, &news, &sessType, &topic, &exprs, &exprOut, &status,
-		&s.CreatedAt, &readingStarted, &completed}
+		&s.CreatedAt, &archived, &readingStarted, &completed}
 	dest = append(dest, extra...)
 	err := row.Scan(dest...)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -618,6 +698,7 @@ func scanSessionPrefix(row rowScanner, extra ...any) (domain.Session, error) {
 	s.SelectedTargets = unmarshalStrings(targets)
 	s.SelectedNew = unmarshalStrings(news)
 	s.UserExpressions = unmarshalStrings(exprs)
+	s.ArchivedAt = floatPtr(archived)
 	s.ReadingStartedAt = floatPtr(readingStarted)
 	s.CompletedAt = floatPtr(completed)
 	return s, nil
