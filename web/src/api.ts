@@ -138,6 +138,31 @@ export async function importStory(request: APIRequest<"importStory">): Promise<A
   );
 }
 
+export interface ImportStoryFileRequest {
+  language?: string;
+  level?: string;
+  title?: string;
+  file: File;
+}
+
+export async function importStoryFile(request: ImportStoryFileRequest): Promise<APIResponse<"importStory", 201>> {
+  const form = new FormData();
+  form.set("file", request.file);
+  if (request.language) {
+    form.set("language", request.language);
+  }
+  if (request.level) {
+    form.set("level", request.level);
+  }
+  if (request.title) {
+    form.set("title", request.title);
+  }
+  return apiFetch<APIResponse<"importStory", 201>>(
+    "/stories/import",
+    { method: "POST", body: form },
+  );
+}
+
 export async function getSessionDetail(sessionID: string): Promise<APIResponse<"getSessionDetail", 200>> {
   return apiFetch<APIResponse<"getSessionDetail", 200>>(`/sessions/${encodeURIComponent(sessionID)}`);
 }
