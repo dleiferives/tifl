@@ -53,6 +53,10 @@ type StepInputs struct {
 	ContentSchemas map[string]string
 	PriorQuestions []string
 	Steps          map[string]any // step outputs keyed by step ID
+	// OnboardingHint, when non-empty, is a language-specific simplicity
+	// constraint for early-session learners. DAG story steps must honour it
+	// and suppress conflicting length/complexity instructions.
+	OnboardingHint string
 }
 
 // StepDef is one node in a GenerationDAG: it declares its dependencies, builds
@@ -78,13 +82,11 @@ type GenerationDAG struct {
 // Validate checks structural invariants and that the DAG satisfies every
 // required OutputKind. It returns a non-nil error on the first problem found.
 func (d GenerationDAG) Validate(required []OutputKind) error {
-	// Build a set of known step IDs for the DepStep reference check.
 	ids := make(map[string]bool, len(d.Steps))
 	for _, s := range d.Steps {
 		ids[s.ID] = true
 	}
 
-	// Check that every DepStep reference points to an existing step.
 	for _, s := range d.Steps {
 		for _, dep := range s.Deps {
 			if dep.Kind == DepStep {
@@ -95,7 +97,6 @@ func (d GenerationDAG) Validate(required []OutputKind) error {
 		}
 	}
 
-	// Check that every required OutputKind is satisfied by at least one step.
 	for _, req := range required {
 		found := false
 		for _, s := range d.Steps {

@@ -77,7 +77,9 @@ func runStoryCall(ctx context.Context, in llm.StepInputs, client llm.Client) (st
 	var sys strings.Builder
 	sys.WriteString("Είσαι έμπειρος Έλληνας συγγραφέας που γράφει ιστορίες για μαθητές των ελληνικών. Γράφεις μόνο στα ελληνικά, σε απλό αφηγηματικό κείμενο. Δίνεις μόνο την ιστορία — χωρίς τίτλο, χωρίς markdown, χωρίς μετα-σχόλια.")
 
-	if len(in.Background) == 0 {
+	if in.OnboardingHint != "" {
+		fmt.Fprintf(&sys, "\n- %s", in.OnboardingHint)
+	} else if len(in.Background) == 0 {
 		sys.WriteString("\n- Ο μαθητής δεν έχει ακόμα λεξιλόγιο. Γράψε μια πολύ σύντομη παράγραφο (3–4 απλές προτάσεις) χρησιμοποιώντας μόνο τις πιο βασικές ελληνικές λέξεις: βασικές αντωνυμίες, τα ρήματα είμαι και έχω, 1–2 συχνά ουσιαστικά και τα μόρια και, δεν, να.")
 	}
 
@@ -97,7 +99,11 @@ func runStoryCall(ctx context.Context, in llm.StepInputs, client llm.Client) (st
 		fmt.Fprintf(&usr, "\nΓράψε μια πλήρη, ανεπτυγμένη ιστορία πάνω στο θέμα: %s\n", in.Topic)
 	}
 
-	usr.WriteString("\nΟδηγίες:\n- Χώρισε την ιστορία σε τουλάχιστον 6 παραγράφους, η καθεμία με 4 έως 6 προτάσεις.\n")
+	if in.OnboardingHint == "" {
+		usr.WriteString("\nΟδηγίες:\n- Χώρισε την ιστορία σε τουλάχιστον 6 παραγράφους, η καθεμία με 4 έως 6 προτάσεις.\n")
+	} else {
+		usr.WriteString("\nΟδηγίες:\n")
+	}
 
 	if constraints := llm.SerializeSkillConstraints(in.Skills); constraints != "" {
 		fmt.Fprintf(&usr, "- Γλωσσική πολυπλοκότητα (με βάση τις δεξιότητες που έχει κατακτήσει ο μαθητής): %s\n", constraints)

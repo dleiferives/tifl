@@ -206,6 +206,42 @@ func (g Greek) ExtractCanonicalKey(nativeGloss string) (string, bool) {
 	return key, true
 }
 
+// ExtractCanonicalKey implements lang.CanonicalKeyProvider for Modern Greek.
+// Greek native-Wiktionary glosses describe forms with a final clause like
+// "γ΄ πρόσωπο ενικού οριστικής ενεστώτα του κρατάω" or "αδύναμος τύπος του κρατώ".
+// The lemma always follows the last "του " in the last semicolon-delimited clause.
+func (g Greek) ExtractCanonicalKey(nativeGloss string) (string, bool) {
+	clauses := strings.Split(nativeGloss, "; ")
+	last := strings.TrimSpace(clauses[len(clauses)-1])
+	idx := strings.LastIndex(last, "του ")
+	if idx < 0 {
+		return "", false
+	}
+	after := strings.TrimSpace(last[idx+len("του "):])
+	word := strings.FieldsFunc(after, func(r rune) bool {
+		return !unicode.IsLetter(r) && r != '\'' && r != '’'
+	})
+	if len(word) == 0 {
+		return "", false
+	}
+	candidate := word[0]
+	hasGreek := false
+	for _, r := range candidate {
+		if unicode.Is(unicode.Greek, r) {
+			hasGreek = true
+			break
+		}
+	}
+	if !hasGreek {
+		return "", false
+	}
+	key, err := g.ResolveKey(candidate)
+	if err != nil || key == "" {
+		return "", false
+	}
+	return key, true
+}
+
 // isWordRune reports whether r should be treated as part of a word token.
 // Letters (Greek and other scripts) and the apostrophe (used in Greek elision,
 // e.g. κι' αντί) are word characters.
