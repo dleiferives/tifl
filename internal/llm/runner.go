@@ -10,7 +10,13 @@ import (
 // RunDAGStep executes one step: Build → client.Complete → Parse. On a parse
 // failure it retries the call exactly once before giving up, mirroring the
 // behaviour of CompleteJSON for individual PromptBuilder paths.
+// When step.RunFn is set it takes full control of execution; Build and Parse
+// are not called.
 func RunDAGStep(ctx context.Context, step StepDef, inputs StepInputs, client Client) (any, error) {
+	if step.RunFn != nil {
+		return step.RunFn(ctx, inputs, client)
+	}
+
 	req := step.Build(inputs)
 
 	var lastErr error

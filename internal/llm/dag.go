@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/dleiferives/tifl/internal/domain"
@@ -56,12 +57,15 @@ type StepInputs struct {
 
 // StepDef is one node in a GenerationDAG: it declares its dependencies, builds
 // an LLMRequest, and parses the raw response string into a typed value.
+// When RunFn is set it takes full control of the step (e.g. two-phase calls);
+// Build and Parse are ignored in that case.
 type StepDef struct {
 	ID         string
 	OutputKind OutputKind
 	Deps       []Dep
 	Build      func(StepInputs) LLMRequest
 	Parse      func(raw string) (any, error)
+	RunFn      func(ctx context.Context, inputs StepInputs, client Client) (any, error)
 }
 
 // GenerationDAG is an ordered collection of steps owned by a language plugin.

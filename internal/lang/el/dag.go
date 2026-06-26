@@ -1,7 +1,7 @@
 package el
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"strings"
 
@@ -21,6 +21,9 @@ func (Greek) StorySessionDAG() llm.GenerationDAG {
 }
 
 // storyStep builds the Greek story generation step.
+// The model writes the story as plain text (no JSON mode) for narrative quality.
+// estimated_coverage is computed algorithmically from the background key list;
+// no LLM glossary is generated (glossing is handled by the kaikki/Wiktionary path).
 func storyStep() llm.StepDef {
 	return llm.StepDef{
 		ID:         "story",
@@ -34,83 +37,14 @@ func storyStep() llm.StepDef {
 			{Kind: llm.DepTopic},
 			{Kind: llm.DepHistory},
 		},
-		Build: func(in llm.StepInputs) llm.LLMRequest {
-			var sys strings.Builder
-			sys.WriteString("Είσαι έμπειρος Έλληνας συγγραφέας που γράφει ιστορίες για μαθητές των ελληνικών. Γράφεις μόνο στα ελληνικά, σε απλό κείμενο. Δίνεις μόνο την ιστορία.")
-
-			// Zero-background constraint injected into system.
-			if len(in.Background) == 0 {
-				sys.WriteString("\n- Ο μαθητής δεν έχει ακόμα λεξιλόγιο. Γράψε μια πολύ σύντομη παράγραφο (3–4 απλές προτάσεις) χρησιμοποιώντας μόνο τις πιο βασικές ελληνικές λέξεις: βασικές αντωνυμίες, τα ρήματα είμαι και έχω, 1–2 συχνά ουσιαστικά και τα μόρια και, δεν, να.")
+		RunFn: func(ctx context.Context, in llm.StepInputs, client llm.Client) (any, error) {
+			storyText, err := runStoryCall(ctx, in, client)
+			if err != nil {
+				return nil, err
 			}
-
-			sys.WriteString("\nΑπάντησε με ένα αντικείμενο JSON: {\"story\": string, \"estimated_coverage\": number, \"glossary\": [{\"key\": string, \"gloss\": string}]}.\nΜόνο JSON — χωρίς πεζή γραφή, χωρίς markdown.")
-
-			var usr strings.Builder
-
-			// 1. Background pool with Greek header.
-			if len(in.Background) > 0 {
-				usr.WriteString("\nΓΝΩΣΤΕΣ ΛΕΞΕΙΣ ΤΟΥ ΑΝΑΓΝΩΣΤΗ — λέξεις που ο αναγνώστης ήδη γνωρίζει και μπορείς να αντλήσεις ελεύθερα από αυτές (δεν χρειάζεται να τις χρησιμοποιήσεις όλες):\n")
-				for _, it := range in.Background {
-					fmt.Fprintf(&usr, "- %s\n", llm.FormatItemCompact(it))
-				}
-			}
-
-			// 2. Divider.
-			usr.WriteString("\n— — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — —\n")
-
-			// 3. Task header.
-			usr.WriteString("\nΤΩΡΑ Η ΕΡΓΑΣΙΑ ΣΟΥ:\n")
-
-			// 4. Topic.
-			if in.Topic != "" {
-				fmt.Fprintf(&usr, "\nΓράψε μια πλήρη, ανεπτυγμένη ιστορία πάνω στο θέμα: %s\n", in.Topic)
-			}
-
-			// 5. Instructions header.
-			usr.WriteString("\nΟδηγίες:\n- Χώρισε την ιστορία σε τουλάχιστον 6 παραγράφους, η καθεμία με 4 έως 6 προτάσεις.\n")
-
-			// 6. Complexity / level.
-			if constraints := llm.SerializeSkillConstraints(in.Skills); constraints != "" {
-				fmt.Fprintf(&usr, "- Γλωσσική πολυπλοκότητα (με βάση τις δεξιότητες που έχει κατακτήσει ο μαθητής): %s\n", constraints)
-			} else {
-				fmt.Fprintf(&usr, "- Επίπεδο: %s\n", llm.LevelOrDefault(in.Level))
-			}
-
-			// 8. Targets.
-			llm.WriteItemBlock(&usr,
-				"Υποχρεωτικό λεξιλόγιο — χρησιμοποίησε ΟΛΕΣ αυτές τις λέξεις-κλειδιά",
-				in.Targets,
-				llm.FormatItemTarget,
-			)
-
-			// 9. New items.
-			llm.WriteItemBlock(&usr,
-				"Εισήγαγε απαλά και αυτές τις νέες λέξεις, με αρκετά συμφραζόμενα",
-				in.New,
-				llm.FormatItemNew,
-			)
-
-			// 10-11. Hard style constraints.
-			usr.WriteString("- Χρησιμοποίησε μόνο υπαρκτές, κοινές ελληνικές λέξεις· μην εφευρίσκεις λέξεις.\n")
-			usr.WriteString("- Γράψε καθαρό κείμενο: χωρίς τίτλους, χωρίς markdown ή αστερίσκους, και χωρίς μετα-σχόλια.\n")
-
-			// 12. Avoid recent topics.
-			if topics := llm.RecentTopics(in.History); topics != "" {
-				fmt.Fprintf(&usr, "\nΑπέφυγε να επαναλάβεις αυτά τα πρόσφατα θέματα: %s\n", topics)
-			}
-
-			return llm.LLMRequest{
-				System:         sys.String(),
-				User:           usr.String(),
-				Temperature:    0.8,
-				MaxTokens:      1500,
-				ResponseFormat: "json",
-			}
-		},
-		Parse: func(raw string) (any, error) {
-			var res llm.StoryResult
-			if err := json.Unmarshal([]byte(llm.ExtractJSON(raw)), &res); err != nil {
-				return nil, fmt.Errorf("story parse: %w", err)
+			res := llm.StoryResult{
+				Story:             storyText,
+				EstimatedCoverage: computeCoverage(storyText, in),
 			}
 			if err := res.Validate(); err != nil {
 				return nil, fmt.Errorf("story validate: %w", err)
@@ -118,6 +52,88 @@ func storyStep() llm.StepDef {
 			return res, nil
 		},
 	}
+}
+
+// computeCoverage returns the fraction (0–100) of background vocabulary keys
+// that appear in the story text. Uses simple lowercased substring matching;
+// Greek inflection means this is an undercount, but it's deterministic and cheap.
+func computeCoverage(story string, in llm.StepInputs) float64 {
+	if len(in.Background) == 0 {
+		return 0
+	}
+	lower := strings.ToLower(story)
+	hit := 0
+	for _, item := range in.Background {
+		if strings.Contains(lower, strings.ToLower(item.Key)) {
+			hit++
+		}
+	}
+	return float64(hit) / float64(len(in.Background)) * 100
+}
+
+// runStoryCall sends the creative writing prompt (plain text, no JSON mode)
+// and returns the raw story string.
+func runStoryCall(ctx context.Context, in llm.StepInputs, client llm.Client) (string, error) {
+	var sys strings.Builder
+	sys.WriteString("Είσαι έμπειρος Έλληνας συγγραφέας που γράφει ιστορίες για μαθητές των ελληνικών. Γράφεις μόνο στα ελληνικά, σε απλό αφηγηματικό κείμενο. Δίνεις μόνο την ιστορία — χωρίς τίτλο, χωρίς markdown, χωρίς μετα-σχόλια.")
+
+	if len(in.Background) == 0 {
+		sys.WriteString("\n- Ο μαθητής δεν έχει ακόμα λεξιλόγιο. Γράψε μια πολύ σύντομη παράγραφο (3–4 απλές προτάσεις) χρησιμοποιώντας μόνο τις πιο βασικές ελληνικές λέξεις: βασικές αντωνυμίες, τα ρήματα είμαι και έχω, 1–2 συχνά ουσιαστικά και τα μόρια και, δεν, να.")
+	}
+
+	var usr strings.Builder
+
+	if len(in.Background) > 0 {
+		usr.WriteString("\nΓΝΩΣΤΕΣ ΛΕΞΕΙΣ ΤΟΥ ΑΝΑΓΝΩΣΤΗ — λέξεις που ο αναγνώστης ήδη γνωρίζει και μπορείς να αντλήσεις ελεύθερα από αυτές (δεν χρειάζεται να τις χρησιμοποιήσεις όλες):\n")
+		for _, it := range in.Background {
+			fmt.Fprintf(&usr, "- %s\n", llm.FormatItemCompact(it))
+		}
+	}
+
+	usr.WriteString("\n— — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — —\n")
+	usr.WriteString("\nΤΩΡΑ Η ΕΡΓΑΣΙΑ ΣΟΥ:\n")
+
+	if in.Topic != "" {
+		fmt.Fprintf(&usr, "\nΓράψε μια πλήρη, ανεπτυγμένη ιστορία πάνω στο θέμα: %s\n", in.Topic)
+	}
+
+	usr.WriteString("\nΟδηγίες:\n- Χώρισε την ιστορία σε τουλάχιστον 6 παραγράφους, η καθεμία με 4 έως 6 προτάσεις.\n")
+
+	if constraints := llm.SerializeSkillConstraints(in.Skills); constraints != "" {
+		fmt.Fprintf(&usr, "- Γλωσσική πολυπλοκότητα (με βάση τις δεξιότητες που έχει κατακτήσει ο μαθητής): %s\n", constraints)
+	} else {
+		fmt.Fprintf(&usr, "- Επίπεδο: %s\n", llm.LevelOrDefault(in.Level))
+	}
+
+	llm.WriteItemBlock(&usr,
+		"Υποχρεωτικό λεξιλόγιο — χρησιμοποίησε ΟΛΕΣ αυτές τις λέξεις-κλειδιά",
+		in.Targets,
+		llm.FormatItemTarget,
+	)
+
+	llm.WriteItemBlock(&usr,
+		"Εισήγαγε απαλά και αυτές τις νέες λέξεις, με αρκετά συμφραζόμενα",
+		in.New,
+		llm.FormatItemNew,
+	)
+
+	usr.WriteString("- Χρησιμοποίησε μόνο υπαρκτές, κοινές ελληνικές λέξεις· μην εφευρίσκεις λέξεις.\n")
+	usr.WriteString("- Γράψε καθαρό κείμενο: χωρίς τίτλους, χωρίς markdown ή αστερίσκους, και χωρίς μετα-σχόλια.\n")
+
+	if topics := llm.RecentTopics(in.History); topics != "" {
+		fmt.Fprintf(&usr, "\nΑπέφυγε να επαναλάβεις αυτά τα πρόσφατα θέματα: %s\n", topics)
+	}
+
+	resp, err := client.Complete(ctx, "story", llm.LLMRequest{
+		System:      sys.String(),
+		User:        usr.String(),
+		Temperature: 0.8,
+		MaxTokens:   2500,
+	})
+	if err != nil {
+		return "", fmt.Errorf("story call: %w", err)
+	}
+	return strings.TrimSpace(resp.Text), nil
 }
 
 // mcTaskStep builds the Greek multiple-choice comprehension task step.
