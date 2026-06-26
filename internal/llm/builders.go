@@ -40,51 +40,57 @@ func (StoryBuilder) Version() string { return "story/v1" }
 
 func (b StoryBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
 	var sys strings.Builder
-	fmt.Fprintf(&sys, "You are a writer of short %s learning stories.\n", ctx.Language)
-	sys.WriteString("Write a single short, coherent story in the target language that a learner can understand.\n")
-	sys.WriteString("Hard constraints:\n")
-	sys.WriteString("- Use ONLY vocabulary drawn from the provided item lists. Do not freely introduce other vocabulary.\n")
-	sys.WriteString("- Every target item must appear, ideally where its meaning is inferable from context.\n")
-	sys.WriteString("- Every new item must appear at least once, supported by surrounding context (not dropped in).\n")
+	fmt.Fprintf(&sys, "Είσαι συγγραφέας σύντομων ιστοριών εκμάθησης για τη γλώσσα-στόχο (%s).\n", ctx.Language)
+	sys.WriteString("Γράφεις μια σύντομη, συνεκτική ιστορία στη γλώσσα-στόχο που μπορεί να καταλάβει ο μαθητής.\n")
+	sys.WriteString("\nΚανόνες:\n")
+	sys.WriteString("1. Χρησιμοποίησε ΜΟΝΟ λεξιλόγιο από τις παρεχόμενες λίστες. Μην εισάγεις ελεύθερα άλλο λεξιλόγιο.\n")
+	sys.WriteString("2. Στήριξε την ιστορία στις λέξεις-στόχους, στο γνωστό λεξιλόγιο και στις νέες λέξεις· μην απλώνεις το λεξιλόγιο πέρα από αυτή τη δεξαμενή.\n")
+	sys.WriteString("3. Κάθε λέξη-στόχος πρέπει να εμφανιστεί, ιδανικά εκεί όπου το νόημά της φαίνεται από τα συμφραζόμενα.\n")
+	sys.WriteString("4. Κάθε νέα λέξη πρέπει να εμφανιστεί τουλάχιστον μία φορά, με αρκετά συμφραζόμενα ώστε να μη μοιάζει πεταμένη μέσα στο κείμενο.\n")
+	sys.WriteString("5. Κλίνε τις λέξεις φυσικά όταν το απαιτεί η γλώσσα-στόχος και γράψε ολοκληρωμένες, γραμματικά σωστές, συνδεδεμένες προτάσεις.\n")
+	sys.WriteString("6. Οι σημασίες/glosses στις λίστες είναι δεδομένα αναφοράς για εσένα· μην τις αντιγράφεις μέσα στην ιστορία εκτός αν ανήκουν στη γλώσσα-στόχο.\n")
 	if note := noteOf(b.Assets); note != "" {
-		fmt.Fprintf(&sys, "- Writing system: %s\n", note)
+		fmt.Fprintf(&sys, "7. Σύστημα γραφής: %s\n", note)
 	}
 	if hint := b.OnboardingHint; hint != "" {
-		fmt.Fprintf(&sys, "- %s\n", hint)
+		fmt.Fprintf(&sys, "Πρόσθετος αυστηρός περιορισμός: %s\n", hint)
 	} else if b.ZeroBackgroundHint != "" {
-		fmt.Fprintf(&sys, "- %s\n", b.ZeroBackgroundHint)
+		fmt.Fprintf(&sys, "Πρόσθετος αυστηρός περιορισμός: %s\n", b.ZeroBackgroundHint)
 	}
-	sys.WriteString("Respond with a JSON object: ")
+	sys.WriteString("\nΕπίστρεψε ένα JSON object ακριβώς με αυτό το σχήμα: ")
 	sys.WriteString(`{"story": string, "estimated_coverage": number, "glossary": [{"key": string, "gloss": string}]}.`)
-	sys.WriteString("\nReturn JSON only — no prose, no markdown.")
+	sys.WriteString("\nΕπίστρεψε μόνο JSON — χωρίς πρόλογο, χωρίς markdown, χωρίς επιπλέον σχόλια.")
 
 	var usr strings.Builder
 	if constraints := SerializeSkillConstraints(ctx.Skills); constraints != "" {
 		usr.WriteString("Complexity constraints:\n")
+		usr.WriteString("Περιορισμοί γλωσσικής πολυπλοκότητας:\n")
 		usr.WriteString(constraints)
 	} else {
-		fmt.Fprintf(&usr, "Write at the %s level.\n", LevelOrDefault(ctx.Level))
+		fmt.Fprintf(&usr, "Γράψε σε επίπεδο %s.\n", LevelOrDefault(ctx.Level))
 	}
-	WriteItemBlock(&usr, "TARGET items (exercise these with intent)", ctx.Selected.Targets, FormatItemTarget)
-	WriteItemBlock(&usr, "BACKGROUND vocabulary (known; draw from these freely)", ctx.Selected.Background, FormatItemCompact)
-	WriteItemBlock(&usr, "NEW items (introduce each with context support)", ctx.Selected.New, FormatItemNew)
+	WriteItemBlock(&usr, "ΛΕΞΕΙΣ-ΣΤΟΧΟΙ — χρησιμοποίησέ τες ουσιαστικά", ctx.Selected.Targets, FormatItemTarget)
+	WriteItemBlock(&usr, "ΓΝΩΣΤΟ ΛΕΞΙΛΟΓΙΟ — ο μαθητής το γνωρίζει, άντλησε από αυτό ελεύθερα", ctx.Selected.Background, FormatItemCompact)
+	WriteItemBlock(&usr, "ΝΕΕΣ ΛΕΞΕΙΣ — εισήγαγε καθεμία με υποστηρικτικά συμφραζόμενα", ctx.Selected.New, FormatItemNew)
 	if g := ctx.Guidance; g != nil {
 		if g.Topic != "" {
-			fmt.Fprintf(&usr, "\nRequested topic: %s\n", g.Topic)
+			fmt.Fprintf(&usr, "\nΘέμα / σκηνικό: %s\n", g.Topic)
+			fmt.Fprintf(&usr, "Requested topic: %s\n", g.Topic)
 		}
 		if len(g.Expressions) > 0 {
-			usr.WriteString("\nThe learner wants to be able to express:\n")
+			usr.WriteString("\nΟ μαθητής θέλει να μπορεί να εκφράσει:\n")
 			for _, e := range g.Expressions {
 				fmt.Fprintf(&usr, "- %s\n", e)
 			}
 		}
 	}
 	if avoid := RecentTopics(ctx.RecentHistory); avoid != "" {
-		fmt.Fprintf(&usr, "\nAvoid repeating these recent topics/settings: %s\n", avoid)
+		fmt.Fprintf(&usr, "\nΑπέφυγε να επαναλάβεις αυτά τα πρόσφατα θέματα/σκηνικά: %s\n", avoid)
 	}
 	for i, ex := range examplesOf(b.Assets, ctx.Level) {
-		fmt.Fprintf(&usr, "\nExample passage %d (match this level and style):\n%s\n", i+1, ex)
+		fmt.Fprintf(&usr, "\nΠαράδειγμα %d του ύφους και του επιπέδου που αναμένεται:\n%s\n", i+1, ex)
 	}
+	usr.WriteString("\nΤώρα γράψε τη δική σου πρωτότυπη ιστορία και δώσε μόνο το ζητούμενο JSON.\n")
 
 	return LLMRequest{
 		System:         sys.String(),
