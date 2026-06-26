@@ -402,7 +402,7 @@ func (r *PostgresRepository) CreatePhraseSet(ctx context.Context, ps domain.Phra
 	if ps.GeneratedAt == 0 {
 		ps.GeneratedAt = float64(time.Now().Unix())
 	}
-	items, err := json.Marshal(ps.Items)
+	items, err := marshalJSONBAny(ps.Items)
 	if err != nil {
 		return domain.PhraseSet{}, err
 	}

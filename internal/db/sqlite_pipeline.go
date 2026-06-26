@@ -395,7 +395,7 @@ func (r *SQLiteRepository) CreatePhraseSet(ctx context.Context, ps domain.Phrase
 	if ps.GeneratedAt == 0 {
 		ps.GeneratedAt = float64(time.Now().Unix())
 	}
-	items, err := json.Marshal(ps.Items)
+	items, err := marshalJSONAny(ps.Items)
 	if err != nil {
 		return domain.PhraseSet{}, err
 	}
@@ -409,7 +409,7 @@ func (r *SQLiteRepository) CreatePhraseSet(ctx context.Context, ps domain.Phrase
 		   language = excluded.language,
 		   items = excluded.items,
 		   generated_at = excluded.generated_at`,
-		ps.SessionID, ps.UserID, ps.Language, string(items), ps.GeneratedAt)
+		ps.SessionID, ps.UserID, ps.Language, items, ps.GeneratedAt)
 	if err != nil {
 		return domain.PhraseSet{}, err
 	}
