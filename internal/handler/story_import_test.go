@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -129,19 +130,59 @@ func TestImportStoryUploadsTextFile(t *testing.T) {
 	}
 }
 
-func TestImportStoryRejectsUnsupportedUploadExtension(t *testing.T) {
-	srv, _ := newServer(t, false)
+func TestImportStoryUploadNormalizesExtractedText(t *testing.T) {
+	srv, repo := newServer(t, false)
 	body, contentType := multipartImportBody(t, map[string]string{
 		"language": "xx",
 		"level":    "beginner",
-	}, "note.pdf", "text/plain", "Gamma delta")
+	}, "note.txt", "text/plain", " \r\nGamma\r\n\r\nDelta\r ")
 
 	resp, err := http.Post(srv.URL+"/api/v1/stories/import", contentType, body)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	expectBadRequestContains(t, resp, "only .txt uploads are supported")
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("want 201, got %d", resp.StatusCode)
+	}
+	var out struct {
+		StoryID string `json:"story_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	st, err := repo.GetStory(context.Background(), out.StoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Text != "Gamma\n\nDelta" {
+		t.Fatalf("story text = %q, want normalized extracted text", st.Text)
+	}
+}
+
+func TestImportStoryRejectsUnsupportedUploadExtension(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		filename string
+	}{
+		{name: "pdf", filename: "note.pdf"},
+		{name: "epub", filename: "note.epub"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, _ := newServer(t, false)
+			body, contentType := multipartImportBody(t, map[string]string{
+				"language": "xx",
+				"level":    "beginner",
+			}, tc.filename, "text/plain", "Gamma delta")
+
+			resp, err := http.Post(srv.URL+"/api/v1/stories/import", contentType, body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			expectBadRequestContains(t, resp, "extension "+strconv.Quote("."+tc.name)+" is not supported")
+		})
+	}
 }
 
 func TestImportStoryRejectsUnsupportedUploadContentType(t *testing.T) {
@@ -164,7 +205,7 @@ func TestImportStoryRejectsUnsupportedUploadContentType(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer resp.Body.Close()
-			expectBadRequestContains(t, resp, "only text/plain uploads are supported")
+			expectBadRequestContains(t, resp, "content type "+strconv.Quote(tc.contentType)+" is not supported")
 		})
 	}
 }
