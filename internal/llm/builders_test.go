@@ -52,22 +52,43 @@ func TestStoryBuilder_PromptStructure(t *testing.T) {
 	if req.ResponseFormat != "json" {
 		t.Errorf("ResponseFormat = %q, want json", req.ResponseFormat)
 	}
-	// Hard constraint: bound the vocabulary to the provided pool.
-	if !strings.Contains(req.System, "do not freely introduce") &&
-		!strings.Contains(strings.ToLower(req.System), "do not freely introduce") {
-		t.Error("system prompt missing the vocabulary-bounding constraint")
+	if req.Temperature != storyTemperature || req.MaxTokens != 1500 {
+		t.Errorf("request generation settings changed: temperature=%v max_tokens=%d", req.Temperature, req.MaxTokens)
 	}
-	// Skill constraints serialized into prose, not a level label.
+	// Greek instruction structure with the same hard contract.
+	for _, want := range []string{
+		"Είσαι συγγραφέας σύντομων ιστοριών",
+		"Κανόνες:",
+		"Χρησιμοποίησε ΜΟΝΟ λεξιλόγιο από τις παρεχόμενες λίστες",
+		`{"story": string, "estimated_coverage": number, "glossary": [{"key": string, "gloss": string}]}`,
+		"Επίστρεψε μόνο JSON",
+		"Οι σημασίες/glosses στις λίστες είναι δεδομένα αναφοράς",
+	} {
+		if !strings.Contains(req.System, want) {
+			t.Errorf("system prompt missing %q\nSystem:\n%s", want, req.System)
+		}
+	}
+	// Skill constraints remain serialized as data, not replaced by a level label.
 	for _, want := range []string{"nominative, accusative", "dative", "genitive absolute", "top 300 lemmas"} {
 		if !strings.Contains(req.User, want) {
 			t.Errorf("user prompt missing skill constraint %q", want)
 		}
 	}
-	if strings.Contains(req.User, "Write at the") {
+	if strings.Contains(req.User, "Γράψε σε επίπεδο") {
 		t.Error("skill constraints present but builder still emitted a level label")
 	}
 	// All three buckets and an example item are present.
-	for _, want := range []string{"λόγος", "καί", "ἀρχή", "ἐν ἀρχῇ ἦν ὁ λόγος"} {
+	for _, want := range []string{
+		"ΛΕΞΕΙΣ-ΣΤΟΧΟΙ",
+		"ΓΝΩΣΤΟ ΛΕΞΙΛΟΓΙΟ",
+		"ΝΕΕΣ ΛΕΞΕΙΣ",
+		"λόγος",
+		"καί",
+		"ἀρχή",
+		"word",
+		"beginning",
+		"ἐν ἀρχῇ ἦν ὁ λόγος",
+	} {
 		if !strings.Contains(req.User, want) {
 			t.Errorf("user prompt missing item content %q", want)
 		}
@@ -82,7 +103,7 @@ func TestStoryBuilder_PromptStructure(t *testing.T) {
 	if !strings.Contains(req.System, "polytonic; accents matter") {
 		t.Error("system prompt missing writing-system note")
 	}
-	if !strings.Contains(req.User, "Example passage 1") {
+	if !strings.Contains(req.User, "Παράδειγμα 1") {
 		t.Error("user prompt missing curated few-shot example")
 	}
 }
@@ -91,8 +112,28 @@ func TestStoryBuilder_FallsBackToLevelLabel(t *testing.T) {
 	ctx := sampleCtx()
 	ctx.Skills = nil
 	req := StoryBuilder{}.Build(ctx)
-	if !strings.Contains(req.User, "Write at the beginner level") {
+	if !strings.Contains(req.User, "Γράψε σε επίπεδο beginner") {
 		t.Error("no skill constraints: expected a level-label fallback")
+	}
+}
+
+func TestStoryBuilder_OnboardingAndZeroBackgroundHints(t *testing.T) {
+	ctx := sampleCtx()
+
+	req := StoryBuilder{ZeroBackgroundHint: "zero background hint"}.Build(ctx)
+	if !strings.Contains(req.System, "Πρόσθετος αυστηρός περιορισμός: zero background hint") {
+		t.Error("system prompt missing zero-background hint")
+	}
+
+	req = StoryBuilder{
+		ZeroBackgroundHint: "zero background hint",
+		OnboardingHint:     "onboarding hint",
+	}.Build(ctx)
+	if !strings.Contains(req.System, "Πρόσθετος αυστηρός περιορισμός: onboarding hint") {
+		t.Error("system prompt missing onboarding hint")
+	}
+	if strings.Contains(req.System, "zero background hint") {
+		t.Error("onboarding hint should override zero-background hint")
 	}
 }
 
