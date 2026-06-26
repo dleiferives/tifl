@@ -303,6 +303,13 @@ func (r *PostgresRepository) GetStory(ctx context.Context, storyID string) (doma
 	return s, nil
 }
 
+func (r *PostgresRepository) CountUserStories(ctx context.Context, userID, language string) (int, error) {
+	var n int
+	err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM stories WHERE user_id = $1 AND language = $2`, userID, language).Scan(&n)
+	return n, err
+}
+
 func (r *PostgresRepository) ReplaceStoryTokens(ctx context.Context, storyID string, tokens []domain.StoryToken) error {
 	return r.inTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `DELETE FROM story_tokens WHERE story_id = $1`, storyID); err != nil {

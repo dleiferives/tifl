@@ -136,7 +136,74 @@ func (Greek) Frequency() []string {
 // elementary Modern Greek possible so a first-session story is comprehensible
 // without any prior knowledge record.
 func (Greek) ZeroBackgroundHint() string {
-	return "The learner has no background vocabulary yet. Write a single very short paragraph (3–4 simple sentences maximum) using only the most elementary Modern Greek: basic pronouns (εγώ, εσύ, αυτός/αυτή), the verbs είμαι and έχω, one or two high-frequency everyday nouns, and essential particles (και, δεν, να). No complex grammar, no subordinate clauses."
+	return onboardingHints[0]
+}
+
+// onboardingHints[i] is used when the learner has had i prior stories (0 = very first).
+// Written in Greek — prompting in the target language noticeably improves model output.
+var onboardingHints = [6]string{
+	// story 1 — absolute beginner, near-zero vocabulary
+	"Ο μαθητής δεν έχει προηγούμενες ιστορίες. Γράψε μία πολύ σύντομη παράγραφο (3–4 προτάσεις μόνο) με τις πιο βασικές ελληνικές λέξεις: βασικές αντωνυμίες (εγώ, εσύ, αυτός/αυτή), τα ρήματα είμαι και έχω, 1–2 συχνά ουσιαστικά και μόρια (και, δεν, να). Χωρίς σύνθετη γραμματική, χωρίς δευτερεύουσες προτάσεις.",
+	// story 2 — a handful of words seen once; still very simple
+	"Ο μαθητής έχει μία ιστορία εμπειρία. Γράψε μια σύντομη παράγραφο (4–5 προτάσεις) με απλό ενεστώτα — πέρα από είμαι/έχω μπορείς να χρησιμοποιήσεις συχνά ρήματα. Χωρίς δευτερεύουσες προτάσεις.",
+	// story 3 — small but growing vocabulary
+	"Ο μαθητής έχει 2 ιστορίες εμπειρία. Γράψε 5–6 απλές προτάσεις σε ενεστώτα. Εισήγαγε τις νέες λέξεις με σαφή συμφραζόμενα. Απλή γραμματική.",
+	// story 4 — starting to recognize patterns
+	"Ο μαθητής έχει 3 ιστορίες εμπειρία. Γράψε 6–8 προτάσεις με απλή αφηγηματική δομή. Κυρίως ενεστώτας· ένας συχνός αόριστος είναι αποδεκτός. Απλές προτασιακές δομές.",
+	// story 5 — almost out of structured onboarding
+	"Ο μαθητής έχει 4 ιστορίες εμπειρία και μεταβαίνει σε κανονική παραγωγή. Γράψε 8–10 προτάσεις. Ενεστώτας και απλός αόριστος είναι αποδεκτοί. Άμεσο λεξιλόγιο, χωρίς εμβόλιμες προτάσεις.",
+	// story 6+ — fully normal generation (empty = no special constraint)
+	"",
+}
+
+// OnboardingHint returns a progressively relaxed simplicity constraint for the
+// learner's first five stories. storyNumber is 1-indexed (1 = first ever story).
+// Returns "" beyond story 5 to signal that normal generation should apply.
+func (Greek) OnboardingHint(storyNumber int) string {
+	if storyNumber < 1 {
+		storyNumber = 1
+	}
+	idx := storyNumber - 1
+	if idx >= len(onboardingHints) {
+		return ""
+	}
+	return onboardingHints[idx]
+}
+
+// ExtractCanonicalKey implements lang.CanonicalKeyProvider for Modern Greek.
+// Greek native-Wiktionary glosses describe forms with a final clause like
+// "γ΄ πρόσωπο ενικού οριστικής ενεστώτα του κρατάω" or "αδύναμος τύπος του κρατώ".
+// The lemma always follows the last "του " in the last semicolon-delimited clause.
+func (g Greek) ExtractCanonicalKey(nativeGloss string) (string, bool) {
+	clauses := strings.Split(nativeGloss, "; ")
+	last := strings.TrimSpace(clauses[len(clauses)-1])
+	idx := strings.LastIndex(last, "του ")
+	if idx < 0 {
+		return "", false
+	}
+	after := strings.TrimSpace(last[idx+len("του "):])
+	word := strings.FieldsFunc(after, func(r rune) bool {
+		return !unicode.IsLetter(r) && r != '\'' && r != '’'
+	})
+	if len(word) == 0 {
+		return "", false
+	}
+	candidate := word[0]
+	hasGreek := false
+	for _, r := range candidate {
+		if unicode.Is(unicode.Greek, r) {
+			hasGreek = true
+			break
+		}
+	}
+	if !hasGreek {
+		return "", false
+	}
+	key, err := g.ResolveKey(candidate)
+	if err != nil || key == "" {
+		return "", false
+	}
+	return key, true
 }
 
 // isWordRune reports whether r should be treated as part of a word token.

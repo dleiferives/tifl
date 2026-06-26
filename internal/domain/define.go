@@ -4,13 +4,13 @@ package domain
 // dataset, #41) and LLM-written entries are stored separately and may coexist for
 // the same (language, key).
 const (
-	DefinitionSourceUser        = "user"       // per-user custom dictionary (not persisted in the shared cache)
-	DefinitionSourceWiktionary  = "wiktionary" // English Wiktionary via kaikki/Wiktextract
-	DefinitionSourceNative      = "wiktionary-native"     // target-language Wiktionary (gloss in target language)
-	DefinitionSourceTranslated  = "wiktionary-translated" // LLM-translated from wiktionary-native
-	DefinitionSourceLLM         = "llm"
-	DefinitionSourceGlossary    = "glossary" // per-story glossary (not persisted in the shared cache)
-	DefinitionSourceMetadata    = "metadata" // knowledge_items.metadata (not persisted in the shared cache)
+	DefinitionSourceUser       = "user"                  // per-user custom dictionary (not persisted in the shared cache)
+	DefinitionSourceWiktionary = "wiktionary"            // English Wiktionary via kaikki/Wiktextract
+	DefinitionSourceNative     = "wiktionary-native"     // target-language Wiktionary (gloss in target language)
+	DefinitionSourceTranslated = "wiktionary-translated" // LLM-translated from wiktionary-native
+	DefinitionSourceLLM        = "llm"
+	DefinitionSourceGlossary   = "glossary" // per-story glossary (not persisted in the shared cache)
+	DefinitionSourceMetadata   = "metadata" // knowledge_items.metadata (not persisted in the shared cache)
 )
 
 // UserDefinition is one learner-owned dictionary override. It layers over the
@@ -37,7 +37,19 @@ type Definition struct {
 	Example         string
 	Etymology       string
 	Notes           string
-	CreatedAt       float64
+	// CanonicalKey is set on form-alias definitions (inflections, conjugations)
+	// to point at the lemma's item_key. The resolver follows this link to return
+	// the lemma's definition when the form alias has no good English gloss.
+	CanonicalKey string
+	// Pronunciation is the IPA transcription from Wiktionary (e.g. "/kɾaˈta.o/").
+	Pronunciation string
+	// Related is a semicolon-separated list of morphologically related forms with
+	// their grammatical role, e.g. "κρατών (active, participle, present); κρατούσα (feminine)".
+	Related string
+	// Derived is a semicolon-separated list of derived expressions with English
+	// translations, e.g. "κρατάω το φανάρι: to play gooseberry".
+	Derived   string
+	CreatedAt float64
 }
 
 const (

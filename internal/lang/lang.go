@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/dleiferives/tifl/internal/domain"
+	"github.com/dleiferives/tifl/internal/llm"
 
 	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
@@ -55,6 +56,26 @@ type Language interface {
 	// not in the language-agnostic task types. Most languages can return
 	// DefaultNormalize(s).
 	Normalize(s string) string
+}
+
+// CanonicalKeyProvider is optionally implemented by language plugins that can
+// extract a base lemma from a native-language dictionary gloss at runtime.
+// This is a fallback for when canonical_key was not stored at import time —
+// e.g. a word present only in the native Wiktionary whose gloss describes it
+// as a form of another word ("3rd person singular of X", "αδύναμος τύπος του X").
+// The extraction logic is per-language: Greek checks "...του LEMMA" at the end
+// of the last clause, Spanish checks "primera persona singular del presente de
+// VERB", etc. Returns ("", false) if the gloss does not describe a form.
+type CanonicalKeyProvider interface {
+	ExtractCanonicalKey(nativeGloss string) (string, bool)
+}
+
+// ExtractCanonicalKey calls the plugin's CanonicalKeyProvider if available.
+func ExtractCanonicalKey(l Language, nativeGloss string) (string, bool) {
+	if p, ok := l.(CanonicalKeyProvider); ok {
+		return p.ExtractCanonicalKey(nativeGloss)
+	}
+	return "", false
 }
 
 // ReaderSurfaceKeyProvider is optionally implemented by languages that want to
@@ -103,6 +124,24 @@ type TopicPoolProvider interface {
 // this get no special constraint and rely on the level label alone.
 type ZeroBackgroundProvider interface {
 	ZeroBackgroundHint() string
+}
+
+// OnboardingHintProvider is optionally implemented by language plugins to supply
+// progressively relaxed story-generation constraints for a learner's first few
+// sessions. storyNumber is the 1-indexed count of stories the user has already
+// had in this language before the current one (so 1 = first ever story).
+// Return "" once beyond the onboarding window to signal normal generation.
+// OnboardingHint takes precedence over ZeroBackgroundHint when non-empty.
+type OnboardingHintProvider interface {
+	OnboardingHint(storyNumber int) string
+}
+
+// StoryContractProvider is optionally implemented by language plugins that supply
+// their own generation DAG for the story session contract. The DAG must satisfy
+// OutputStory, OutputMCTask, and OutputFillTask. A plugin that does not implement
+// this falls back to the generic English builders.
+type StoryContractProvider interface {
+	StorySessionDAG() llm.GenerationDAG
 }
 
 // SkillDefinition describes one language competency. Concept is the stable

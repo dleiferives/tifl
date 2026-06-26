@@ -462,6 +462,14 @@ func (p *Pipeline) runStory(ctx context.Context, sess domain.Session, lc domain.
 		}
 	}
 
+	// Resolve onboarding hint — keeps early stories simple for new learners.
+	// Count prior stories (errors degrade gracefully to 0 = most restrictive).
+	var onboardingHint string
+	if ohp, ok := plugin.(lang.OnboardingHintProvider); ok {
+		priorCount, _ := p.deps.Repo.CountUserStories(ctx, sess.UserID, sess.Language)
+		onboardingHint = ohp.OnboardingHint(priorCount + 1)
+	}
+
 	var (
 		result   llm.StoryResult
 		tokens   []lang.Token
@@ -469,7 +477,7 @@ func (p *Pipeline) runStory(ctx context.Context, sess domain.Session, lc domain.
 	)
 	attempts := p.cfg.CoverageRetries + 1
 	for attempt := 0; attempt < attempts; attempt++ {
-		res, rate, err := p.generateStory(ctx, lc, storyStep)
+		res, rate, err := p.generateStory(ctx, lc, storyStep, onboardingHint)
 		if err != nil {
 			se := fail(ErrCodeStory, err)
 			p.failStage(ctx, sess.SessionID, domain.StageStoryGeneration, se)
@@ -718,7 +726,9 @@ func (p *Pipeline) buildStepInputs(lc domain.LearnerCtx, priorSteps map[string]a
 // and reports an approximate token_rate from the elapsed wall time for the SSE
 // ticker. The story text is never streamed; this is a rate visualization only.
 // When step is non-nil the LP's DAG step is used instead of the generic builder.
-func (p *Pipeline) generateStory(ctx context.Context, lc domain.LearnerCtx, step *llm.StepDef) (llm.StoryResult, int, error) {
+// onboardingHint, when non-empty, is injected as a hard simplicity constraint;
+// it takes precedence over ZeroBackgroundHint.
+func (p *Pipeline) generateStory(ctx context.Context, lc domain.LearnerCtx, step *llm.StepDef, onboardingHint string) (llm.StoryResult, int, error) {
 	if step != nil {
 		inputs := p.buildStepInputs(lc, nil, nil, nil)
 		start := time.Now()
@@ -732,8 +742,8 @@ func (p *Pipeline) generateStory(ctx context.Context, lc domain.LearnerCtx, step
 		}
 		return res, approxTokenRate(res.Story, time.Since(start)), nil
 	}
-	builder := llm.StoryBuilder{}
-	if len(lc.Selected.Background) == 0 {
+	builder := llm.StoryBuilder{OnboardingHint: onboardingHint}
+	if onboardingHint == "" && len(lc.Selected.Background) == 0 {
 		if plugin, ok := p.deps.Langs.Get(lc.Language); ok {
 			if zbp, ok := plugin.(lang.ZeroBackgroundProvider); ok {
 				builder.ZeroBackgroundHint = zbp.ZeroBackgroundHint()

@@ -212,7 +212,7 @@ func CompleteJSON[T any](
 			return zero, err
 		}
 		var out T
-		if err := json.Unmarshal([]byte(extractJSON(resp.Text)), &out); err != nil {
+		if err := json.Unmarshal([]byte(ExtractJSON(resp.Text)), &out); err != nil {
 			lastErr = fmt.Errorf("llm: parse %s response: %w", b.Kind(), err)
 			continue
 		}
@@ -235,11 +235,11 @@ func withPromptVersion(ctx context.Context, version string) context.Context {
 	return WithCallMeta(ctx, m)
 }
 
-// extractJSON tolerates the common ways a model wraps its JSON object: leading
+// ExtractJSON tolerates the common ways a model wraps its JSON object: leading
 // prose, a ```json fence, or trailing text. It returns the substring from the
 // first '{' to the last '}', or the trimmed input if no object is found (letting
 // json.Unmarshal report the real error).
-func extractJSON(s string) string {
+func ExtractJSON(s string) string {
 	s = strings.TrimSpace(s)
 	start := strings.IndexByte(s, '{')
 	end := strings.LastIndexByte(s, '}')

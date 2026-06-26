@@ -70,22 +70,27 @@ def section(title: str) -> None:
 
 # Maps tifl language code →
 #   (display name,
-#    English-Wiktionary kaikki stem,
-#    native-Wiktionary kaikki stem or None if unknown)
+#    English-Wiktionary kaikki file stem,
+#    full URL to the native-Wiktionary dump or None if unavailable)
+#
+# Non-English Wiktionaries on kaikki.org don't offer per-language subset files;
+# only a single raw-wiktextract-data.jsonl.gz covering all languages defined
+# in that Wiktionary. The importer already filters by lang_code so the full
+# dump works fine — the file is just larger.
 LANGUAGES: dict[str, tuple[str, str, str | None]] = {
-    "el": ("Greek",   "kaikki.org-dictionary-Greek",   "kaikki.org-dictionary-Greek-el"),
-    "ar": ("Arabic",  "kaikki.org-dictionary-Arabic",  "kaikki.org-dictionary-Arabic-ar"),
-    "de": ("German",  "kaikki.org-dictionary-German",  "kaikki.org-dictionary-German-de"),
-    "es": ("Spanish", "kaikki.org-dictionary-Spanish", "kaikki.org-dictionary-Spanish-es"),
-    "fr": ("French",  "kaikki.org-dictionary-French",  "kaikki.org-dictionary-French-fr"),
-    "it": ("Italian", "kaikki.org-dictionary-Italian", "kaikki.org-dictionary-Italian-it"),
-    "ja": ("Japanese","kaikki.org-dictionary-Japanese","kaikki.org-dictionary-Japanese-ja"),
+    "el": ("Greek",   "kaikki.org-dictionary-Greek",   "https://kaikki.org/elwiktionary/raw-wiktextract-data.jsonl.gz"),
+    "ar": ("Arabic",  "kaikki.org-dictionary-Arabic",  None),
+    "de": ("German",  "kaikki.org-dictionary-German",  None),
+    "es": ("Spanish", "kaikki.org-dictionary-Spanish", None),
+    "fr": ("French",  "kaikki.org-dictionary-French",  None),
+    "it": ("Italian", "kaikki.org-dictionary-Italian", None),
+    "ja": ("Japanese","kaikki.org-dictionary-Japanese", None),
     "la": ("Latin",   "kaikki.org-dictionary-Latin",   None),
-    "ru": ("Russian", "kaikki.org-dictionary-Russian", "kaikki.org-dictionary-Russian-ru"),
-    "zh": ("Chinese", "kaikki.org-dictionary-Chinese", "kaikki.org-dictionary-Chinese-zh"),
+    "ru": ("Russian", "kaikki.org-dictionary-Russian", None),
+    "zh": ("Chinese", "kaikki.org-dictionary-Chinese", None),
 }
 
-KAIKKI_BASE = "https://kaikki.org/dictionary"
+KAIKKI_EN_BASE = "https://kaikki.org/dictionary"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -97,15 +102,12 @@ def _lang_folder(lang_code: str) -> str:
 def kaikki_url_english(lang_code: str) -> str:
     _, stem, _ = LANGUAGES[lang_code]
     folder = _lang_folder(lang_code)
-    return f"{KAIKKI_BASE}/{folder}/{stem}.jsonl.gz"
+    return f"{KAIKKI_EN_BASE}/{folder}/{stem}.jsonl.gz"
 
 
 def kaikki_url_native(lang_code: str) -> str | None:
-    _, _, native_stem = LANGUAGES[lang_code]
-    if native_stem is None:
-        return None
-    folder = _lang_folder(lang_code)
-    return f"{KAIKKI_BASE}/{folder}/{lang_code}/{native_stem}.jsonl.gz"
+    _, _, native_url = LANGUAGES[lang_code]
+    return native_url
 
 
 def find_binary(name: str, aliases: list[str] | None = None) -> Path | None:
@@ -473,10 +475,11 @@ def main() -> None:
                 info(f"Using provided file: {nat_dump}")
                 ready = nat_dump.exists()
             else:
-                _, _, native_kaikki_stem = LANGUAGES[lang_code]
-                nat_dump = cache_dir / (native_kaikki_stem + ".jsonl.gz")  # type: ignore[operator]
+                # Derive a unique cache filename from the URL basename prefixed
+                # by lang_code (multiple languages share "raw-wiktextract-data.jsonl.gz").
+                url_basename = native_url.rsplit("/", 1)[-1]
+                nat_dump = cache_dir / f"{lang_code}-{url_basename}"
                 info(f"Note: URL {native_url}")
-                info("If this 404s, check kaikki.org for the correct native dump URL and pass --input-native.")
                 ready = ensure_dump(native_url, nat_dump, args.dry_run)
 
             if ready or args.dry_run:

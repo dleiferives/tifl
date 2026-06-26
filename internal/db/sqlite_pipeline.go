@@ -304,6 +304,13 @@ func (r *SQLiteRepository) GetStory(ctx context.Context, storyID string) (domain
 	return s, nil
 }
 
+func (r *SQLiteRepository) CountUserStories(ctx context.Context, userID, language string) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM stories WHERE user_id = ? AND language = ?`, userID, language).Scan(&n)
+	return n, err
+}
+
 func (r *SQLiteRepository) ReplaceStoryTokens(ctx context.Context, storyID string, tokens []domain.StoryToken) error {
 	return r.inTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM story_tokens WHERE story_id = ?`, storyID); err != nil {

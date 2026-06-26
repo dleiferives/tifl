@@ -142,6 +142,9 @@ type Repository interface {
 	// ReplaceStoryGlossary are delete-then-insert so a stage retry is idempotent.
 	CreateStory(ctx context.Context, s domain.Story) (domain.Story, error)
 	GetStory(ctx context.Context, storyID string) (domain.Story, error)
+	// CountUserStories returns the number of stories generated for the given user
+	// and language. Used to decide onboarding-stage simplicity constraints.
+	CountUserStories(ctx context.Context, userID, language string) (int, error)
 	ReplaceStoryTokens(ctx context.Context, storyID string, tokens []domain.StoryToken) error
 	ListStoryTokens(ctx context.Context, storyID string) ([]domain.StoryToken, error)
 	ReplaceStoryGlossary(ctx context.Context, storyID string, entries []domain.StoryGlossaryEntry) error

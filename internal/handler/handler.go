@@ -129,7 +129,7 @@ func New(repo db.Repository, broker *story.Broker, client llm.Client, taskTypes 
 		langs:       langs,
 		broker:      broker,
 		reader:      reader.NewService(repo, engine, reader.WithSkillAssociator(associator)),
-		defs:        reader.NewDefinitionService(repo, client, nil),
+		defs:        reader.NewDefinitionService(repo, client, nil, langs),
 		taskTypes:   taskTypes,
 		grader:      grader,
 		acquire:     engine,

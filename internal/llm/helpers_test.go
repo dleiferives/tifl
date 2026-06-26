@@ -23,10 +23,10 @@ func TestAssembleLearnerCtx_TrimsHistory(t *testing.T) {
 }
 
 func TestSerializeSkillConstraints(t *testing.T) {
-	if got := serializeSkillConstraints(nil); got != "" {
+	if got := SerializeSkillConstraints(nil); got != "" {
 		t.Errorf("nil constraints should serialize to empty, got %q", got)
 	}
-	out := serializeSkillConstraints(&domain.SkillConstraints{
+	out := SerializeSkillConstraints(&domain.SkillConstraints{
 		Allowed:    []string{"nominative"},
 		Introduce:  []string{"dative"},
 		Avoid:      []string{"optative"},
@@ -47,8 +47,8 @@ func TestExtractJSON(t *testing.T) {
 		"no json here":                    "no json here",
 	}
 	for in, want := range cases {
-		if got := extractJSON(in); got != want {
-			t.Errorf("extractJSON(%q) = %q, want %q", in, got, want)
+		if got := ExtractJSON(in); got != want {
+			t.Errorf("ExtractJSON(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
@@ -146,17 +146,17 @@ func TestFormatItemHierarchy(t *testing.T) {
 		Key:      "λόγος",
 		Metadata: map[string]any{"gloss": "word", "part_of_speech": "noun", "example": "ὁ λόγος"},
 	}
-	if got := formatItemCompact(it); got != "λόγος — word" {
+	if got := FormatItemCompact(it); got != "λόγος — word" {
 		t.Errorf("compact = %q", got)
 	}
-	if got := formatItemTarget(it); !strings.Contains(got, "(noun)") {
+	if got := FormatItemTarget(it); !strings.Contains(got, "(noun)") {
 		t.Errorf("target form should include part of speech, got %q", got)
 	}
-	if got := formatItemNew(it); !strings.Contains(got, "example: ὁ λόγος") {
+	if got := FormatItemNew(it); !strings.Contains(got, "example: ὁ λόγος") {
 		t.Errorf("new form should include example, got %q", got)
 	}
 	// Tolerates missing metadata.
-	if got := formatItemCompact(domain.KnowledgeItem{Key: "x"}); got != "x" {
+	if got := FormatItemCompact(domain.KnowledgeItem{Key: "x"}); got != "x" {
 		t.Errorf("no-metadata compact = %q, want x", got)
 	}
 }
