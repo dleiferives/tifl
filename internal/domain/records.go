@@ -7,12 +7,13 @@ const LocalUserID = "local"
 
 // User is a registered identity. See context/database-schema.md ("users").
 type User struct {
-	UserID       string
-	Email        string
-	PasswordHash string         // argon2id; empty for the local user
-	CreatedAt    float64        // Unix seconds
-	LastLogin    *float64       // Unix seconds; nil if never
-	Settings     map[string]any // theme / UI prefs; nil when unset
+	UserID         string
+	Email          string         // display/original accepted email
+	EmailCanonical string         // normalized comparison value for auth lookup
+	PasswordHash   string         // argon2id; empty for the local user
+	CreatedAt      float64        // Unix seconds
+	LastLogin      *float64       // Unix seconds; nil if never
+	Settings       map[string]any // theme / UI prefs; nil when unset
 }
 
 // RefreshToken is one server-side refresh credential. The raw token is only

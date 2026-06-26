@@ -833,10 +833,13 @@ func testUsers(t *testing.T, repo db.Repository) {
 	if created.CreatedAt == 0 {
 		t.Fatal("CreateUser did not set created_at")
 	}
+	if created.EmailCanonical != "a@b.com" {
+		t.Fatalf("CreateUser default canonical email = %q", created.EmailCanonical)
+	}
 
 	byEmail, err := repo.GetUserByEmail(ctx, "a@b.com")
 	must(t, err)
-	if byEmail.UserID != created.UserID || byEmail.PasswordHash != "hash" {
+	if byEmail.UserID != created.UserID || byEmail.PasswordHash != "hash" || byEmail.Email != "a@b.com" || byEmail.EmailCanonical != "a@b.com" {
 		t.Fatalf("GetUserByEmail mismatch: %+v", byEmail)
 	}
 
@@ -852,6 +855,27 @@ func testUsers(t *testing.T, repo db.Repository) {
 
 	if _, err := repo.CreateUser(ctx, domain.User{Email: "a@b.com"}); err == nil {
 		t.Fatal("expected duplicate-email error")
+	}
+
+	display, err := repo.CreateUser(ctx, domain.User{
+		Email:          "Display@Example.COM",
+		EmailCanonical: "display@example.com",
+		PasswordHash:   "hash",
+	})
+	must(t, err)
+	if display.Email != "Display@Example.COM" || display.EmailCanonical != "display@example.com" {
+		t.Fatalf("CreateUser did not preserve display/canonical email: %+v", display)
+	}
+	byCanonical, err := repo.GetUserByEmail(ctx, "display@example.com")
+	must(t, err)
+	if byCanonical.UserID != display.UserID || byCanonical.Email != "Display@Example.COM" || byCanonical.EmailCanonical != "display@example.com" {
+		t.Fatalf("canonical lookup did not preserve display email: %+v", byCanonical)
+	}
+	if _, err := repo.GetUserByEmail(ctx, "Display@Example.COM"); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("display-form lookup should miss canonical index, got %v", err)
+	}
+	if _, err := repo.CreateUser(ctx, domain.User{Email: "Other@Example.COM", EmailCanonical: "display@example.com"}); err == nil {
+		t.Fatal("expected duplicate-canonical-email error")
 	}
 
 	l1, err := repo.EnsureLocalUser(ctx)

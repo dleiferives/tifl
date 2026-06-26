@@ -50,14 +50,14 @@ func NewService(repo db.Repository, secret string) (*Service, error) {
 }
 
 func (s *Service) Register(ctx context.Context, email, password string) (Session, error) {
-	email, err := normalizeEmail(email)
+	normalized, err := normalizeEmailAddress(email)
 	if err != nil {
 		return Session{}, err
 	}
 	if err := validatePassword(password); err != nil {
 		return Session{}, err
 	}
-	if _, err := s.repo.GetUserByEmail(ctx, email); err == nil {
+	if _, err := s.repo.GetUserByEmail(ctx, normalized.Canonical); err == nil {
 		return Session{}, ErrEmailUnavailable
 	} else if !errors.Is(err, db.ErrNotFound) {
 		return Session{}, err
@@ -68,7 +68,11 @@ func (s *Service) Register(ctx context.Context, email, password string) (Session
 	}
 	now := float64(s.now().Unix())
 	user, err := s.repo.CreateUser(ctx, domain.User{
-		Email: email, PasswordHash: hash, CreatedAt: now, LastLogin: &now,
+		Email:          normalized.Display,
+		EmailCanonical: normalized.Canonical,
+		PasswordHash:   hash,
+		CreatedAt:      now,
+		LastLogin:      &now,
 	})
 	if err != nil {
 		// Also covers a concurrent registration race without exposing whether the
@@ -79,13 +83,13 @@ func (s *Service) Register(ctx context.Context, email, password string) (Session
 }
 
 func (s *Service) Login(ctx context.Context, email, password string) (Session, error) {
-	email, err := normalizeEmail(email)
+	normalized, err := normalizeEmailAddress(email)
 	if err != nil {
 		// Preserve the generic login response and comparable hashing work.
 		VerifyPassword(s.dummy, password)
 		return Session{}, ErrInvalidCredentials
 	}
-	user, err := s.repo.GetUserByEmail(ctx, email)
+	user, err := s.repo.GetUserByEmail(ctx, normalized.Canonical)
 	if errors.Is(err, db.ErrNotFound) {
 		VerifyPassword(s.dummy, password)
 		return Session{}, ErrInvalidCredentials
