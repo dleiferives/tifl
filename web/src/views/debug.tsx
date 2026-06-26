@@ -131,6 +131,13 @@ function Metric(props: { label: string; value: number | string }) {
 
 function LLMCallRow(props: { call: LLMCall }) {
   const call = props.call;
+  const payloads = [
+    { label: "System prompt", value: call.system_prompt },
+    { label: "User prompt", value: call.user_prompt },
+    { label: "Raw response", value: call.raw_response },
+    { label: "Parsed output", value: call.parsed_output },
+    { label: "Error payload", value: call.error_payload },
+  ].filter((entry): entry is { label: string; value: string } => typeof entry.value === "string" && entry.value.length > 0);
   return (
     <article class="debug-call-row" data-status={call.status}>
       <header>
@@ -150,6 +157,18 @@ function LLMCallRow(props: { call: LLMCall }) {
       </dl>
       <Show when={call.error_detail}>
         {(detail) => <p>{detail()}</p>}
+      </Show>
+      <Show when={payloads.length > 0}>
+        <div class="debug-payloads">
+          <For each={payloads}>
+            {(payload) => (
+              <details>
+                <summary>{payload.label}</summary>
+                <pre>{payload.value}</pre>
+              </details>
+            )}
+          </For>
+        </div>
       </Show>
     </article>
   );

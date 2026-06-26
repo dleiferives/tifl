@@ -875,6 +875,11 @@ func cloneLLMCall(c domain.LLMCall) domain.LLMCall {
 	c.OutputTokens = cloneInt(c.OutputTokens)
 	c.LatencyMs = cloneInt(c.LatencyMs)
 	c.ErrorDetail = cloneStr(c.ErrorDetail)
+	c.SystemPrompt = cloneStr(c.SystemPrompt)
+	c.UserPrompt = cloneStr(c.UserPrompt)
+	c.RawResponse = cloneStr(c.RawResponse)
+	c.ParsedOutput = cloneStr(c.ParsedOutput)
+	c.ErrorPayload = cloneStr(c.ErrorPayload)
 	return c
 }
 

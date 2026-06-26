@@ -1320,6 +1320,24 @@ components:
           type: string
           enum: [success, error, timeout]
         error_detail: { type: string }
+        system_prompt:
+          type: string
+          description: System prompt sent to the LLM gateway when present.
+        user_prompt:
+          type: string
+          description: User prompt sent to the LLM gateway.
+        raw_response:
+          type: string
+          description: Raw gateway response body. On successful calls this is the provider envelope.
+        parsed_output:
+          type: string
+          description: >
+            Assistant content extracted from the provider envelope when available.
+            If no separate parsed payload exists for a call, clients should use
+            raw_response for debugging.
+        error_payload:
+          type: string
+          description: Raw gateway error response body when available.
         called_at: { type: number }
       required:
         - call_id

@@ -657,10 +657,16 @@ func testLLMCalls(t *testing.T, repo db.Repository) {
 	sess, otherSess, uid, otherUID := "sess-1", "sess-2", "user-1", "user-2"
 	in, out, lat := 120, 64, 875
 	detail := "upstream 429"
+	systemPrompt := "You are a concise teacher."
+	userPrompt := "Write a short story."
+	rawResponse := `{"choices":[{"message":{"content":"{\"story\":\"ok\"}"}}]}`
+	parsedOutput := `{"story":"ok"}`
+	errorPayload := `{"error":"rate limited"}`
 	must(t, repo.InsertLLMCall(ctx, domain.LLMCall{
 		CallID: "call-1", SessionID: &sess, UserID: &uid, Kind: "story_generator",
 		PromptVersion: "v1", Model: "test-model", InputTokens: &in, OutputTokens: &out,
-		LatencyMs: &lat, Status: "success", CalledAt: 1700.0,
+		LatencyMs: &lat, Status: "success", SystemPrompt: &systemPrompt, UserPrompt: &userPrompt,
+		RawResponse: &rawResponse, ParsedOutput: &parsedOutput, CalledAt: 1700.0,
 	}))
 	must(t, repo.InsertLLMCall(ctx, domain.LLMCall{
 		CallID: "call-2", SessionID: &sess, UserID: &uid, Kind: "task_comprehension_mc",
@@ -678,7 +684,7 @@ func testLLMCalls(t *testing.T, repo db.Repository) {
 	// Sparse row: no session/user/usage, an error detail, and a defaulted call_id.
 	must(t, repo.InsertLLMCall(ctx, domain.LLMCall{
 		Kind: "scope_check", PromptVersion: "v1", Model: "test-model",
-		Status: "error", ErrorDetail: &detail,
+		Status: "error", ErrorDetail: &detail, ErrorPayload: &errorPayload,
 	}))
 
 	got, err := repo.ListSessionLLMCalls(ctx, uid, sess)
@@ -691,6 +697,12 @@ func testLLMCalls(t *testing.T, repo db.Repository) {
 	}
 	if got[0].InputTokens == nil || *got[0].InputTokens != in || got[0].LatencyMs == nil || *got[0].LatencyMs != lat {
 		t.Fatalf("ListSessionLLMCalls did not round-trip nullable metrics: %+v", got[0])
+	}
+	if got[0].SystemPrompt == nil || *got[0].SystemPrompt != systemPrompt ||
+		got[0].UserPrompt == nil || *got[0].UserPrompt != userPrompt ||
+		got[0].RawResponse == nil || *got[0].RawResponse != rawResponse ||
+		got[0].ParsedOutput == nil || *got[0].ParsedOutput != parsedOutput {
+		t.Fatalf("ListSessionLLMCalls did not round-trip payloads: %+v", got[0])
 	}
 }
 

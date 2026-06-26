@@ -125,6 +125,11 @@ type llmCallDTO struct {
 	LatencyMs     *int    `json:"latency_ms,omitempty"`
 	Status        string  `json:"status"`
 	ErrorDetail   *string `json:"error_detail,omitempty"`
+	SystemPrompt  *string `json:"system_prompt,omitempty"`
+	UserPrompt    *string `json:"user_prompt,omitempty"`
+	RawResponse   *string `json:"raw_response,omitempty"`
+	ParsedOutput  *string `json:"parsed_output,omitempty"`
+	ErrorPayload  *string `json:"error_payload,omitempty"`
 	CalledAt      float64 `json:"called_at"`
 }
 
@@ -523,6 +528,11 @@ func toLLMCallDTOs(calls []domain.LLMCall) []llmCallDTO {
 			LatencyMs:     c.LatencyMs,
 			Status:        c.Status,
 			ErrorDetail:   c.ErrorDetail,
+			SystemPrompt:  c.SystemPrompt,
+			UserPrompt:    c.UserPrompt,
+			RawResponse:   c.RawResponse,
+			ParsedOutput:  c.ParsedOutput,
+			ErrorPayload:  c.ErrorPayload,
 			CalledAt:      c.CalledAt,
 		})
 	}

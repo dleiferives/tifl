@@ -2043,6 +2043,35 @@ select {
   gap: 0.65rem;
 }
 
+.debug-payloads {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.debug-payloads details {
+  min-width: 0;
+  border-top: 1px solid var(--border);
+  padding-top: 0.45rem;
+}
+
+.debug-payloads summary {
+  cursor: pointer;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.debug-payloads pre {
+  max-height: 24rem;
+  margin: 0.5rem 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
 @media (max-width: 760px) {
   .debug-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));

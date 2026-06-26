@@ -109,16 +109,17 @@ func (c *HTTPClient) Complete(ctx context.Context, kind string, req LLMRequest) 
 	}
 
 	start := time.Now()
-	resp, status, err := c.send(ctx, body)
+	resp, rawResp, status, err := c.send(ctx, body)
 	latency := int(time.Since(start).Milliseconds())
 
 	if err != nil {
-		c.record(ctx, kind, meta, model, nil, nil, latency, status, err)
+		c.record(ctx, kind, meta, model, req, nil, nil, latency, status, err, rawResp, "")
 		return LLMResponse{}, err
 	}
 
+	content := resp.content()
 	out := LLMResponse{
-		Text:         resp.content(),
+		Text:         content,
 		InputTokens:  resp.Usage.PromptTokens,
 		OutputTokens: resp.Usage.CompletionTokens,
 	}
@@ -126,7 +127,7 @@ func (c *HTTPClient) Complete(ctx context.Context, kind string, req LLMRequest) 
 	if recordModel == "" {
 		recordModel = model
 	}
-	c.record(ctx, kind, meta, recordModel, &out.InputTokens, &out.OutputTokens, latency, "success", nil)
+	c.record(ctx, kind, meta, recordModel, req, &out.InputTokens, &out.OutputTokens, latency, "success", nil, rawResp, content)
 	return out, nil
 }
 
@@ -170,20 +171,21 @@ func (c *HTTPClient) ListModels(ctx context.Context) ([]ModelInfo, error) {
 
 // send POSTs the body to the gateway, retrying transient failures. On the final
 // failed attempt it returns a status string ("error" | "timeout") for logging.
-func (c *HTTPClient) send(ctx context.Context, body []byte) (chatResponse, string, error) {
+func (c *HTTPClient) send(ctx context.Context, body []byte) (chatResponse, []byte, string, error) {
 	var lastErr error
+	var lastRaw []byte
 	lastStatus := "error"
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		if attempt > 0 {
 			if err := sleep(ctx, backoff(c.baseDelay, attempt)); err != nil {
-				return chatResponse{}, "error", err
+				return chatResponse{}, lastRaw, "error", err
 			}
 		}
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 			c.baseURL+"/v1/chat/completions", bytes.NewReader(body))
 		if err != nil {
-			return chatResponse{}, "error", fmt.Errorf("llm: build request: %w", err)
+			return chatResponse{}, nil, "error", fmt.Errorf("llm: build request: %w", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
 		if c.apiKey != "" {
@@ -193,12 +195,14 @@ func (c *HTTPClient) send(ctx context.Context, body []byte) (chatResponse, strin
 		httpResp, err := c.http.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("llm: gateway request: %w", err)
+			lastRaw = nil
 			lastStatus = statusForErr(err)
 			continue // network errors are transient
 		}
 
 		raw, _ := io.ReadAll(httpResp.Body)
 		httpResp.Body.Close()
+		lastRaw = raw
 
 		if httpResp.StatusCode >= 400 {
 			lastErr = fmt.Errorf("llm: gateway returned %d: %s", httpResp.StatusCode, strings.TrimSpace(string(raw)))
@@ -206,16 +210,16 @@ func (c *HTTPClient) send(ctx context.Context, body []byte) (chatResponse, strin
 				lastStatus = "error"
 				continue
 			}
-			return chatResponse{}, "error", lastErr // permanent: do not retry
+			return chatResponse{}, raw, "error", lastErr // permanent: do not retry
 		}
 
 		var parsed chatResponse
 		if err := json.Unmarshal(raw, &parsed); err != nil {
-			return chatResponse{}, "error", fmt.Errorf("llm: decode response: %w", err)
+			return chatResponse{}, raw, "error", fmt.Errorf("llm: decode response: %w", err)
 		}
-		return parsed, "success", nil
+		return parsed, raw, "success", nil
 	}
-	return chatResponse{}, lastStatus, lastErr
+	return chatResponse{}, lastRaw, lastStatus, lastErr
 }
 
 func (c *HTTPClient) fetchModels(ctx context.Context) ([]byte, error) {
@@ -258,7 +262,7 @@ func (c *HTTPClient) fetchModels(ctx context.Context) ([]byte, error) {
 }
 
 func (c *HTTPClient) record(ctx context.Context, kind string, meta CallMeta, model string,
-	inTok, outTok *int, latency int, status string, callErr error) {
+	req LLMRequest, inTok, outTok *int, latency int, status string, callErr error, rawResp []byte, parsedOutput string) {
 	if c.recorder == nil {
 		return
 	}
@@ -271,6 +275,10 @@ func (c *HTTPClient) record(ctx context.Context, kind string, meta CallMeta, mod
 		Status:        status,
 		CalledAt:      float64(time.Now().Unix()),
 	}
+	if req.System != "" {
+		call.SystemPrompt = &req.System
+	}
+	call.UserPrompt = &req.User
 	if meta.SessionID != "" {
 		call.SessionID = &meta.SessionID
 	}
@@ -279,6 +287,16 @@ func (c *HTTPClient) record(ctx context.Context, kind string, meta CallMeta, mod
 	}
 	if status == "success" {
 		call.InputTokens, call.OutputTokens = inTok, outTok
+	}
+	if len(rawResp) > 0 {
+		raw := string(rawResp)
+		call.RawResponse = &raw
+		if status != "success" {
+			call.ErrorPayload = &raw
+		}
+	}
+	if parsedOutput != "" {
+		call.ParsedOutput = &parsedOutput
 	}
 	if callErr != nil {
 		detail := callErr.Error()

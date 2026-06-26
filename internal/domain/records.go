@@ -57,6 +57,11 @@ type LLMCall struct {
 	LatencyMs     *int    // round-trip latency including retries; nil if unmeasured
 	Status        string  // success | error | timeout
 	ErrorDetail   *string // populated when Status != success
+	SystemPrompt  *string // outbound system prompt, nil when the request had none
+	UserPrompt    *string // outbound user prompt
+	RawResponse   *string // raw gateway response body when available
+	ParsedOutput  *string // assistant content extracted from the response envelope when available
+	ErrorPayload  *string // raw error response body when available
 	CalledAt      float64 // Unix seconds
 }
 

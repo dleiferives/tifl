@@ -638,15 +638,22 @@ func TestGetSessionDebugIncludesOwnedLLMCalls(t *testing.T) {
 
 	input, output, latency := 12, 8, 345
 	detail := "model timeout"
+	systemPrompt := "system debug prompt"
+	userPrompt := "user debug prompt"
+	rawResponse := `{"choices":[{"message":{"content":"debug output"}}]}`
+	parsedOutput := "debug output"
+	errorPayload := `{"error":"timeout"}`
 	localUser := domain.LocalUserID
 	mustInsertLLMCall(t, repo, domain.LLMCall{
 		CallID: "debug-call-1", SessionID: &sess.SessionID, UserID: &localUser, Kind: "story_generator",
 		PromptVersion: "story/v1", Model: "debug-model", InputTokens: &input, OutputTokens: &output,
-		LatencyMs: &latency, Status: "success", CalledAt: 200,
+		LatencyMs: &latency, Status: "success", SystemPrompt: &systemPrompt, UserPrompt: &userPrompt,
+		RawResponse: &rawResponse, ParsedOutput: &parsedOutput, CalledAt: 200,
 	})
 	mustInsertLLMCall(t, repo, domain.LLMCall{
 		CallID: "debug-call-2", SessionID: &sess.SessionID, UserID: &localUser, Kind: "task_comprehension_mc",
-		PromptVersion: "task/v1", Model: "debug-model", Status: "error", ErrorDetail: &detail, CalledAt: 201,
+		PromptVersion: "task/v1", Model: "debug-model", Status: "error", ErrorDetail: &detail,
+		ErrorPayload: &errorPayload, CalledAt: 201,
 	})
 	mustInsertLLMCall(t, repo, domain.LLMCall{
 		CallID: "debug-other-user", SessionID: &sess.SessionID, UserID: &otherUser, Kind: "story_generator",
@@ -673,13 +680,18 @@ func TestGetSessionDebugIncludesOwnedLLMCalls(t *testing.T) {
 			} `json:"stage_summary"`
 		} `json:"session"`
 		LLMCalls []struct {
-			CallID      string  `json:"call_id"`
-			Kind        string  `json:"kind"`
-			InputTokens *int    `json:"input_tokens"`
-			LatencyMs   *int    `json:"latency_ms"`
-			Status      string  `json:"status"`
-			ErrorDetail *string `json:"error_detail"`
-			CalledAt    float64 `json:"called_at"`
+			CallID       string  `json:"call_id"`
+			Kind         string  `json:"kind"`
+			InputTokens  *int    `json:"input_tokens"`
+			LatencyMs    *int    `json:"latency_ms"`
+			Status       string  `json:"status"`
+			ErrorDetail  *string `json:"error_detail"`
+			SystemPrompt *string `json:"system_prompt"`
+			UserPrompt   *string `json:"user_prompt"`
+			RawResponse  *string `json:"raw_response"`
+			ParsedOutput *string `json:"parsed_output"`
+			ErrorPayload *string `json:"error_payload"`
+			CalledAt     float64 `json:"called_at"`
 		} `json:"llm_calls"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
@@ -699,6 +711,15 @@ func TestGetSessionDebugIncludesOwnedLLMCalls(t *testing.T) {
 	}
 	if out.LLMCalls[1].ErrorDetail == nil || *out.LLMCalls[1].ErrorDetail != detail {
 		t.Fatalf("debug llm error detail mismatch: %+v", out.LLMCalls[1])
+	}
+	if out.LLMCalls[0].SystemPrompt == nil || *out.LLMCalls[0].SystemPrompt != systemPrompt ||
+		out.LLMCalls[0].UserPrompt == nil || *out.LLMCalls[0].UserPrompt != userPrompt ||
+		out.LLMCalls[0].RawResponse == nil || *out.LLMCalls[0].RawResponse != rawResponse ||
+		out.LLMCalls[0].ParsedOutput == nil || *out.LLMCalls[0].ParsedOutput != parsedOutput {
+		t.Fatalf("debug llm payload mismatch: %+v", out.LLMCalls[0])
+	}
+	if out.LLMCalls[1].ErrorPayload == nil || *out.LLMCalls[1].ErrorPayload != errorPayload {
+		t.Fatalf("debug llm error payload mismatch: %+v", out.LLMCalls[1])
 	}
 }
 

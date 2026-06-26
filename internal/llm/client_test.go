@@ -100,6 +100,13 @@ func TestComplete_Success_ParsesAndLogs(t *testing.T) {
 	if rec.Model != "stub-model" || rec.LatencyMs == nil {
 		t.Fatalf("model/latency not logged: %+v", rec)
 	}
+	if rec.SystemPrompt == nil || *rec.SystemPrompt != "you are a teacher" ||
+		rec.UserPrompt == nil || *rec.UserPrompt != "write a story" {
+		t.Fatalf("prompts not logged: %+v", rec)
+	}
+	if rec.RawResponse == nil || rec.ParsedOutput == nil || *rec.ParsedOutput != `{"story":"χαῖρε"}` {
+		t.Fatalf("response payloads not logged: %+v", rec)
+	}
 }
 
 func TestComplete_RetriesTransientThenSucceeds(t *testing.T) {
@@ -196,6 +203,11 @@ func TestComplete_PermanentErrorNoRetry(t *testing.T) {
 	calls := repo.LLMCalls()
 	if len(calls) != 1 || calls[0].Status != "error" || calls[0].ErrorDetail == nil {
 		t.Fatalf("want 1 error row with detail, got %+v", calls)
+	}
+	if calls[0].UserPrompt == nil || *calls[0].UserPrompt != "x" ||
+		calls[0].RawResponse == nil || *calls[0].RawResponse != "bad request\n" ||
+		calls[0].ErrorPayload == nil || *calls[0].ErrorPayload != "bad request\n" {
+		t.Fatalf("error payloads not logged: %+v", calls[0])
 	}
 }
 

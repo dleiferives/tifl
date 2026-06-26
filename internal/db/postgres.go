@@ -717,17 +717,20 @@ func (r *PostgresRepository) InsertLLMCall(ctx context.Context, c domain.LLMCall
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO llm_calls(
 		   call_id, session_id, user_id, kind, prompt_version, model,
-		   input_tokens, output_tokens, latency_ms, status, error_detail, called_at)
-		 VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		   input_tokens, output_tokens, latency_ms, status, error_detail,
+		   system_prompt, user_prompt, raw_response, parsed_output, error_payload, called_at)
+		 VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
 		c.CallID, c.SessionID, c.UserID, c.Kind, c.PromptVersion, c.Model,
-		c.InputTokens, c.OutputTokens, c.LatencyMs, c.Status, c.ErrorDetail, c.CalledAt)
+		c.InputTokens, c.OutputTokens, c.LatencyMs, c.Status, c.ErrorDetail,
+		c.SystemPrompt, c.UserPrompt, c.RawResponse, c.ParsedOutput, c.ErrorPayload, c.CalledAt)
 	return err
 }
 
 func (r *PostgresRepository) ListSessionLLMCalls(ctx context.Context, userID, sessionID string) ([]domain.LLMCall, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT call_id, session_id, user_id, kind, prompt_version, model,
-		        input_tokens, output_tokens, latency_ms, status, error_detail, called_at
+		        input_tokens, output_tokens, latency_ms, status, error_detail,
+		        system_prompt, user_prompt, raw_response, parsed_output, error_payload, called_at
 		   FROM llm_calls
 		  WHERE user_id = $1 AND session_id = $2
 		  ORDER BY called_at, call_id`,
@@ -1175,7 +1178,9 @@ func scanPgLLMCall(row interface {
 	var call domain.LLMCall
 	if err := row.Scan(
 		&call.CallID, &call.SessionID, &call.UserID, &call.Kind, &call.PromptVersion, &call.Model,
-		&call.InputTokens, &call.OutputTokens, &call.LatencyMs, &call.Status, &call.ErrorDetail, &call.CalledAt,
+		&call.InputTokens, &call.OutputTokens, &call.LatencyMs, &call.Status, &call.ErrorDetail,
+		&call.SystemPrompt, &call.UserPrompt, &call.RawResponse, &call.ParsedOutput, &call.ErrorPayload,
+		&call.CalledAt,
 	); err != nil {
 		return domain.LLMCall{}, err
 	}

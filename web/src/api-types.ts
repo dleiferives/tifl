@@ -859,6 +859,16 @@ export interface components {
             /** @enum {string} */
             status: "success" | "error" | "timeout";
             error_detail?: string;
+            /** @description System prompt sent to the LLM gateway when present. */
+            system_prompt?: string;
+            /** @description User prompt sent to the LLM gateway. */
+            user_prompt?: string;
+            /** @description Raw gateway response body. On successful calls this is the provider envelope. */
+            raw_response?: string;
+            /** @description Assistant content extracted from the provider envelope when available. If no separate parsed payload exists for a call, clients should use raw_response for debugging. */
+            parsed_output?: string;
+            /** @description Raw gateway error response body when available. */
+            error_payload?: string;
             called_at: number;
         };
         SessionDebug: {

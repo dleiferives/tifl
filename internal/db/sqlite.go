@@ -691,18 +691,21 @@ func (r *SQLiteRepository) InsertLLMCall(ctx context.Context, c domain.LLMCall) 
 	_, err := r.db.ExecContext(ctx,
 		`INSERT INTO llm_calls(
 		   call_id, session_id, user_id, kind, prompt_version, model,
-		   input_tokens, output_tokens, latency_ms, status, error_detail, called_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		   input_tokens, output_tokens, latency_ms, status, error_detail,
+		   system_prompt, user_prompt, raw_response, parsed_output, error_payload, called_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.CallID, nullString(c.SessionID), nullString(c.UserID), c.Kind, c.PromptVersion, c.Model,
 		nullInt(c.InputTokens), nullInt(c.OutputTokens), nullInt(c.LatencyMs),
-		c.Status, nullString(c.ErrorDetail), c.CalledAt)
+		c.Status, nullString(c.ErrorDetail), nullString(c.SystemPrompt), nullString(c.UserPrompt),
+		nullString(c.RawResponse), nullString(c.ParsedOutput), nullString(c.ErrorPayload), c.CalledAt)
 	return err
 }
 
 func (r *SQLiteRepository) ListSessionLLMCalls(ctx context.Context, userID, sessionID string) ([]domain.LLMCall, error) {
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT call_id, session_id, user_id, kind, prompt_version, model,
-		        input_tokens, output_tokens, latency_ms, status, error_detail, called_at
+		        input_tokens, output_tokens, latency_ms, status, error_detail,
+		        system_prompt, user_prompt, raw_response, parsed_output, error_payload, called_at
 		   FROM llm_calls
 		  WHERE user_id = ? AND session_id = ?
 		  ORDER BY called_at, call_id`,
@@ -1161,11 +1164,15 @@ func scanSQLiteLLMCall(row interface {
 	var (
 		call                       domain.LLMCall
 		sessionID, userID, errText sql.NullString
+		systemPrompt, userPrompt   sql.NullString
+		rawResponse, parsedOutput  sql.NullString
+		errorPayload               sql.NullString
 		input, output, latency     sql.NullInt64
 	)
 	if err := row.Scan(
 		&call.CallID, &sessionID, &userID, &call.Kind, &call.PromptVersion, &call.Model,
-		&input, &output, &latency, &call.Status, &errText, &call.CalledAt,
+		&input, &output, &latency, &call.Status, &errText,
+		&systemPrompt, &userPrompt, &rawResponse, &parsedOutput, &errorPayload, &call.CalledAt,
 	); err != nil {
 		return domain.LLMCall{}, err
 	}
@@ -1175,6 +1182,11 @@ func scanSQLiteLLMCall(row interface {
 	call.OutputTokens = intPtrFromNull(output)
 	call.LatencyMs = intPtrFromNull(latency)
 	call.ErrorDetail = stringPtrFromNull(errText)
+	call.SystemPrompt = stringPtrFromNull(systemPrompt)
+	call.UserPrompt = stringPtrFromNull(userPrompt)
+	call.RawResponse = stringPtrFromNull(rawResponse)
+	call.ParsedOutput = stringPtrFromNull(parsedOutput)
+	call.ErrorPayload = stringPtrFromNull(errorPayload)
 	return call, nil
 }
 
