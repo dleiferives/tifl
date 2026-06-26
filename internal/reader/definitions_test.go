@@ -158,6 +158,17 @@ func TestSentenceBreakdownCaches(t *testing.T) {
 	if b.Content["translation"] != "a b" {
 		t.Fatalf("unexpected breakdown content: %+v", b.Content)
 	}
+	if b.Trace.Scope != domain.BreakdownSentence || b.Trace.Language != "xx" || b.Trace.CacheHit || b.Trace.Source != "llm" {
+		t.Fatalf("unexpected live sentence trace: %+v", b.Trace)
+	}
+	if b.Trace.CacheKey != testSentenceCacheKey("a b.") {
+		t.Fatalf("sentence cache key = %q, want hash of normalized sentence", b.Trace.CacheKey)
+	}
+	if b.Trace.Sentence == nil || b.Trace.Sentence.Span.Text != "a b." ||
+		b.Trace.Sentence.Span.StartPosition != 0 || b.Trace.Sentence.Span.EndPosition != 3 ||
+		b.Trace.Sentence.StructureHint != "miss" || b.Trace.Sentence.PhraseCacheMatchCount != 0 {
+		t.Fatalf("unexpected live sentence detail trace: %+v", b.Trace.Sentence)
+	}
 	if len(client.Calls) != 1 {
 		t.Fatalf("first breakdown should call the LLM once, got %d", len(client.Calls))
 	}
@@ -165,8 +176,13 @@ func TestSentenceBreakdownCaches(t *testing.T) {
 		t.Fatalf("breakdown prompt used wrong sentence text: %q", got)
 	}
 	// Same sentence again → served from cache, no second call.
-	if _, err := svc.SentenceBreakdown(ctx, userID, storyID, 2); err != nil {
+	cached, err := svc.SentenceBreakdown(ctx, userID, storyID, 2)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !cached.Trace.CacheHit || cached.Trace.Source != "cache" ||
+		cached.Trace.Sentence == nil || cached.Trace.Sentence.StructureHint != "not_consulted" {
+		t.Fatalf("unexpected cached sentence trace: %+v", cached.Trace)
 	}
 	if len(client.Calls) != 1 {
 		t.Fatalf("same sentence should hit the cache, got %d calls", len(client.Calls))
@@ -213,8 +229,15 @@ func TestSentenceBreakdownUsesGraphAndPhraseHintsOnMiss(t *testing.T) {
 		{StoryID: story.StoryID, Position: 1, Surface: " ", IsWord: false},
 		{StoryID: story.StoryID, Position: 2, Surface: "d.", ItemKey: "d", IsWord: true},
 	}))
-	if _, err := svc.SentenceBreakdown(ctx, userID, story.StoryID, 0); err != nil {
+	b, err := svc.SentenceBreakdown(ctx, userID, story.StoryID, 0)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if b.Trace.Sentence == nil || b.Trace.Sentence.StructureHint != "hit" ||
+		b.Trace.Sentence.StructureKey != testStructureKey("{word} {word}.") ||
+		b.Trace.Sentence.StructureTemplate != "{word} {word}." ||
+		b.Trace.Sentence.PhraseCacheMatchCount != 1 {
+		t.Fatalf("second sentence trace missing cache hint metadata: %+v", b.Trace.Sentence)
 	}
 	if len(client.Calls) != 2 {
 		t.Fatalf("different exact sentence should call LLM again, got %d calls", len(client.Calls))
@@ -233,13 +256,29 @@ func testStructureKey(template string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func testSentenceCacheKey(sentence string) string {
+	sum := sha256.Sum256([]byte(strings.Join(strings.Fields(strings.ToLower(sentence)), " ")))
+	return hex.EncodeToString(sum[:])
+}
+
 func TestWordBreakdownCaches(t *testing.T) {
 	ctx, svc, _, client, userID, storyID := defFixture(t, `{"root":"a"}`)
-	if _, err := svc.WordBreakdown(ctx, userID, storyID, "a"); err != nil {
+	b, err := svc.WordBreakdown(ctx, userID, storyID, "a")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.WordBreakdown(ctx, userID, storyID, "a"); err != nil {
+	if b.Trace.Scope != domain.BreakdownWord || b.Trace.Language != "xx" ||
+		b.Trace.CacheKey != "a" || b.Trace.CacheHit || b.Trace.Source != "llm" ||
+		b.Trace.Word == nil || b.Trace.Word.CanonicalKey != "a" {
+		t.Fatalf("unexpected live word trace: %+v", b.Trace)
+	}
+	cached, err := svc.WordBreakdown(ctx, userID, storyID, "a")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !cached.Trace.CacheHit || cached.Trace.Source != "cache" ||
+		cached.Trace.Word == nil || cached.Trace.Word.CanonicalKey != "a" {
+		t.Fatalf("unexpected cached word trace: %+v", cached.Trace)
 	}
 	if len(client.Calls) != 1 {
 		t.Fatalf("word breakdown should be cached after the first call, got %d", len(client.Calls))

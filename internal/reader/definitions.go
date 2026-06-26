@@ -43,6 +43,51 @@ type DefinitionService struct {
 	now    func() float64
 }
 
+// BreakdownResult is the backend-facing breakdown DTO. The embedded Breakdown
+// preserves existing service access to Content, while Trace records safe source
+// metadata for debug aggregation.
+type BreakdownResult struct {
+	domain.Breakdown
+	Trace BreakdownTrace `json:"trace"`
+}
+
+// BreakdownTrace describes how a reader breakdown was resolved without exposing
+// prompt text or adding provider calls.
+type BreakdownTrace struct {
+	Scope     domain.BreakdownScope `json:"scope"`
+	Language  string                `json:"language"`
+	CacheKey  string                `json:"cache_key"`
+	Source    string                `json:"source"`
+	CacheHit  bool                  `json:"cache_hit"`
+	Sentence  *SentenceTrace        `json:"sentence,omitempty"`
+	Word      *WordTrace            `json:"word,omitempty"`
+	CreatedAt float64               `json:"created_at,omitempty"`
+}
+
+// SentenceTrace records sentence-specific cache/hint metadata. StructureHint is
+// "hit", "miss", or "not_consulted" when an exact breakdown cache hit won.
+type SentenceTrace struct {
+	Span                  SentenceSpan `json:"span"`
+	StructureKey          string       `json:"structure_key,omitempty"`
+	StructureTemplate     string       `json:"structure_template,omitempty"`
+	StructureHint         string       `json:"structure_hint"`
+	PhraseCacheMatchCount int          `json:"phrase_cache_match_count"`
+}
+
+// WordTrace records word-specific breakdown metadata.
+type WordTrace struct {
+	CanonicalKey string `json:"canonical_key"`
+}
+
+const (
+	breakdownSourceCache = "cache"
+	breakdownSourceLLM   = "llm"
+
+	structureHintHit          = "hit"
+	structureHintMiss         = "miss"
+	structureHintNotConsulted = "not_consulted"
+)
+
 // NewDefinitionService builds the service. client may be nil (live LLM paths then
 // return ErrLLMUnavailable); wik may be nil (Wiktionary hop is skipped);
 // langs may be nil (canonical key plugin extraction disabled).
@@ -148,40 +193,42 @@ func (s *DefinitionService) Resolve(ctx context.Context, userID, storyID, key st
 // sentence-structure and phrase-cache rows are used as prompt context, then the
 // fresh breakdown is cached exactly and materialized as reusable syntax graph
 // data for future composition/visualization.
-func (s *DefinitionService) SentenceBreakdown(ctx context.Context, userID, storyID string, position int) (domain.Breakdown, error) {
+func (s *DefinitionService) SentenceBreakdown(ctx context.Context, userID, storyID string, position int) (BreakdownResult, error) {
 	_, language, err := s.story(ctx, userID, storyID)
 	if err != nil {
-		return domain.Breakdown{}, err
+		return BreakdownResult{}, err
 	}
 	tokens, err := s.repo.ListStoryTokens(ctx, storyID)
 	if err != nil {
-		return domain.Breakdown{}, err
+		return BreakdownResult{}, err
 	}
 	span, ok := SentenceAt(tokens, position)
 	if !ok {
-		return domain.Breakdown{}, errors.New("reader: no sentence at position")
+		return BreakdownResult{}, errors.New("reader: no sentence at position")
 	}
 	cacheKey := hashSentence(span.Text)
 	if b, err := s.repo.GetBreakdown(ctx, domain.BreakdownSentence, language, cacheKey); err == nil {
-		return b, nil
+		return BreakdownResult{Breakdown: b, Trace: sentenceBreakdownTrace(language, cacheKey, breakdownSourceCache, true, span, "", "", structureHintNotConsulted, 0, b.CreatedAt)}, nil
 	} else if !errors.Is(err, db.ErrNotFound) {
-		return domain.Breakdown{}, err
+		return BreakdownResult{}, err
 	}
 	if s.client == nil {
-		return domain.Breakdown{}, ErrLLMUnavailable
+		return BreakdownResult{}, ErrLLMUnavailable
 	}
 
 	spanTokens := tokensForSpan(tokens, span)
 	structureKey, template := sentenceStructureKey(spanTokens)
 	var structureHint *domain.SentenceStructure
+	structureHintStatus := structureHintMiss
 	if st, err := s.repo.GetSentenceStructure(ctx, language, structureKey); err == nil {
 		structureHint = &st
+		structureHintStatus = structureHintHit
 	} else if !errors.Is(err, db.ErrNotFound) {
-		return domain.Breakdown{}, err
+		return BreakdownResult{}, err
 	}
 	phrases, err := s.matchPhrases(ctx, language, spanTokens)
 	if err != nil {
-		return domain.Breakdown{}, err
+		return BreakdownResult{}, err
 	}
 	wordContext := s.wordContextForTokens(ctx, language, spanTokens)
 
@@ -189,34 +236,34 @@ func (s *DefinitionService) SentenceBreakdown(ctx context.Context, userID, story
 		llm.SentenceBreakdownBuilder{Sentence: span.Text, StructureHint: structureHint, Phrases: phrases, Words: wordContext},
 		domain.LearnerCtx{Language: language}, validateSentenceBreakdown)
 	if err != nil {
-		return domain.Breakdown{}, err
+		return BreakdownResult{}, err
 	}
 	b := domain.Breakdown{Scope: domain.BreakdownSentence, Language: language, CacheKey: cacheKey, Content: content, CreatedAt: s.now()}
 	_ = s.repo.UpsertBreakdown(ctx, b)
 	_ = s.persistSentenceAnalysis(ctx, language, cacheKey, structureKey, template, spanTokens, content)
-	return b, nil
+	return BreakdownResult{Breakdown: b, Trace: sentenceBreakdownTrace(language, cacheKey, breakdownSourceLLM, false, span, structureKey, template, structureHintStatus, len(phrases), b.CreatedAt)}, nil
 }
 
 // WordBreakdown returns the deep breakdown of a word, from the cache or a fresh
 // LLM call (then cached globally by the canonical key).
-func (s *DefinitionService) WordBreakdown(ctx context.Context, userID, storyID, key string) (domain.Breakdown, error) {
+func (s *DefinitionService) WordBreakdown(ctx context.Context, userID, storyID, key string) (BreakdownResult, error) {
 	_, language, err := s.story(ctx, userID, storyID)
 	if err != nil {
-		return domain.Breakdown{}, err
+		return BreakdownResult{}, err
 	}
 	return s.cachedBreakdown(ctx, domain.BreakdownWord, language, key,
 		llm.WordBreakdownBuilder{Key: key})
 }
 
 // cachedBreakdown returns a cached breakdown or computes, stores, and returns one.
-func (s *DefinitionService) cachedBreakdown(ctx context.Context, scope domain.BreakdownScope, language, cacheKey string, builder llm.PromptBuilder) (domain.Breakdown, error) {
+func (s *DefinitionService) cachedBreakdown(ctx context.Context, scope domain.BreakdownScope, language, cacheKey string, builder llm.PromptBuilder) (BreakdownResult, error) {
 	if b, err := s.repo.GetBreakdown(ctx, scope, language, cacheKey); err == nil {
-		return b, nil
+		return BreakdownResult{Breakdown: b, Trace: breakdownTrace(scope, language, cacheKey, breakdownSourceCache, true, b.CreatedAt)}, nil
 	} else if !errors.Is(err, db.ErrNotFound) {
-		return domain.Breakdown{}, err
+		return BreakdownResult{}, err
 	}
 	if s.client == nil {
-		return domain.Breakdown{}, ErrLLMUnavailable
+		return BreakdownResult{}, ErrLLMUnavailable
 	}
 	content, err := llm.CompleteJSON(ctx, s.client, builder, domain.LearnerCtx{Language: language},
 		func(m map[string]any) error {
@@ -226,11 +273,34 @@ func (s *DefinitionService) cachedBreakdown(ctx context.Context, scope domain.Br
 			return nil
 		})
 	if err != nil {
-		return domain.Breakdown{}, err
+		return BreakdownResult{}, err
 	}
 	b := domain.Breakdown{Scope: scope, Language: language, CacheKey: cacheKey, Content: content, CreatedAt: s.now()}
 	_ = s.repo.UpsertBreakdown(ctx, b)
-	return b, nil
+	return BreakdownResult{Breakdown: b, Trace: breakdownTrace(scope, language, cacheKey, breakdownSourceLLM, false, b.CreatedAt)}, nil
+}
+
+func sentenceBreakdownTrace(language, cacheKey, source string, cacheHit bool, span SentenceSpan, structureKey, template, structureHint string, phraseMatches int, createdAt float64) BreakdownTrace {
+	trace := breakdownTrace(domain.BreakdownSentence, language, cacheKey, source, cacheHit, createdAt)
+	trace.Sentence = &SentenceTrace{
+		Span:                  span,
+		StructureKey:          structureKey,
+		StructureTemplate:     template,
+		StructureHint:         structureHint,
+		PhraseCacheMatchCount: phraseMatches,
+	}
+	return trace
+}
+
+func breakdownTrace(scope domain.BreakdownScope, language, cacheKey, source string, cacheHit bool, createdAt float64) BreakdownTrace {
+	trace := BreakdownTrace{
+		Scope: scope, Language: language, CacheKey: cacheKey, Source: source,
+		CacheHit: cacheHit, CreatedAt: createdAt,
+	}
+	if scope == domain.BreakdownWord {
+		trace.Word = &WordTrace{CanonicalKey: cacheKey}
+	}
+	return trace
 }
 
 // wordContextForTokens looks up the best available definition for each unique
