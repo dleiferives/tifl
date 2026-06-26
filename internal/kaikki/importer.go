@@ -423,6 +423,12 @@ func mergeDefinitions(a, b domain.Definition) domain.Definition {
 	}
 	a.Related = mergeText(a.Related, b.Related, "; ", 8)
 	a.Derived = mergeText(a.Derived, b.Derived, "; ", 8)
+	// A lemma entry (empty canonical key) beats a form-alias entry: if b is the
+	// authoritative headword for this key, clear any alias canonical key that was
+	// inserted earlier by a different entry's form list.
+	if b.CanonicalKey == "" {
+		a.CanonicalKey = ""
+	}
 	return a
 }
 
