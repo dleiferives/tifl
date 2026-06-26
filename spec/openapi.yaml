@@ -947,9 +947,11 @@ paths:
         skills. Rule-graded types (comprehension_mc, fill_blank) grade in-process
         with no model call; LLM-graded types (production) route through the gateway
         and return 503 when no gateway is configured. input_method is a property
-        of the response — only "typed" is supported today (scan/audio later). A
-        task that already carries a grade is rejected with 409; re-submission to
-        improve a grade is future work.
+        of the response — only "typed" is supported today (scan/audio later).
+        Re-submission is allowed. The response includes attempt_count; the
+        learning signal and skill XP use best-grade-wins semantics, so a later
+        improved grade can update progress while repeat already-correct
+        submissions do not double-count.
       operationId: submitTask
       parameters:
         - name: id
@@ -975,8 +977,6 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
         "502":
           $ref: "#/components/responses/BadGateway"
         "503":

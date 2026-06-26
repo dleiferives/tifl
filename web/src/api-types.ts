@@ -633,7 +633,7 @@ export interface paths {
         put?: never;
         /**
          * Submit a response, grade it, update the learning signal
-         * @description Grades the submitted response, persists it, and folds the outcome into user_knowledge (task_total for every targeted item, task_correct for the demonstrated ones), then applies skill XP changes for associated target skills. Rule-graded types (comprehension_mc, fill_blank) grade in-process with no model call; LLM-graded types (production) route through the gateway and return 503 when no gateway is configured. input_method is a property of the response — only "typed" is supported today (scan/audio later). A task that already carries a grade is rejected with 409; re-submission to improve a grade is future work.
+         * @description Grades the submitted response, persists it, and folds the outcome into user_knowledge (task_total for every targeted item, task_correct for the demonstrated ones), then applies skill XP changes for associated target skills. Rule-graded types (comprehension_mc, fill_blank) grade in-process with no model call; LLM-graded types (production) route through the gateway and return 503 when no gateway is configured. input_method is a property of the response — only "typed" is supported today (scan/audio later). Re-submission is allowed. The response includes attempt_count; the learning signal and skill XP use best-grade-wins semantics, so a later improved grade can update progress while repeat already-correct submissions do not double-count.
          */
         post: operations["submitTask"];
         delete?: never;
@@ -2146,7 +2146,6 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
             500: components["responses"]["InternalError"];
             502: components["responses"]["BadGateway"];
             503: components["responses"]["ServiceUnavailable"];

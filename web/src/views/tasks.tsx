@@ -1,10 +1,10 @@
 import { createMemo, createSignal, For, Match, onMount, Show, Switch, type Accessor, type JSX } from "solid-js";
 import { createStore, type SetStoreFunction } from "solid-js/store";
-import { APIError, getSessionTasks, getTask, submitTask, type APIRequest, type APISchema } from "../api";
+import { APIError, getSessionTasks, submitTask, type APIRequest, type APISchema } from "../api";
 import { routeHref } from "../router";
 import { appStore } from "../store";
 
-type Task = APISchema<"Task">;
+type Task = APISchema<"Task"> & { attempt_count?: number };
 type Grade = APISchema<"Grade">;
 type SkillXPDelta = APISchema<"SkillXPDelta">;
 type SubmitRequest = APIRequest<"submitTask">;
@@ -139,27 +139,16 @@ export function TasksView(props: { sessionId: string }) {
     }
   }
 
-  // Submit a card's response, persist the resulting grade into the store, and
-  // announce it. Re-submitting an already-graded task is a 409 (resubmission to
-  // improve a grade is future work — #51); we then fetch the authoritative grade
-  // so the card still settles into its graded state. Any other failure is thrown
-  // back to the card, which keeps the task submittable and shows a message.
+  // Submit a card's response, persist the resulting grade and attempt count into
+  // the store, and announce it. The backend accepts re-submissions and applies
+  // best-grade-wins semantics to learning signals.
   async function submit(index: number, request: SubmitRequest): Promise<void> {
     const task = tasks[index];
-    try {
-      const result = await submitTask(task.task_id, request);
-      setTasks(index, "grade", result.grade);
-      setTasks(index, "graded", true);
-      announceGrade(result.grade, result.skill_xp);
-    } catch (error) {
-      if (error instanceof APIError && error.status === 409) {
-        const fresh = await getTask(task.task_id);
-        setTasks(index, "grade", fresh.grade);
-        setTasks(index, "graded", true);
-        return;
-      }
-      throw error;
-    }
+    const result = await submitTask(task.task_id, request);
+    setTasks(index, "grade", result.grade);
+    setTasks(index, "graded", true);
+    setTasks(index, "attempt_count", result.attempt_count);
+    announceGrade(result.grade, result.skill_xp);
   }
 
   return (
@@ -200,7 +189,7 @@ export function TasksView(props: { sessionId: string }) {
             <div class="task-progress-bar" style={{ width: `${(completed() / total()) * 100}%` }} />
           </div>
           <Show when={allDone()}>
-            <p class="tasks-complete" role="status">All tasks complete for this session.</p>
+            <p class="tasks-complete" role="status">All tasks have a current grade for this session.</p>
           </Show>
           <ol class="task-list">
             <For each={tasks}>
@@ -263,11 +252,14 @@ function TaskCard(props: { task: Task; position: number; onSubmit: (request: Sub
         }
       >
         {(current) => (
-          <Show
-            when={!props.task.graded}
-            fallback={<GradeView grade={props.task.grade} />}
-          >
+          <>
+            <Show when={props.task.graded}>
+              <GradeView grade={props.task.grade} attemptCount={props.task.attempt_count} />
+            </Show>
             <form class="task-form" onSubmit={handleSubmit}>
+              <Show when={props.task.graded}>
+                <p class="task-resubmit-note">Try again to replace this task's current grade if you improve.</p>
+              </Show>
               {current().body({
                 content: props.task.content,
                 response,
@@ -286,25 +278,35 @@ function TaskCard(props: { task: Task; position: number; onSubmit: (request: Sub
 
               <div class="task-actions">
                 <button class="primary-button" type="submit" disabled={!canSubmit() || submitting()}>
-                  {submitting() ? "Submitting..." : "Submit"}
+                  {submitting() ? "Submitting..." : props.task.graded ? "Try again" : "Submit"}
                 </button>
               </div>
             </form>
-          </Show>
+          </>
         )}
       </Show>
     </article>
   );
 }
 
-function GradeView(props: { grade?: Grade }) {
+function GradeView(props: { grade?: Grade; attemptCount?: number }) {
   return (
     <Show when={props.grade}>
       {(grade) => (
         <div class="task-grade" data-correct={grade().correct ? "" : undefined}>
           <div class="task-grade-head">
-            <span class="task-grade-status">{grade().correct ? "Correct" : "Not quite"}</span>
-            <span class="task-grade-by">{grade().graded_by === "llm" ? "AI-graded" : "Auto-graded"}</span>
+            <div>
+              <span class="task-grade-label">Current grade</span>
+              <span class="task-grade-status">{grade().correct ? "Correct" : "Not quite"}</span>
+            </div>
+            <div class="task-grade-meta">
+              <Show when={props.attemptCount}>
+                {(attemptCount) => (
+                  <span>{attemptCount()} attempt{attemptCount() === 1 ? "" : "s"}</span>
+                )}
+              </Show>
+              <span>{grade().graded_by === "llm" ? "AI-graded" : "Auto-graded"}</span>
+            </div>
           </div>
           <Show when={grade().feedback}>
             <p class="task-grade-feedback">{grade().feedback}</p>
