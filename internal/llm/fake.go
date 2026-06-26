@@ -2,6 +2,14 @@ package llm
 
 import "context"
 
+// Minimal valid JSON bodies for common builder kinds, exported so test helpers
+// in different packages can share them and stay in sync when response shapes change.
+const (
+	FakeStoryJSON   = `{"story":"a a a","estimated_coverage":0.9,"glossary":[]}`
+	FakeScopeOKJSON = `{"viable":true,"reason":"ok","suggested_topic":""}`
+	FakeTaskJSON    = `{"question":"q","options":["x","y"],"correct_index":1,"sentence":"the ___ ran","acceptable_forms":["x"]}`
+)
+
 // FakeClient is a deterministic Client for unit tests anywhere in the tree: no
 // network, no gateway, no credentials. Set Response (and optionally Err) for a
 // fixed reply, or set Func for per-call control. Every call is recorded in Calls

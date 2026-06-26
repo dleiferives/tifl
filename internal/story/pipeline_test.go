@@ -79,13 +79,15 @@ func (c *clientControl) client() *llm.FakeClient {
 			return llm.LLMResponse{}, errors.New("forced failure: " + kind)
 		}
 		if kind == "scope_check" {
-			viable := !c.scopeReject
+			if !c.scopeReject {
+				return llm.LLMResponse{Text: llm.FakeScopeOKJSON}, nil
+			}
 			reason := c.scopeReason
-			if reason == "" && !viable {
+			if reason == "" {
 				reason = "topic requires vocabulary beyond this level"
 			}
 			body, _ := json.Marshal(map[string]any{
-				"viable": viable, "reason": reason, "suggested_topic": "a simpler version",
+				"viable": false, "reason": reason, "suggested_topic": "a simpler version",
 			})
 			return llm.LLMResponse{Text: string(body)}, nil
 		}
@@ -107,11 +109,7 @@ func (c *clientControl) client() *llm.FakeClient {
 			})
 			return llm.LLMResponse{Text: string(body), OutputTokens: 50}, nil
 		}
-		body, _ := json.Marshal(map[string]any{
-			"question": "q?", "options": []string{"x", "y"}, "correct_index": 1,
-			"sentence": "the ___ ran", "acceptable_forms": []string{"x"},
-		})
-		return llm.LLMResponse{Text: string(body), OutputTokens: 20}, nil
+		return llm.LLMResponse{Text: llm.FakeTaskJSON, OutputTokens: 20}, nil
 	}}
 }
 

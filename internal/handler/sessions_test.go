@@ -114,9 +114,9 @@ func newServer(t *testing.T, withBroker bool) (*httptest.Server, *db.FakeReposit
 		client = &llm.FakeClient{Func: func(_ context.Context, kind string, _ llm.LLMRequest) (llm.LLMResponse, error) {
 			switch kind {
 			case "scope_check":
-				return llm.LLMResponse{Text: `{"viable":true,"reason":"ok","suggested_topic":""}`}, nil
+				return llm.LLMResponse{Text: llm.FakeScopeOKJSON}, nil
 			case "story_generator":
-				return llm.LLMResponse{Text: `{"story":"a a a","estimated_coverage":0.9,"glossary":[]}`}, nil
+				return llm.LLMResponse{Text: llm.FakeStoryJSON}, nil
 			case "definition":
 				return llm.LLMResponse{Text: `{"gloss":"the letter a","grammatical_note":"","example":"","etymology":""}`}, nil
 			case "sentence_breakdown":
@@ -169,7 +169,7 @@ func newLevelRuleServer(t *testing.T) (*httptest.Server, *db.FakeRepository) {
 	client := &llm.FakeClient{Func: func(_ context.Context, kind string, _ llm.LLMRequest) (llm.LLMResponse, error) {
 		switch kind {
 		case "story_generator":
-			return llm.LLMResponse{Text: `{"story":"a a a","estimated_coverage":0.9,"glossary":[]}`}, nil
+			return llm.LLMResponse{Text: llm.FakeStoryJSON}, nil
 		}
 		return llm.LLMResponse{Text: `{"question":"q","options":["x","y"],"correct_index":1}`}, nil
 	}}
