@@ -42,3 +42,31 @@ jobs:
       - run: npm install
       - run: npm run typecheck
       - run: npm run build
+
+  postgres:
+    name: Postgres repository tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: tifl
+          POSTGRES_PASSWORD: tifl
+          POSTGRES_DB: tifl_test
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U tifl -d tifl_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TIFL_TEST_DATABASE_URL: postgres://tifl:tifl@localhost:${{ job.services.postgres.ports[5432] }}/tifl_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - name: test postgres repository
+        run: go test ./internal/db
