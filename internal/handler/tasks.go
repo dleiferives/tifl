@@ -53,9 +53,10 @@ type submitRequest struct {
 }
 
 type submitResponse struct {
-	TaskID  string       `json:"task_id"`
-	Grade   gradeDTO     `json:"grade"`
-	SkillXP []skillXPDTO `json:"skill_xp"`
+	TaskID       string       `json:"task_id"`
+	Grade        gradeDTO     `json:"grade"`
+	SkillXP      []skillXPDTO `json:"skill_xp"`
+	AttemptCount int          `json:"attempt_count"`
 }
 
 type skillXPDTO struct {
@@ -119,9 +120,8 @@ func (h *Handler) getTask(w http.ResponseWriter, r *http.Request) {
 // submitTask grades a response, persists it, and folds the outcome into the
 // acquisition signals. Rule-graded types (MC, fill_blank) grade in-process with
 // no model call; LLM-graded types (production) route through the gateway client
-// and return 503 when no client is configured. A task that already carries a
-// grade is rejected with 409 — re-submission to improve a grade is future work
-// (see the follow-up issue).
+// and return 503 when no client is configured. Re-submission is allowed: signals
+// are only updated when the new grade improves on the previous one (best-grade-wins).
 func (h *Handler) submitTask(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	userID := h.currentUserID(r)
@@ -151,9 +151,14 @@ func (h *Handler) submitTask(w http.ResponseWriter, r *http.Request) {
 		h.writeTaskLookupError(w, err)
 		return
 	}
-	if task.GradedAt != nil || task.GradedBy != "" {
-		writeError(w, http.StatusConflict, errors.New("task already submitted"))
-		return
+	isResubmission := task.GradedAt != nil || task.GradedBy != ""
+	// For best-grade-wins: record whether the previous grade was correct before
+	// we overwrite it. A nil grade (first submission) counts as incorrect.
+	prevCorrect := false
+	if isResubmission {
+		if c, ok := task.Grade["correct"].(bool); ok {
+			prevCorrect = c
+		}
 	}
 
 	tt, ok := h.taskTypes.Get(task.TaskType)
@@ -208,28 +213,41 @@ func (h *Handler) submitTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fold the grade into user_knowledge: every targeted item gets task_total++,
-	// and task_correct++ only for target items the response demonstrated.
-	targetIDs := tt.Targets(task.Content)
-	signal := tasks.LearningSignalFromGrade(grade, targetIDs)
-	if err := h.acquire.ApplyTaskSignal(r.Context(), userID, signal); err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Errorf("recording learning signal: %w", err))
-		return
-	}
-
-	var skillChanges []skills.XPChange
-	if h.skillXP != nil {
-		skillChanges, err = h.skillXP.ApplyTaskSignal(r.Context(), userID, task, signal, now)
+	// Determine the attempt count: first submission stays at 1, re-submissions increment.
+	attemptCount := task.AttemptCount
+	if isResubmission {
+		attemptCount, err = h.repo.IncrementTaskAttempt(r.Context(), id)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, fmt.Errorf("recording skill XP: %w", err))
+			writeError(w, http.StatusInternalServerError, fmt.Errorf("recording attempt: %w", err))
 			return
 		}
 	}
 
+	// Best-grade-wins: only update acquisition and skill XP signals when the new
+	// grade is better than the previous one (incorrect → correct). Re-attempting
+	// an already-correct task produces no additional signal (prevents farming).
+	var skillChanges []skills.XPChange
+	if !isResubmission || (!prevCorrect && grade.Correct) {
+		targetIDs := tt.Targets(task.Content)
+		signal := tasks.LearningSignalFromGrade(grade, targetIDs)
+		if err := h.acquire.ApplyTaskSignal(r.Context(), userID, signal); err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Errorf("recording learning signal: %w", err))
+			return
+		}
+		if h.skillXP != nil {
+			skillChanges, err = h.skillXP.ApplyTaskSignal(r.Context(), userID, task, signal, now)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, fmt.Errorf("recording skill XP: %w", err))
+				return
+			}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, submitResponse{
-		TaskID:  id,
-		Grade:   gradeDTO{grade.Correct, grade.Score, grade.Feedback, grade.ItemsDemonstrated, string(gradedBy)},
-		SkillXP: skillXPDTOs(skillChanges),
+		TaskID:       id,
+		Grade:        gradeDTO{grade.Correct, grade.Score, grade.Feedback, grade.ItemsDemonstrated, string(gradedBy)},
+		SkillXP:      skillXPDTOs(skillChanges),
+		AttemptCount: attemptCount,
 	})
 
 	// Off the critical path: resolve any pending tier verifications that this grade

@@ -346,12 +346,23 @@ export function ReaderView(props: { storyId: string }) {
     }
     switch (event.key) {
       case "ArrowRight":
+      case "l":
         event.preventDefault();
         moveCursor(1);
         break;
       case "ArrowLeft":
+      case "h":
         event.preventDefault();
         moveCursor(-1);
+        break;
+      // TODO: expose hjkl keybindings as a user preference in settings
+      case "j":
+        event.preventDefault();
+        window.scrollBy({ top: 120, behavior: "smooth" });
+        break;
+      case "k":
+        event.preventDefault();
+        window.scrollBy({ top: -120, behavior: "smooth" });
         break;
       case " ":
       case "Spacebar":
@@ -393,7 +404,7 @@ export function ReaderView(props: { storyId: string }) {
       <header class="reader-toolbar">
         <h1>Reader</h1>
         <p class="reader-hints" aria-label="Keyboard shortcuts">
-          <span><kbd>←</kbd> <kbd>→</kbd> move</span>
+          <span><kbd>←</kbd><kbd>→</kbd> / <kbd>h</kbd><kbd>l</kbd> move · <kbd>j</kbd><kbd>k</kbd> scroll</span>
           <span><kbd>Space</kbd> define</span>
           <span><kbd>1</kbd>–<kbd>5</kbd> rate</span>
           <span><kbd>w</kbd> known</span>

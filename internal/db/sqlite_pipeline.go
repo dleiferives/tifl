@@ -462,11 +462,11 @@ func (r *SQLiteRepository) CreateTask(ctx context.Context, t domain.Task, target
 	err = r.inTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO tasks(task_id, session_id, user_id, task_type, language, content,
-			   response, input_method, media_path, grade, graded_by, graded_at, created_at)
-			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			   response, input_method, media_path, grade, graded_by, graded_at, attempt_count, created_at)
+			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			t.TaskID, t.SessionID, t.UserID, t.TaskType, t.Language, content,
 			response, nullEmpty(t.InputMethod), nullEmpty(t.MediaPath), grade,
-			nullEmpty(t.GradedBy), nullFloat(t.GradedAt), t.CreatedAt); err != nil {
+			nullEmpty(t.GradedBy), nullFloat(t.GradedAt), 1, t.CreatedAt); err != nil {
 			return err
 		}
 		for _, itemID := range targets {
@@ -487,7 +487,7 @@ func (r *SQLiteRepository) CreateTask(ctx context.Context, t domain.Task, target
 func (r *SQLiteRepository) GetTask(ctx context.Context, userID, taskID string) (domain.Task, error) {
 	row := r.db.QueryRowContext(ctx,
 		`SELECT task_id, session_id, user_id, task_type, language, content, response,
-		        input_method, media_path, grade, graded_by, graded_at, created_at
+		        input_method, media_path, grade, graded_by, graded_at, attempt_count, created_at
 		 FROM tasks WHERE task_id = ? AND user_id = ?`, taskID, userID)
 	t, err := scanTask(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -522,10 +522,21 @@ func (r *SQLiteRepository) RecordTaskGrade(ctx context.Context, userID, taskID s
 	return nil
 }
 
+func (r *SQLiteRepository) IncrementTaskAttempt(ctx context.Context, taskID string) (int, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx,
+		`UPDATE tasks SET attempt_count = attempt_count + 1 WHERE task_id = ? RETURNING attempt_count`,
+		taskID).Scan(&count)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return count, err
+}
+
 func (r *SQLiteRepository) ListSessionTasks(ctx context.Context, sessionID string) ([]domain.Task, error) {
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT task_id, session_id, user_id, task_type, language, content, response,
-		        input_method, media_path, grade, graded_by, graded_at, created_at
+		        input_method, media_path, grade, graded_by, graded_at, attempt_count, created_at
 		 FROM tasks WHERE session_id = ? ORDER BY created_at, task_id`, sessionID)
 	if err != nil {
 		return nil, err
@@ -614,7 +625,7 @@ func scanTask(row rowScanner) (domain.Task, error) {
 		gradedAt                         sql.NullFloat64
 	)
 	if err := row.Scan(&t.TaskID, &t.SessionID, &t.UserID, &t.TaskType, &t.Language,
-		&content, &response, &inputMethod, &mediaPath, &grade, &gradedBy, &gradedAt, &t.CreatedAt); err != nil {
+		&content, &response, &inputMethod, &mediaPath, &grade, &gradedBy, &gradedAt, &t.AttemptCount, &t.CreatedAt); err != nil {
 		return domain.Task{}, err
 	}
 	var err error

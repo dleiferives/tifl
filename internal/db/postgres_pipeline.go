@@ -467,11 +467,11 @@ func (r *PostgresRepository) CreateTask(ctx context.Context, t domain.Task, targ
 	err = r.inTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO tasks(task_id, session_id, user_id, task_type, language, content,
-			   response, input_method, media_path, grade, graded_by, graded_at, created_at)
-			 VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+			   response, input_method, media_path, grade, graded_by, graded_at, attempt_count, created_at)
+			 VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 			t.TaskID, t.SessionID, t.UserID, t.TaskType, t.Language, content,
 			response, pgText(t.InputMethod), pgText(t.MediaPath), grade,
-			pgText(t.GradedBy), t.GradedAt, t.CreatedAt); err != nil {
+			pgText(t.GradedBy), t.GradedAt, 1, t.CreatedAt); err != nil {
 			return err
 		}
 		for _, itemID := range targets {
@@ -493,7 +493,7 @@ func (r *PostgresRepository) CreateTask(ctx context.Context, t domain.Task, targ
 func (r *PostgresRepository) GetTask(ctx context.Context, userID, taskID string) (domain.Task, error) {
 	row := r.pool.QueryRow(ctx,
 		`SELECT task_id, session_id, user_id, task_type, language, content, response,
-		        input_method, media_path, grade, graded_by, graded_at, created_at
+		        input_method, media_path, grade, graded_by, graded_at, attempt_count, created_at
 		 FROM tasks WHERE task_id = $1 AND user_id = $2`, taskID, userID)
 	t, err := scanPgTask(row)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -524,10 +524,21 @@ func (r *PostgresRepository) RecordTaskGrade(ctx context.Context, userID, taskID
 	return nil
 }
 
+func (r *PostgresRepository) IncrementTaskAttempt(ctx context.Context, taskID string) (int, error) {
+	var count int
+	err := r.pool.QueryRow(ctx,
+		`UPDATE tasks SET attempt_count = attempt_count + 1 WHERE task_id = $1 RETURNING attempt_count`,
+		taskID).Scan(&count)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return count, err
+}
+
 func (r *PostgresRepository) ListSessionTasks(ctx context.Context, sessionID string) ([]domain.Task, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT task_id, session_id, user_id, task_type, language, content, response,
-		        input_method, media_path, grade, graded_by, graded_at, created_at
+		        input_method, media_path, grade, graded_by, graded_at, attempt_count, created_at
 		 FROM tasks WHERE session_id = $1 ORDER BY created_at, task_id`, sessionID)
 	if err != nil {
 		return nil, err
@@ -607,7 +618,7 @@ func scanPgTask(row pgx.Row) (domain.Task, error) {
 		inputMethod, mediaPath, gradedBy *string
 	)
 	if err := row.Scan(&t.TaskID, &t.SessionID, &t.UserID, &t.TaskType, &t.Language,
-		&content, &response, &inputMethod, &mediaPath, &grade, &gradedBy, &t.GradedAt, &t.CreatedAt); err != nil {
+		&content, &response, &inputMethod, &mediaPath, &grade, &gradedBy, &t.GradedAt, &t.AttemptCount, &t.CreatedAt); err != nil {
 		return domain.Task{}, err
 	}
 	var err error

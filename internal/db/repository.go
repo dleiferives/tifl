@@ -165,6 +165,10 @@ type Repository interface {
 	// POST /tasks/{id}/submit and returns ErrNotFound when no such task exists.
 	GetTask(ctx context.Context, userID, taskID string) (domain.Task, error)
 	RecordTaskGrade(ctx context.Context, userID, taskID string, g domain.TaskGrade) error
+	// IncrementTaskAttempt atomically increments attempt_count for the task and
+	// returns the new count. Used on re-submission to track how many times a
+	// learner has attempted the same task.
+	IncrementTaskAttempt(ctx context.Context, taskID string) (int, error)
 
 	// Skills — storage foundation for the competency/XP system. Skill definitions
 	// are language-provided data, but the repository owns idempotent persistence,

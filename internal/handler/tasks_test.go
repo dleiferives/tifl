@@ -94,11 +94,28 @@ func TestSubmitRuleGradedMC(t *testing.T) {
 		t.Fatalf("signal not applied: total=%d correct=%d", uk.TaskTotal, uk.TaskCorrect)
 	}
 
-	// Re-submitting an already-graded task is rejected.
+	// Re-submitting an already-correct task succeeds but does NOT double-count signals.
 	resp2 := submit(t, srv, taskID, `{"response":{"selected_index":1}}`)
 	defer resp2.Body.Close()
-	if resp2.StatusCode != http.StatusConflict {
-		t.Fatalf("re-submit status = %d, want 409", resp2.StatusCode)
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("re-submit status = %d, want 200", resp2.StatusCode)
+	}
+	var out2 struct {
+		AttemptCount int `json:"attempt_count"`
+	}
+	if err := json.NewDecoder(resp2.Body).Decode(&out2); err != nil {
+		t.Fatal(err)
+	}
+	if out2.AttemptCount != 2 {
+		t.Fatalf("re-submit attempt_count = %d, want 2", out2.AttemptCount)
+	}
+	// Signal must NOT be double-counted: still total=1 correct=1.
+	uk2, err := repo.GetUserKnowledgeItem(context.Background(), domain.LocalUserID, "it1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uk2.TaskTotal != 1 || uk2.TaskCorrect != 1 {
+		t.Fatalf("signal double-counted on re-submit: total=%d correct=%d", uk2.TaskTotal, uk2.TaskCorrect)
 	}
 }
 

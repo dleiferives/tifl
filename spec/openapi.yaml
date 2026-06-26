@@ -1527,7 +1527,11 @@ components:
           description: Skill XP deltas persisted for this accepted grade.
           items:
             $ref: "#/components/schemas/SkillXPDelta"
-      required: [task_id, grade, skill_xp]
+        attempt_count:
+          type: integer
+          minimum: 1
+          description: How many times this task has been submitted (1 = first submission).
+      required: [task_id, grade, skill_xp, attempt_count]
     SkillXPDelta:
       type: object
       properties:

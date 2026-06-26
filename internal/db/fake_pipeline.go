@@ -354,6 +354,9 @@ func (r *FakeRepository) CreateTask(_ context.Context, t domain.Task, targets []
 	if t.CreatedAt == 0 {
 		t.CreatedAt = float64(time.Now().Unix())
 	}
+	if t.AttemptCount == 0 {
+		t.AttemptCount = 1
+	}
 	r.tasks[t.TaskID] = cloneTask(t)
 	// task_targets de-duplicates on (task_id, item_id).
 	seen := make(map[string]bool, len(targets))
@@ -393,6 +396,18 @@ func (r *FakeRepository) RecordTaskGrade(_ context.Context, userID, taskID strin
 	t.GradedAt = &gradedAt
 	r.tasks[taskID] = cloneTask(t)
 	return nil
+}
+
+func (r *FakeRepository) IncrementTaskAttempt(_ context.Context, taskID string) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t, ok := r.tasks[taskID]
+	if !ok {
+		return 0, ErrNotFound
+	}
+	t.AttemptCount++
+	r.tasks[taskID] = cloneTask(t)
+	return t.AttemptCount, nil
 }
 
 func (r *FakeRepository) ListSessionTasks(_ context.Context, sessionID string) ([]domain.Task, error) {
