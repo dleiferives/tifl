@@ -4,6 +4,7 @@ go 1.26
 
 require (
 	github.com/jackc/pgx/v5 v5.10.0
+	golang.org/x/net v0.56.0
 	golang.org/x/text v0.38.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.52.0

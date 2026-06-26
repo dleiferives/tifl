@@ -6,8 +6,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"net/mail"
-	"strings"
 	"time"
 
 	"github.com/dleiferives/tifl/internal/db"
@@ -183,18 +181,6 @@ func (s *Service) newSession(ctx context.Context, user domain.User) (Session, er
 		RefreshExpiresAt: now.Add(RefreshLifetime).UTC(),
 		ExpiresIn:        int(AccessLifetime.Seconds()),
 	}, nil
-}
-
-func normalizeEmail(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || len(raw) > 254 {
-		return "", ErrInvalidEmail
-	}
-	addr, err := mail.ParseAddress(raw)
-	if err != nil || addr.Address != raw || strings.Count(raw, "@") != 1 {
-		return "", ErrInvalidEmail
-	}
-	return strings.ToLower(raw), nil
 }
 
 func randomToken() (string, error) {
