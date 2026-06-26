@@ -6,6 +6,7 @@ import { appStore } from "./store";
 import { DebugView } from "./views/debug";
 import { GenerationView } from "./views/generation";
 import { HomeView } from "./views/home";
+import { ImportView } from "./views/import";
 import { LoginView } from "./views/login";
 import { PhrasesView } from "./views/phrases";
 import { ReaderView } from "./views/reader";
@@ -34,6 +35,7 @@ function App() {
             <Match when={route().name === "home"}><HomeView /></Match>
             <Match when={route().name === "login"}><LoginView /></Match>
             <Match when={route().name === "start"}><StartView /></Match>
+            <Match when={route().name === "import"}><ImportView /></Match>
             <Match when={route().name === "settings"}><SettingsView /></Match>
             <Match when={route().name === "skills"}><SkillsView /></Match>
             <Match when={route().name === "generation"}>
@@ -70,6 +72,7 @@ function AppLayout(props: { route: Route; children: JSX.Element }) {
         <a class="brand" href={routeHref("/")}>tifl</a>
         <nav class="app-nav" aria-label="Main navigation">
           <a href={routeHref("/")} aria-current={isCurrent("home")}>Home</a>
+          <a href={routeHref("/import")} aria-current={isCurrent("import")}>Import</a>
           <a href={routeHref("/skills")} aria-current={isCurrent("skills")}>Skills</a>
           <a href={routeHref("/settings")} aria-current={isCurrent("settings")}>Settings</a>
         </nav>

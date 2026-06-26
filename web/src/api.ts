@@ -131,6 +131,13 @@ export async function generateSession(request: APIRequest<"generateSession">): P
   );
 }
 
+export async function importStory(request: APIRequest<"importStory">): Promise<APIResponse<"importStory", 201>> {
+  return apiFetch<APIResponse<"importStory", 201>>(
+    "/stories/import",
+    jsonRequest("POST", request),
+  );
+}
+
 export async function getSessionDetail(sessionID: string): Promise<APIResponse<"getSessionDetail", 200>> {
   return apiFetch<APIResponse<"getSessionDetail", 200>>(`/sessions/${encodeURIComponent(sessionID)}`);
 }

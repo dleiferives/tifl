@@ -414,6 +414,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/stories/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import pasted text as a reader story
+         * @description Persists caller-provided target-language text as a tokenized story the normal reader can load via GET /stories/{id}. This MVP accepts raw text only; upload/PDF/EPUB extraction is deferred. If language or level is omitted, the current profile defaults are used. Imported stories are standalone reader content and do not create generation sessions or tasks.
+         */
+        post: operations["importStory"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/stories/{id}": {
         parameters: {
             query?: never;
@@ -692,6 +712,21 @@ export interface components {
              * @enum {string}
              */
             expression_output?: "phrases" | "story";
+        };
+        ImportStoryRequest: {
+            /** @description registered enabled language code, e.g. 'el'; defaults to profile.active_language */
+            language?: string;
+            /** @description beginner|elementary|intermediate|upper-intermediate|advanced; defaults to profile.level */
+            level?: string;
+            /** @description optional user-facing label stored as imported-story metadata */
+            title?: string;
+            /** @description raw target-language text to tokenize for the reader */
+            text: string;
+        };
+        ImportStoryResponse: {
+            story_id: string;
+            language: string;
+            title?: string;
         };
         Profile: {
             user_id: string;
@@ -1789,6 +1824,33 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
             503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    importStory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportStoryRequest"];
+            };
+        };
+        responses: {
+            /** @description Imported story */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportStoryResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            500: components["responses"]["InternalError"];
         };
     };
     getStory: {
