@@ -85,24 +85,29 @@ func runStoryCall(ctx context.Context, in llm.StepInputs, client llm.Client) (st
 
 	var usr strings.Builder
 
-	if len(in.Background) > 0 {
-		usr.WriteString("\nΓΝΩΣΤΕΣ ΛΕΞΕΙΣ ΤΟΥ ΑΝΑΓΝΩΣΤΗ — λέξεις που ο αναγνώστης ήδη γνωρίζει και μπορείς να αντλήσεις ελεύθερα από αυτές (δεν χρειάζεται να τις χρησιμοποιήσεις όλες):\n")
-		for _, it := range in.Background {
-			fmt.Fprintf(&usr, "- %s\n", llm.FormatItemCompact(it))
+	if in.OnboardingHint != "" {
+		// During onboarding: skip the background word list (it signals complex
+		// vocabulary) and use a simple framing that doesn't contradict the hint.
+		if in.Topic != "" {
+			fmt.Fprintf(&usr, "\nΘέμα: %s\n", in.Topic)
 		}
-	}
-
-	usr.WriteString("\n— — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — —\n")
-	usr.WriteString("\nΤΩΡΑ Η ΕΡΓΑΣΙΑ ΣΟΥ:\n")
-
-	if in.Topic != "" {
-		fmt.Fprintf(&usr, "\nΓράψε μια πλήρη, ανεπτυγμένη ιστορία πάνω στο θέμα: %s\n", in.Topic)
-	}
-
-	if in.OnboardingHint == "" {
-		usr.WriteString("\nΟδηγίες:\n- Χώρισε την ιστορία σε τουλάχιστον 6 παραγράφους, η καθεμία με 4 έως 6 προτάσεις.\n")
-	} else {
 		usr.WriteString("\nΟδηγίες:\n")
+	} else {
+		if len(in.Background) > 0 {
+			usr.WriteString("\nΓΝΩΣΤΕΣ ΛΕΞΕΙΣ ΤΟΥ ΑΝΑΓΝΩΣΤΗ — λέξεις που ο αναγνώστης ήδη γνωρίζει και μπορείς να αντλήσεις ελεύθερα από αυτές (δεν χρειάζεται να τις χρησιμοποιήσεις όλες):\n")
+			for _, it := range in.Background {
+				fmt.Fprintf(&usr, "- %s\n", llm.FormatItemCompact(it))
+			}
+		}
+
+		usr.WriteString("\n— — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — —\n")
+		usr.WriteString("\nΤΩΡΑ Η ΕΡΓΑΣΙΑ ΣΟΥ:\n")
+
+		if in.Topic != "" {
+			fmt.Fprintf(&usr, "\nΓράψε μια πλήρη, ανεπτυγμένη ιστορία πάνω στο θέμα: %s\n", in.Topic)
+		}
+
+		usr.WriteString("\nΟδηγίες:\n- Χώρισε την ιστορία σε τουλάχιστον 6 παραγράφους, η καθεμία με 4 έως 6 προτάσεις.\n")
 	}
 
 	if constraints := llm.SerializeSkillConstraints(in.Skills); constraints != "" {
