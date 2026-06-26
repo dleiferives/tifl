@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -31,6 +32,75 @@ func newAuthServer(t *testing.T) (*httptest.Server, *db.FakeRepository) {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv, repo
+}
+
+type authFailureResponse struct {
+	StatusCode      int
+	Body            string
+	ContentType     string
+	RetryAfter      string
+	WWWAuthenticate string
+	SetCookie       string
+}
+
+func postAuthFailure(t *testing.T, client *http.Client, url, email, password string) authFailureResponse {
+	t.Helper()
+	body, err := json.Marshal(map[string]string{"email": email, "password": password})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return authFailureResponse{
+		StatusCode:      resp.StatusCode,
+		Body:            string(data),
+		ContentType:     resp.Header.Get("Content-Type"),
+		RetryAfter:      resp.Header.Get("Retry-After"),
+		WWWAuthenticate: resp.Header.Get("WWW-Authenticate"),
+		SetCookie:       resp.Header.Get("Set-Cookie"),
+	}
+}
+
+func registerUserDirectly(t *testing.T, repo *db.FakeRepository, email string) {
+	t.Helper()
+	service, err := authn.NewService(repo, authTestSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Register(context.Background(), email, "correct horse battery staple"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func exhaustLoginLimiter(t *testing.T, client *http.Client, baseURL, email string) authFailureResponse {
+	t.Helper()
+	var got authFailureResponse
+	for range 11 {
+		got = postAuthFailure(t, client, baseURL+"/api/v1/auth/login", email, "wrong horse battery staple")
+	}
+	if got.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("limiter response = %+v", got)
+	}
+	return got
+}
+
+func exhaustRegisterLimiter(t *testing.T, client *http.Client, baseURL, email string) authFailureResponse {
+	t.Helper()
+	var got authFailureResponse
+	for range 11 {
+		got = postAuthFailure(t, client, baseURL+"/api/v1/auth/register", email, "too short")
+	}
+	if got.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("limiter response = %+v", got)
+	}
+	return got
 }
 
 func TestJWTModeProtectsAPIAndAuthFlow(t *testing.T) {
@@ -87,6 +157,63 @@ func TestJWTModeProtectsAPIAndAuthFlow(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("refresh = %d", resp.StatusCode)
+	}
+}
+
+func TestLoginFailureDoesNotRevealKnownEmail(t *testing.T) {
+	srv, repo := newAuthServer(t)
+	registerUserDirectly(t, repo, "known@example.com")
+	client := srv.Client()
+
+	known := postAuthFailure(t, client, srv.URL+"/api/v1/auth/login", "known@example.com", "wrong horse battery staple")
+	unknown := postAuthFailure(t, client, srv.URL+"/api/v1/auth/login", "unknown@example.com", "wrong horse battery staple")
+
+	if known != unknown {
+		t.Fatalf("known and unknown login failures differed:\nknown:   %+v\nunknown: %+v", known, unknown)
+	}
+	if known.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("login failure status = %+v", known)
+	}
+}
+
+func TestRegisterDuplicateEmailResponseDocumentsAvailabilitySignal(t *testing.T) {
+	srv, repo := newAuthServer(t)
+	registerUserDirectly(t, repo, "known@example.com")
+
+	got := postAuthFailure(t, srv.Client(), srv.URL+"/api/v1/auth/register", "known@example.com", "correct horse battery staple")
+	want := authFailureResponse{
+		StatusCode:  http.StatusConflict,
+		Body:        "{\"error\":\"unable to create account with that email\"}\n",
+		ContentType: "application/json",
+	}
+	if got != want {
+		t.Fatalf("duplicate register response = %+v, want %+v", got, want)
+	}
+}
+
+func TestThrottledLoginDoesNotRevealKnownEmail(t *testing.T) {
+	knownServer, knownRepo := newAuthServer(t)
+	registerUserDirectly(t, knownRepo, "known@example.com")
+	known := exhaustLoginLimiter(t, knownServer.Client(), knownServer.URL, "known@example.com")
+
+	unknownServer, _ := newAuthServer(t)
+	unknown := exhaustLoginLimiter(t, unknownServer.Client(), unknownServer.URL, "unknown@example.com")
+
+	if known != unknown {
+		t.Fatalf("known and unknown throttled login responses differed:\nknown:   %+v\nunknown: %+v", known, unknown)
+	}
+}
+
+func TestThrottledRegisterDoesNotRevealKnownEmail(t *testing.T) {
+	knownServer, knownRepo := newAuthServer(t)
+	registerUserDirectly(t, knownRepo, "known@example.com")
+	known := exhaustRegisterLimiter(t, knownServer.Client(), knownServer.URL, "known@example.com")
+
+	unknownServer, _ := newAuthServer(t)
+	unknown := exhaustRegisterLimiter(t, unknownServer.Client(), unknownServer.URL, "unknown@example.com")
+
+	if known != unknown {
+		t.Fatalf("known and unknown throttled register responses differed:\nknown:   %+v\nunknown: %+v", known, unknown)
 	}
 }
 
