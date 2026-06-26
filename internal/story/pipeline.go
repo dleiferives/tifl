@@ -941,16 +941,19 @@ func toStoryTokens(storyID string, tokens []lang.Token) []domain.StoryToken {
 // attribution is a future refinement (task-system Open Questions).
 func injectTargets(content map[string]any, taskTypeID string, targets []domain.KnowledgeItem) {
 	ids := itemIDs(targets)
+	// Always stamp with our internal IDs — LLM-generated values are never valid
+	// item_ids and would cause task_targets FK failures. Clear when empty so no
+	// LLM-provided placeholder leaks through.
 	if len(ids) == 0 {
+		delete(content, "target_item_ids")
+		delete(content, "target_item_id")
 		return
 	}
 	content["target_item_ids"] = ids
-	// fill_blank exercises a single item; default it to the first target unless
-	// the builder already chose one.
+	// fill_blank exercises a single item; always override the LLM's choice
+	// because it doesn't know our internal item_id format.
 	if taskTypeID == tasks.TypeFillBlank {
-		if _, ok := content["target_item_id"]; !ok {
-			content["target_item_id"] = ids[0]
-		}
+		content["target_item_id"] = ids[0]
 	}
 }
 

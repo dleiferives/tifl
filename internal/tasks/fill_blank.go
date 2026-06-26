@@ -74,5 +74,5 @@ func (FillBlank) Present(content map[string]any) map[string]any {
 }
 
 func (FillBlank) ContentSchema() string {
-	return `{"sentence": "Η Μαρία ___ στο σπίτι.", "target_item_id": "key", "acceptable_forms": ["μένει"]}`
+	return `{"sentence": "Η Μαρία ___ στο σπίτι.", "acceptable_forms": ["μένει"]}`
 }
