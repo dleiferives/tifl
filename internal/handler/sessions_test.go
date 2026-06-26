@@ -1127,6 +1127,96 @@ func TestLifecycleEndpointsTenantIsolation(t *testing.T) {
 	}
 }
 
+// TestSessionEventsJWTMissingToken verifies that the SSE events endpoint
+// returns 401 Unauthorized when no Authorization header is provided in JWT mode.
+// The auth middleware rejects unauthenticated requests before any DB lookup, so
+// we use a placeholder session ID.
+func TestSessionEventsJWTMissingToken(t *testing.T) {
+	srv, _ := newAuthServer(t)
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/sessions/nonexistent-session-id/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("missing token events = %d, want 401", resp.StatusCode)
+	}
+}
+
+// TestSessionEventsJWTWrongUser verifies that the SSE events endpoint returns
+// 404 when a valid token for user B is used to access user A's session.
+func TestSessionEventsJWTWrongUser(t *testing.T) {
+	srv, repo := newAuthServer(t)
+	service, err := authn.NewService(repo, authTestSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := service.Register(context.Background(), "events-owner@example.com", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := service.Register(context.Background(), "events-other@example.com", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := repo.CreateSession(context.Background(), domain.Session{
+		UserID: owner.User.UserID, Language: "xx", Level: "beginner",
+		Status: domain.StatusReady,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/sessions/"+sess.SessionID+"/events", nil)
+	req.Header.Set("Authorization", "Bearer "+other.AccessToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("cross-tenant events = %d, want 404", resp.StatusCode)
+	}
+}
+
+// TestSessionEventsJWTValidToken verifies that the SSE events endpoint returns
+// 200 with text/event-stream content-type when a valid token for the session
+// owner is provided.
+func TestSessionEventsJWTValidToken(t *testing.T) {
+	srv, _ := newServer(t, true)
+
+	resp, err := http.Post(srv.URL+"/api/v1/sessions/generate", "application/json",
+		strings.NewReader(`{"language":"xx","level":"beginner"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gen struct {
+		SessionID string `json:"session_id"`
+	}
+	json.NewDecoder(resp.Body).Decode(&gen)
+	resp.Body.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/sessions/"+gen.SessionID+"/events", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req = req.WithContext(ctx)
+	stream, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Body.Close()
+
+	if stream.StatusCode != http.StatusOK {
+		t.Fatalf("events status = %d, want 200", stream.StatusCode)
+	}
+	ct := stream.Header.Get("Content-Type")
+	if !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("events Content-Type = %q, want text/event-stream", ct)
+	}
+}
+
 func readDoneEvent(t *testing.T, r io.Reader) generationEventPayload {
 	t.Helper()
 	sc := bufio.NewScanner(r)
