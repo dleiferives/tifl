@@ -758,7 +758,8 @@ func (r *SQLiteRepository) HasReaderEvents(ctx context.Context, userID, storyID 
 
 func (r *SQLiteRepository) ListDefinitions(ctx context.Context, language, itemKey string) ([]domain.Definition, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT language, item_key, source, gloss, grammatical_note, example, etymology, created_at
+		`SELECT language, item_key, source, gloss, grammatical_note, example, etymology,
+		        COALESCE(canonical_key,''), COALESCE(pronunciation,''), COALESCE(related,''), COALESCE(derived,''), created_at
 		 FROM definitions WHERE language = ? AND item_key = ? ORDER BY source`, language, itemKey)
 	if err != nil {
 		return nil, err
@@ -771,7 +772,7 @@ func (r *SQLiteRepository) ListDefinitions(ctx context.Context, language, itemKe
 			note, example, etymology sql.NullString
 		)
 		if err := rows.Scan(&d.Language, &d.ItemKey, &d.Source, &d.Gloss,
-			&note, &example, &etymology, &d.CreatedAt); err != nil {
+			&note, &example, &etymology, &d.CanonicalKey, &d.Pronunciation, &d.Related, &d.Derived, &d.CreatedAt); err != nil {
 			return nil, err
 		}
 		d.GrammaticalNote, d.Example, d.Etymology = note.String, example.String, etymology.String
@@ -791,11 +792,14 @@ func (r *SQLiteRepository) UpsertDefinitions(ctx context.Context, defs []domain.
 	}
 	defer tx.Rollback()
 	stmt, err := tx.PrepareContext(ctx,
-		`INSERT INTO definitions(language, item_key, source, gloss, grammatical_note, example, etymology, created_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO definitions(language, item_key, source, gloss, grammatical_note, example, etymology,
+		        canonical_key, pronunciation, related, derived, created_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(language, item_key, source) DO UPDATE SET
 		   gloss = excluded.gloss, grammatical_note = excluded.grammatical_note,
-		   example = excluded.example, etymology = excluded.etymology, created_at = excluded.created_at`)
+		   example = excluded.example, etymology = excluded.etymology,
+		   canonical_key = excluded.canonical_key, pronunciation = excluded.pronunciation,
+		   related = excluded.related, derived = excluded.derived, created_at = excluded.created_at`)
 	if err != nil {
 		return err
 	}
@@ -805,7 +809,9 @@ func (r *SQLiteRepository) UpsertDefinitions(ctx context.Context, defs []domain.
 			d.CreatedAt = now
 		}
 		if _, err := stmt.ExecContext(ctx, d.Language, d.ItemKey, d.Source, d.Gloss,
-			emptyToNull(d.GrammaticalNote), emptyToNull(d.Example), emptyToNull(d.Etymology), d.CreatedAt); err != nil {
+			emptyToNull(d.GrammaticalNote), emptyToNull(d.Example), emptyToNull(d.Etymology),
+			emptyToNull(d.CanonicalKey), emptyToNull(d.Pronunciation), emptyToNull(d.Related),
+			emptyToNull(d.Derived), d.CreatedAt); err != nil {
 			return err
 		}
 	}
@@ -846,13 +852,18 @@ func (r *SQLiteRepository) UpsertDefinition(ctx context.Context, d domain.Defini
 		d.CreatedAt = float64(time.Now().Unix())
 	}
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO definitions(language, item_key, source, gloss, grammatical_note, example, etymology, created_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO definitions(language, item_key, source, gloss, grammatical_note, example, etymology,
+		        canonical_key, pronunciation, related, derived, created_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(language, item_key, source) DO UPDATE SET
 		   gloss = excluded.gloss, grammatical_note = excluded.grammatical_note,
-		   example = excluded.example, etymology = excluded.etymology, created_at = excluded.created_at`,
+		   example = excluded.example, etymology = excluded.etymology,
+		   canonical_key = excluded.canonical_key, pronunciation = excluded.pronunciation,
+		   related = excluded.related, derived = excluded.derived, created_at = excluded.created_at`,
 		d.Language, d.ItemKey, d.Source, d.Gloss,
-		emptyToNull(d.GrammaticalNote), emptyToNull(d.Example), emptyToNull(d.Etymology), d.CreatedAt)
+		emptyToNull(d.GrammaticalNote), emptyToNull(d.Example), emptyToNull(d.Etymology),
+		emptyToNull(d.CanonicalKey), emptyToNull(d.Pronunciation), emptyToNull(d.Related),
+		emptyToNull(d.Derived), d.CreatedAt)
 	return err
 }
 

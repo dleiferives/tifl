@@ -1,0 +1,26 @@
+{
+  "name": "tasks_v0",
+  "description": "Baseline task generation — mirrors production TaskBuilder as closely as possible. Story step is bigpool_skills. Three task steps (mc, fill, production) use the same minimal English prompts production uses.",
+  "steps": [
+    {
+      "id": "story",
+      "system": "Είσαι έμπειρος Έλληνας συγγραφέας που γράφει ιστορίες για μαθητές των ελληνικών. Γράφεις μόνο στα ελληνικά, σε απλό κείμενο. Δίνεις μόνο την ιστορία.",
+      "user": "ΓΝΩΣΤΕΣ ΛΕΞΕΙΣ ΤΟΥ ΑΝΑΓΝΩΣΤΗ — λέξεις που ο αναγνώστης ήδη γνωρίζει και μπορείς να αντλήσεις ελεύθερα από αυτές (δεν χρειάζεται να τις χρησιμοποιήσεις όλες):\n{background}\n\n— — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — —\n\nΤΩΡΑ Η ΕΡΓΑΣΙΑ ΣΟΥ:\n\nΓράψε μια πλήρη, ανεπτυγμένη ιστορία πάνω στο θέμα: {topic}\n\nΟδηγίες:\n- Χώρισε την ιστορία σε τουλάχιστον 6 παραγράφους, η καθεμία με 4 έως 6 προτάσεις.\n- Γλωσσική πολυπλοκότητα (με βάση τις δεξιότητες που έχει κατακτήσει ο μαθητής): {level_guidance}\n- Προτίμησε λέξεις από τη λίστα γνωστών λέξεων παραπάνω, ώστε η ιστορία να μένει κατανοητή. Απόφυγε σπάνιες, αρχαϊκές ή εξεζητημένες λέξεις, ακόμα κι αν εμφανίζονται στη λίστα.\n- Υποχρεωτικό λεξιλόγιο — χρησιμοποίησε ΟΛΕΣ αυτές τις λέξεις-κλειδιά: {targets}\n- Εισήγαγε απαλά και αυτές τις νέες λέξεις, με αρκετά συμφραζόμενα: {new}\n- Υποχρεωτικές εκφράσεις — χρησιμοποίησε αυτές τις εκφράσεις, προσαρμόζοντας τη γραμματική τους μορφή στην ιστορία: {phrases}\n- Χρησιμοποίησε μόνο υπαρκτές, κοινές ελληνικές λέξεις· μην εφευρίσκεις λέξεις.\n- Γράψε καθαρό κείμενο: χωρίς τίτλους, χωρίς markdown ή αστερίσκους, και χωρίς μετα-σχόλια όπως «η ιστορία τελειώνει»."
+    },
+    {
+      "id": "mc_task",
+      "system": "You generate \"comprehension_mc\" tasks for Greek learners.\nGiven a story and the items it should exercise, produce the task content as a JSON object.\nRespond with exactly this JSON structure: {{\"question\": string, \"options\": [string, string, string, string], \"correct_index\": number, \"target_item_ids\": []}}\nReturn JSON only — no prose, no markdown.",
+      "user": "Level: {level_name}\n\nExercise these target items:\n{targets}\n\nStory:\n{story}"
+    },
+    {
+      "id": "fill_task",
+      "system": "You generate \"fill_blank\" tasks for Greek learners.\nGiven a story and the items it should exercise, produce the task content as a JSON object.\nRespond with exactly this JSON structure: {{\"sentence\": string, \"target_item_id\": \"\", \"acceptable_forms\": [string]}}\nReturn JSON only — no prose, no markdown.",
+      "user": "Level: {level_name}\n\nExercise these target items:\n{targets}\n\nStory:\n{story}"
+    },
+    {
+      "id": "prod_task",
+      "system": "You generate \"production\" tasks for Greek learners.\nGiven a story and the items it should exercise, produce the task content as a JSON object.\nRespond with exactly this JSON structure: {{\"prompt_l1\": string, \"target_construction_id\": \"\", \"target_item_ids\": []}}\nReturn JSON only — no prose, no markdown.",
+      "user": "Level: {level_name}\n\nExercise these target items:\n{targets}\n\nStory:\n{story}"
+    }
+  ]
+}

@@ -144,6 +144,8 @@ func (i *Importer) Import(ctx context.Context, r io.Reader) (stats Stats, err er
 			}
 			alias := base
 			alias.ItemKey = key
+			alias.CanonicalKey = canonicalKey
+			alias.GrammaticalNote = formGrammaticalNote(base.GrammaticalNote, f.Tags)
 			i.mergeDefinition(defs, alias)
 			stats.FormDefinitions++
 		}
@@ -200,17 +202,23 @@ func (i *Importer) definitionForEntry(entry wiktextractEntry, createdAt float64)
 		GrammaticalNote: noteForEntry(entry),
 		Example:         exampleForEntry(entry),
 		Etymology:       strings.TrimSpace(entry.EtymologyText),
+		Pronunciation:   pronunciationForEntry(entry),
+		Related:         relatedForEntry(entry),
+		Derived:         derivedForEntry(entry),
 		CreatedAt:       createdAt,
 	}, true, nil
 }
 
 type wiktextractEntry struct {
-	Word          string             `json:"word"`
-	LangCode      string             `json:"lang_code"`
-	Pos           string             `json:"pos"`
-	Senses        []wiktextractSense `json:"senses"`
-	Forms         []wiktextractForm  `json:"forms"`
-	EtymologyText string             `json:"etymology_text"`
+	Word          string               `json:"word"`
+	LangCode      string               `json:"lang_code"`
+	Pos           string               `json:"pos"`
+	Senses        []wiktextractSense   `json:"senses"`
+	Forms         []wiktextractForm    `json:"forms"`
+	EtymologyText string               `json:"etymology_text"`
+	Sounds        []wiktextractSound   `json:"sounds"`
+	Related       []wiktextractRelated `json:"related"`
+	Derived       []wiktextractRelated `json:"derived"`
 }
 
 type wiktextractSense struct {
@@ -227,6 +235,16 @@ type wiktextractExample struct {
 type wiktextractForm struct {
 	Form string   `json:"form"`
 	Tags []string `json:"tags"`
+}
+
+type wiktextractSound struct {
+	IPA string `json:"ipa"`
+}
+
+type wiktextractRelated struct {
+	Word    string   `json:"word"`
+	Tags    []string `json:"tags"`
+	English string   `json:"english"` // present on derived entries
 }
 
 func glossForEntry(entry wiktextractEntry) string {
@@ -247,9 +265,13 @@ func collectGlosses(senses []wiktextractSense, includeLowPriority bool) []string
 		if !includeLowPriority && lowPrioritySense(s.Tags) {
 			continue
 		}
-		gloss := firstNonEmpty(s.Glosses)
+		// Wiktextract nests glosses hierarchically: the first element is the
+		// parent/category, the last is the actual leaf sense. Always take the
+		// last non-empty element so we get the specific definition rather than
+		// a parent category like a passive-voice cross-reference.
+		gloss := lastNonEmpty(s.Glosses)
 		if gloss == "" {
-			gloss = firstNonEmpty(s.RawGlosses)
+			gloss = lastNonEmpty(s.RawGlosses)
 		}
 		gloss = strings.TrimSpace(gloss)
 		if gloss == "" || seen[gloss] {
@@ -274,6 +296,81 @@ func exampleForEntry(entry wiktextractEntry) string {
 		}
 	}
 	return ""
+}
+
+// formGrammaticalNote combines the lemma's POS with the inflection tags from the
+// form entry (voice, mood, tense, person, number, case, gender, etc.).
+// Result: "verb; active, indicative, present, singular, third-person"
+func formGrammaticalNote(baseNote string, tags []string) string {
+	var keep []string
+	for _, t := range tags {
+		switch strings.ToLower(t) {
+		case "table-tags", "no-table-tags", "romanization", "transliteration",
+			"canonical", "inflection-template", "multiword-construction":
+			// noise — skip
+		default:
+			keep = append(keep, t)
+		}
+	}
+	if len(keep) == 0 {
+		return baseNote
+	}
+	note := strings.Join(keep, ", ")
+	if baseNote == "" {
+		return note
+	}
+	return baseNote + "; " + note
+}
+
+func pronunciationForEntry(entry wiktextractEntry) string {
+	for _, s := range entry.Sounds {
+		if ipa := strings.TrimSpace(s.IPA); ipa != "" {
+			return ipa
+		}
+	}
+	return ""
+}
+
+func relatedForEntry(entry wiktextractEntry) string {
+	var parts []string
+	seen := make(map[string]bool)
+	for _, r := range entry.Related {
+		w := strings.TrimSpace(r.Word)
+		if w == "" || seen[w] {
+			continue
+		}
+		seen[w] = true
+		if len(r.Tags) > 0 {
+			parts = append(parts, w+" ("+strings.Join(r.Tags, ", ")+")")
+		} else {
+			parts = append(parts, w)
+		}
+		if len(parts) >= 8 {
+			break
+		}
+	}
+	return strings.Join(parts, "; ")
+}
+
+func derivedForEntry(entry wiktextractEntry) string {
+	var parts []string
+	seen := make(map[string]bool)
+	for _, d := range entry.Derived {
+		w := strings.TrimSpace(d.Word)
+		if w == "" || seen[w] {
+			continue
+		}
+		seen[w] = true
+		if en := strings.TrimSpace(d.English); en != "" {
+			parts = append(parts, w+": "+en)
+		} else {
+			parts = append(parts, w)
+		}
+		if len(parts) >= 8 {
+			break
+		}
+	}
+	return strings.Join(parts, "; ")
 }
 
 func usableForm(f wiktextractForm) bool {
@@ -321,6 +418,11 @@ func mergeDefinitions(a, b domain.Definition) domain.Definition {
 	if a.Etymology == "" {
 		a.Etymology = b.Etymology
 	}
+	if a.Pronunciation == "" {
+		a.Pronunciation = b.Pronunciation
+	}
+	a.Related = mergeText(a.Related, b.Related, "; ", 8)
+	a.Derived = mergeText(a.Derived, b.Derived, "; ", 8)
 	return a
 }
 
@@ -347,6 +449,15 @@ func mergeText(a, b, sep string, maxParts int) string {
 func firstNonEmpty(values []string) string {
 	for _, v := range values {
 		if s := strings.TrimSpace(v); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func lastNonEmpty(values []string) string {
+	for i := len(values) - 1; i >= 0; i-- {
+		if s := strings.TrimSpace(values[i]); s != "" {
 			return s
 		}
 	}

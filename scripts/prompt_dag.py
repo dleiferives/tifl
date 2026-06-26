@@ -185,8 +185,6 @@ def serialize_skill_constraints(level: dict) -> str:
         parts.append("Χρησιμοποίησε ελεύθερα τις εξής δομές: " + ", ".join(level["allowed"]) + ".")
     if level.get("introduce"):
         parts.append("Εισήγαγε με σαφή υποστήριξη από τα συμφραζόμενα: " + ", ".join(level["introduce"]) + ".")
-    if level.get("avoid"):
-        parts.append("Απόφυγε εντελώς: " + ", ".join(level["avoid"]) + ".")
     if level.get("vocab_range"):
         parts.append("Λεξιλόγιο: περιορίσου σε " + level["vocab_range"] + ".")
     return " ".join(parts)

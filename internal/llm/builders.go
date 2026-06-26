@@ -302,9 +302,12 @@ func (b SkillTierVerifierBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
 // neither the story glossary, the item metadata, nor the shared cache has it. The
 // result is cached globally (source=llm). The reader popup wants a short gloss
 // first; the heavier morphology lives in the word breakdown.
+// When NativeGloss is set the LLM is asked to translate/condense it rather than
+// generating from scratch — cheaper and more accurate than a cold call.
 type DefinitionBuilder struct {
-	Key     string // canonical knowledge key (lemma/root/stem)
-	Surface string // optional surface form for disambiguation
+	Key         string // canonical knowledge key (lemma/root/stem)
+	Surface     string // optional surface form for disambiguation
+	NativeGloss string // optional: native-language definition to translate
 }
 
 func (DefinitionBuilder) Kind() string    { return "definition" }
@@ -316,6 +319,9 @@ func (b DefinitionBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
 	sys.WriteString("Respond with a JSON object: ")
 	sys.WriteString(`{"gloss": string, "grammatical_note": string, "example": string, "etymology": string}.`)
 	sys.WriteString("\ngloss is a short definition in English; the other fields may be empty if not applicable.")
+	if b.NativeGloss != "" {
+		fmt.Fprintf(&sys, "\nA native %s definition is provided — translate and condense it rather than generating from scratch.", ctx.Language)
+	}
 	sys.WriteString("\nReturn JSON only — no prose, no markdown.")
 
 	var usr strings.Builder
@@ -323,8 +329,22 @@ func (b DefinitionBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
 	if b.Surface != "" && b.Surface != b.Key {
 		fmt.Fprintf(&usr, "As it appears in the text: %s\n", b.Surface)
 	}
+	if b.NativeGloss != "" {
+		fmt.Fprintf(&usr, "Native %s definition: %s\n", ctx.Language, b.NativeGloss)
+	}
 
 	return LLMRequest{System: sys.String(), User: usr.String(), Temperature: gradeTemperature, MaxTokens: 300, ResponseFormat: "json"}
+}
+
+// WordInfo carries per-token dictionary data for the sentence breakdown prompt.
+// All fields except Surface are optional — missing ones are simply omitted.
+type WordInfo struct {
+	Surface         string // as it appears in text, e.g. "κρατάει"
+	ItemKey         string // canonical key used for lookup, e.g. "κρατάει"
+	CanonicalKey    string // lemma if this is a form alias, e.g. "κρατάω"
+	Gloss           string // English definition
+	GrammaticalNote string // "verb; active, indicative, present, singular, third-person"
+	Pronunciation   string // IPA, e.g. "/kɾaˈta.o/"
 }
 
 // SentenceBreakdownBuilder produces the richer analysis of a whole sentence (the
@@ -332,11 +352,13 @@ func (b DefinitionBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
 // now includes a syntax_graph and phrases so the backend can materialize reusable
 // graph-backed structure and phrase cache rows (#42). StructureHint and Phrases
 // are optional cache hits from prior analyses; they prime a fresh LLM call but
-// never replace the exact-sentence cache.
+// never replace the exact-sentence cache. Words carries per-token dictionary data
+// so the model does not have to re-derive what the DB already knows.
 type SentenceBreakdownBuilder struct {
 	Sentence      string
 	StructureHint *domain.SentenceStructure
 	Phrases       []domain.CachedPhrase
+	Words         []WordInfo
 }
 
 func (SentenceBreakdownBuilder) Kind() string    { return "sentence_breakdown" }
@@ -355,6 +377,34 @@ func (b SentenceBreakdownBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
 
 	var usr strings.Builder
 	fmt.Fprintf(&usr, "Sentence:\n%s\n", b.Sentence)
+	if len(b.Words) > 0 {
+		usr.WriteString("\nWord dictionary context (use this — do not re-derive):\n")
+		for _, w := range b.Words {
+			// surface [→ canonical] grammar: gloss /ipa/
+			var line strings.Builder
+			line.WriteString("- ")
+			line.WriteString(w.Surface)
+			if w.CanonicalKey != "" && w.CanonicalKey != w.ItemKey {
+				line.WriteString(" [→ ")
+				line.WriteString(w.CanonicalKey)
+				line.WriteString("]")
+			}
+			if w.GrammaticalNote != "" {
+				line.WriteString("  ")
+				line.WriteString(w.GrammaticalNote)
+			}
+			if w.Gloss != "" {
+				line.WriteString(": ")
+				line.WriteString(w.Gloss)
+			}
+			if w.Pronunciation != "" {
+				line.WriteString("  ")
+				line.WriteString(w.Pronunciation)
+			}
+			usr.WriteString(line.String())
+			usr.WriteString("\n")
+		}
+	}
 	if b.StructureHint != nil {
 		usr.WriteString("\nReusable structure hint from a prior sentence with the same coarse template:\n")
 		fmt.Fprintf(&usr, "Template: %s\n", b.StructureHint.Template)

@@ -13,6 +13,7 @@ import (
 
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
+	"github.com/dleiferives/tifl/internal/lang"
 	"github.com/dleiferives/tifl/internal/llm"
 )
 
@@ -38,13 +39,15 @@ type DefinitionService struct {
 	repo   db.Repository
 	client llm.Client       // nil when no gateway is configured
 	wik    WiktionarySource // nil = no Wiktionary source wired yet (#41)
+	langs  *lang.Registry   // nil = canonical-key plugin fallback disabled
 	now    func() float64
 }
 
 // NewDefinitionService builds the service. client may be nil (live LLM paths then
-// return ErrLLMUnavailable); wik may be nil (Wiktionary hop is skipped).
-func NewDefinitionService(repo db.Repository, client llm.Client, wik WiktionarySource) *DefinitionService {
-	return &DefinitionService{repo: repo, client: client, wik: wik, now: func() float64 { return float64(time.Now().Unix()) }}
+// return ErrLLMUnavailable); wik may be nil (Wiktionary hop is skipped);
+// langs may be nil (canonical key plugin extraction disabled).
+func NewDefinitionService(repo db.Repository, client llm.Client, wik WiktionarySource, langs *lang.Registry) *DefinitionService {
+	return &DefinitionService{repo: repo, client: client, wik: wik, langs: langs, now: func() float64 { return float64(time.Now().Unix()) }}
 }
 
 // Resolve returns the best available definition for a word key in a story,
@@ -89,7 +92,27 @@ func (s *DefinitionService) Resolve(ctx context.Context, userID, storyID, key st
 	if err != nil {
 		return domain.Definition{}, err
 	}
+	// Track the native gloss for the LLM translate path in step 6.
+	nativeGloss := nativeGlossFrom(cached)
 	if d, ok := pickDefinition(cached); ok {
+		// 4.5 Canonical key follow: if this is a form alias, look up the lemma's
+		// definition. The lemma's entry is the authoritative one (it was the kaikki
+		// headword) and likely has a better English gloss than the form alias,
+		// especially after the lastNonEmpty fix produces correct leaf-sense glosses.
+		canonKey := d.CanonicalKey
+		if canonKey == "" && nativeGloss != "" && s.langs != nil {
+			// Runtime fallback: extract canonical from native gloss via plugin.
+			if l, ok2 := s.langs.Get(language); ok2 {
+				canonKey, _ = lang.ExtractCanonicalKey(l, nativeGloss)
+			}
+		}
+		if canonKey != "" && canonKey != key {
+			if canonDefs, err2 := s.repo.ListDefinitions(ctx, language, canonKey); err2 == nil {
+				if canon, ok2 := pickDefinition(canonDefs); ok2 {
+					return canon, nil
+				}
+			}
+		}
 		return d, nil
 	}
 
@@ -102,11 +125,11 @@ func (s *DefinitionService) Resolve(ctx context.Context, userID, storyID, key st
 		}
 	}
 
-	// 6. Live LLM (cached on success).
+	// 6. Live LLM — translate native gloss if available, otherwise cold generation.
 	if s.client == nil {
 		return domain.Definition{}, ErrLLMUnavailable
 	}
-	res, err := llm.CompleteJSON(ctx, s.client, llm.DefinitionBuilder{Key: key},
+	res, err := llm.CompleteJSON(ctx, s.client, llm.DefinitionBuilder{Key: key, NativeGloss: nativeGloss},
 		domain.LearnerCtx{Language: language}, func(r llm.DefinitionResult) error { return r.Validate() })
 	if err != nil {
 		return domain.Definition{}, err
@@ -160,9 +183,10 @@ func (s *DefinitionService) SentenceBreakdown(ctx context.Context, userID, story
 	if err != nil {
 		return domain.Breakdown{}, err
 	}
+	wordContext := s.wordContextForTokens(ctx, language, spanTokens)
 
 	content, err := llm.CompleteJSON(ctx, s.client,
-		llm.SentenceBreakdownBuilder{Sentence: span.Text, StructureHint: structureHint, Phrases: phrases},
+		llm.SentenceBreakdownBuilder{Sentence: span.Text, StructureHint: structureHint, Phrases: phrases, Words: wordContext},
 		domain.LearnerCtx{Language: language}, validateSentenceBreakdown)
 	if err != nil {
 		return domain.Breakdown{}, err
@@ -207,6 +231,54 @@ func (s *DefinitionService) cachedBreakdown(ctx context.Context, scope domain.Br
 	b := domain.Breakdown{Scope: scope, Language: language, CacheKey: cacheKey, Content: content, CreatedAt: s.now()}
 	_ = s.repo.UpsertBreakdown(ctx, b)
 	return b, nil
+}
+
+// wordContextForTokens looks up the best available definition for each unique
+// word token in the span and returns per-word context for the breakdown prompt.
+// Errors are silently ignored — missing context degrades gracefully.
+func (s *DefinitionService) wordContextForTokens(ctx context.Context, language string, tokens []domain.StoryToken) []llm.WordInfo {
+	seen := make(map[string]bool)
+	var out []llm.WordInfo
+	for _, t := range tokens {
+		if !t.IsWord || t.ItemKey == "" || seen[t.ItemKey] {
+			continue
+		}
+		seen[t.ItemKey] = true
+
+		defs, err := s.repo.ListDefinitions(ctx, language, t.ItemKey)
+		if err != nil || len(defs) == 0 {
+			out = append(out, llm.WordInfo{Surface: t.Surface, ItemKey: t.ItemKey})
+			continue
+		}
+
+		d, _ := pickDefinition(defs)
+		wi := llm.WordInfo{
+			Surface:         t.Surface,
+			ItemKey:         t.ItemKey,
+			CanonicalKey:    d.CanonicalKey,
+			Gloss:           d.Gloss,
+			GrammaticalNote: d.GrammaticalNote,
+			Pronunciation:   d.Pronunciation,
+		}
+
+		// If the form alias has a canonical key, try to pull the lemma's gloss
+		// and pronunciation too — they're often richer than the form alias row.
+		if d.CanonicalKey != "" && d.CanonicalKey != t.ItemKey {
+			if canonDefs, err2 := s.repo.ListDefinitions(ctx, language, d.CanonicalKey); err2 == nil {
+				if canon, ok := pickDefinition(canonDefs); ok {
+					if wi.Gloss == "" {
+						wi.Gloss = canon.Gloss
+					}
+					if wi.Pronunciation == "" {
+						wi.Pronunciation = canon.Pronunciation
+					}
+				}
+			}
+		}
+
+		out = append(out, wi)
+	}
+	return out
 }
 
 // matchPhrases finds cached phrase/subtree rows whose normalized text appears as
@@ -574,12 +646,21 @@ func (s *DefinitionService) fromMetadata(ctx context.Context, language, key stri
 	return domain.Definition{}, false, nil
 }
 
-// pickDefinition prefers a Wiktionary entry, then an LLM one, then any.
+// pickDefinition returns the best available definition using source priority:
+// translated (LLM-translated native) > wiktionary (English) > native (target-language
+// gloss) > llm > anything. This order is intentional: a translated entry has been
+// reviewed for English accuracy; a raw native entry may be in the target language
+// but is still more specific than a cold LLM guess.
 func pickDefinition(defs []domain.Definition) (domain.Definition, bool) {
 	if len(defs) == 0 {
 		return domain.Definition{}, false
 	}
-	for _, want := range []string{domain.DefinitionSourceWiktionary, domain.DefinitionSourceLLM} {
+	for _, want := range []string{
+		domain.DefinitionSourceTranslated,
+		domain.DefinitionSourceWiktionary,
+		domain.DefinitionSourceNative,
+		domain.DefinitionSourceLLM,
+	} {
 		for _, d := range defs {
 			if d.Source == want {
 				return d, true
@@ -587,6 +668,17 @@ func pickDefinition(defs []domain.Definition) (domain.Definition, bool) {
 		}
 	}
 	return defs[0], true
+}
+
+// nativeGlossFrom returns the first native-source gloss from a definition list,
+// used to prime the LLM translate step when no English definition exists.
+func nativeGlossFrom(defs []domain.Definition) string {
+	for _, d := range defs {
+		if d.Source == domain.DefinitionSourceNative && d.Gloss != "" {
+			return d.Gloss
+		}
+	}
+	return ""
 }
 
 func metaString(m map[string]any, key string) string {

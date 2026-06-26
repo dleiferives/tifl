@@ -15,19 +15,19 @@ import (
 
 const defaultLevel = "beginner"
 
-func levelOrDefault(level string) string {
+func LevelOrDefault(level string) string {
 	if strings.TrimSpace(level) == "" {
 		return defaultLevel
 	}
 	return level
 }
 
-// itemFormatter renders one KnowledgeItem as a single prompt line.
-type itemFormatter func(domain.KnowledgeItem) string
+// ItemFormatter renders one KnowledgeItem as a single prompt line.
+type ItemFormatter func(domain.KnowledgeItem) string
 
-// writeItemBlock writes a titled, newline-separated list of items, or nothing
+// WriteItemBlock writes a titled, newline-separated list of items, or nothing
 // when the bucket is empty.
-func writeItemBlock(b *strings.Builder, title string, items []domain.KnowledgeItem, f itemFormatter) {
+func WriteItemBlock(b *strings.Builder, title string, items []domain.KnowledgeItem, f ItemFormatter) {
 	if len(items) == 0 {
 		return
 	}
@@ -37,26 +37,26 @@ func writeItemBlock(b *strings.Builder, title string, items []domain.KnowledgeIt
 	}
 }
 
-// formatItemCompact: key + brief gloss (background pool).
-func formatItemCompact(it domain.KnowledgeItem) string {
+// FormatItemCompact: key + brief gloss (background pool).
+func FormatItemCompact(it domain.KnowledgeItem) string {
 	if gloss := metaString(it.Metadata, "gloss"); gloss != "" {
 		return it.Key + " — " + gloss
 	}
 	return it.Key
 }
 
-// formatItemTarget: compact plus part of speech when known (target items).
-func formatItemTarget(it domain.KnowledgeItem) string {
-	line := formatItemCompact(it)
+// FormatItemTarget: compact plus part of speech when known (target items).
+func FormatItemTarget(it domain.KnowledgeItem) string {
+	line := FormatItemCompact(it)
 	if pos := metaString(it.Metadata, "part_of_speech"); pos != "" {
 		line += " (" + pos + ")"
 	}
 	return line
 }
 
-// formatItemNew: the fullest form — gloss plus an example sentence (new items).
-func formatItemNew(it domain.KnowledgeItem) string {
-	line := formatItemCompact(it)
+// FormatItemNew: the fullest form — gloss plus an example sentence (new items).
+func FormatItemNew(it domain.KnowledgeItem) string {
+	line := FormatItemCompact(it)
 	if ex := metaString(it.Metadata, "example"); ex != "" {
 		line += "; example: " + ex
 	}
@@ -75,9 +75,9 @@ func metaString(m map[string]any, key string) string {
 	return ""
 }
 
-// recentTopics joins the non-empty topics of recent sessions for the
+// RecentTopics joins the non-empty topics of recent sessions for the
 // "avoid repeating" instruction.
-func recentTopics(history []domain.SessionSummary) string {
+func RecentTopics(history []domain.SessionSummary) string {
 	topics := make([]string, 0, len(history))
 	for _, h := range history {
 		if t := strings.TrimSpace(h.Topic); t != "" {

@@ -35,7 +35,7 @@ func defFixture(t *testing.T, resp string) (context.Context, *reader.DefinitionS
 		{StoryID: story.StoryID, Position: 6, Surface: "d.", ItemKey: "d", IsWord: true},
 	}))
 	client := &llm.FakeClient{Response: llm.LLMResponse{Text: resp}}
-	svc := reader.NewDefinitionService(repo, client, nil)
+	svc := reader.NewDefinitionService(repo, client, nil, nil)
 	return ctx, svc, repo, client, user.UserID, story.StoryID
 }
 
@@ -144,7 +144,7 @@ func TestResolveNoClientIsUnavailable(t *testing.T) {
 	must(t, err)
 	story, err := repo.CreateStory(ctx, domain.Story{UserID: user.UserID, Language: "xx", Text: "a", Level: "beginner"})
 	must(t, err)
-	svc := reader.NewDefinitionService(repo, nil, nil) // no LLM client
+	svc := reader.NewDefinitionService(repo, nil, nil, nil) // no LLM client
 	if _, err := svc.Resolve(ctx, user.UserID, story.StoryID, "a"); err != reader.ErrLLMUnavailable {
 		t.Fatalf("want ErrLLMUnavailable, got %v", err)
 	}

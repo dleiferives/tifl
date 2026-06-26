@@ -38,13 +38,13 @@ func AssembleLearnerCtx(
 	}
 }
 
-// serializeSkillConstraints renders SkillConstraints as the explicit prose
+// SerializeSkillConstraints renders SkillConstraints as the explicit prose
 // instructions the story generator consumes instead of a level label. The
 // grammatical concepts in each bucket are already plugin-resolved; this only
 // formats them. A nil/empty constraint set yields the empty string, and the
 // caller falls back to the Level label. See context/prompting-system.md
 // ("Skill-Driven Story Complexity").
-func serializeSkillConstraints(sc *domain.SkillConstraints) string {
+func SerializeSkillConstraints(sc *domain.SkillConstraints) string {
 	if sc == nil {
 		return ""
 	}

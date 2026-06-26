@@ -789,7 +789,8 @@ func nullLevelPG(l domain.ReaderLevel) *string {
 
 func (r *PostgresRepository) ListDefinitions(ctx context.Context, language, itemKey string) ([]domain.Definition, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT language, item_key, source, gloss, grammatical_note, example, etymology, created_at
+		`SELECT language, item_key, source, gloss, grammatical_note, example, etymology,
+		        COALESCE(canonical_key,''), COALESCE(pronunciation,''), COALESCE(related,''), COALESCE(derived,''), created_at
 		 FROM definitions WHERE language = $1 AND item_key = $2 ORDER BY source`, language, itemKey)
 	if err != nil {
 		return nil, err
@@ -802,7 +803,7 @@ func (r *PostgresRepository) ListDefinitions(ctx context.Context, language, item
 			note, example, etymology *string
 		)
 		if err := rows.Scan(&d.Language, &d.ItemKey, &d.Source, &d.Gloss,
-			&note, &example, &etymology, &d.CreatedAt); err != nil {
+			&note, &example, &etymology, &d.CanonicalKey, &d.Pronunciation, &d.Related, &d.Derived, &d.CreatedAt); err != nil {
 			return nil, err
 		}
 		d.GrammaticalNote, d.Example, d.Etymology = derefStr(note), derefStr(example), derefStr(etymology)
@@ -822,13 +823,18 @@ func (r *PostgresRepository) UpsertDefinitions(ctx context.Context, defs []domai
 			d.CreatedAt = now
 		}
 		batch.Queue(
-			`INSERT INTO definitions(language, item_key, source, gloss, grammatical_note, example, etymology, created_at)
-			 VALUES($1, $2, $3, $4, $5, $6, $7, $8)
+			`INSERT INTO definitions(language, item_key, source, gloss, grammatical_note, example, etymology,
+			        canonical_key, pronunciation, related, derived, created_at)
+			 VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 			 ON CONFLICT(language, item_key, source) DO UPDATE SET
 			   gloss = excluded.gloss, grammatical_note = excluded.grammatical_note,
-			   example = excluded.example, etymology = excluded.etymology, created_at = excluded.created_at`,
+			   example = excluded.example, etymology = excluded.etymology,
+			   canonical_key = excluded.canonical_key, pronunciation = excluded.pronunciation,
+			   related = excluded.related, derived = excluded.derived, created_at = excluded.created_at`,
 			d.Language, d.ItemKey, d.Source, d.Gloss,
-			nullStr(d.GrammaticalNote), nullStr(d.Example), nullStr(d.Etymology), d.CreatedAt)
+			nullStr(d.GrammaticalNote), nullStr(d.Example), nullStr(d.Etymology),
+			nullStr(d.CanonicalKey), nullStr(d.Pronunciation), nullStr(d.Related),
+			nullStr(d.Derived), d.CreatedAt)
 	}
 	return r.pool.SendBatch(ctx, batch).Close()
 }
@@ -866,13 +872,18 @@ func (r *PostgresRepository) UpsertDefinition(ctx context.Context, d domain.Defi
 		d.CreatedAt = float64(time.Now().Unix())
 	}
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO definitions(language, item_key, source, gloss, grammatical_note, example, etymology, created_at)
-		 VALUES($1, $2, $3, $4, $5, $6, $7, $8)
+		`INSERT INTO definitions(language, item_key, source, gloss, grammatical_note, example, etymology,
+		        canonical_key, pronunciation, related, derived, created_at)
+		 VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		 ON CONFLICT(language, item_key, source) DO UPDATE SET
 		   gloss = excluded.gloss, grammatical_note = excluded.grammatical_note,
-		   example = excluded.example, etymology = excluded.etymology, created_at = excluded.created_at`,
+		   example = excluded.example, etymology = excluded.etymology,
+		   canonical_key = excluded.canonical_key, pronunciation = excluded.pronunciation,
+		   related = excluded.related, derived = excluded.derived, created_at = excluded.created_at`,
 		d.Language, d.ItemKey, d.Source, d.Gloss,
-		nullStr(d.GrammaticalNote), nullStr(d.Example), nullStr(d.Etymology), d.CreatedAt)
+		nullStr(d.GrammaticalNote), nullStr(d.Example), nullStr(d.Etymology),
+		nullStr(d.CanonicalKey), nullStr(d.Pronunciation), nullStr(d.Related),
+		nullStr(d.Derived), d.CreatedAt)
 	return err
 }
 
