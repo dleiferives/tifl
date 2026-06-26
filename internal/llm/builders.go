@@ -54,19 +54,27 @@ func (b StoryBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
 	sys.WriteString("\nReturn JSON only — no prose, no markdown.")
 
 	var usr strings.Builder
-	if constraints := serializeSkillConstraints(ctx.Skills); constraints != "" {
+	if constraints := SerializeSkillConstraints(ctx.Skills); constraints != "" {
 		usr.WriteString("Complexity constraints:\n")
 		usr.WriteString(constraints)
 	} else {
-		fmt.Fprintf(&usr, "Write at the %s level.\n", levelOrDefault(ctx.Level))
+		fmt.Fprintf(&usr, "Write at the %s level.\n", LevelOrDefault(ctx.Level))
 	}
-	writeItemBlock(&usr, "TARGET items (exercise these with intent)", ctx.Selected.Targets, formatItemTarget)
-	writeItemBlock(&usr, "BACKGROUND vocabulary (known; draw from these freely)", ctx.Selected.Background, formatItemCompact)
-	writeItemBlock(&usr, "NEW items (introduce each with context support)", ctx.Selected.New, formatItemNew)
-	if g := ctx.Guidance; g != nil && g.Topic != "" {
-		fmt.Fprintf(&usr, "\nRequested topic: %s\n", g.Topic)
+	WriteItemBlock(&usr, "TARGET items (exercise these with intent)", ctx.Selected.Targets, FormatItemTarget)
+	WriteItemBlock(&usr, "BACKGROUND vocabulary (known; draw from these freely)", ctx.Selected.Background, FormatItemCompact)
+	WriteItemBlock(&usr, "NEW items (introduce each with context support)", ctx.Selected.New, FormatItemNew)
+	if g := ctx.Guidance; g != nil {
+		if g.Topic != "" {
+			fmt.Fprintf(&usr, "\nRequested topic: %s\n", g.Topic)
+		}
+		if len(g.Expressions) > 0 {
+			usr.WriteString("\nThe learner wants to be able to express:\n")
+			for _, e := range g.Expressions {
+				fmt.Fprintf(&usr, "- %s\n", e)
+			}
+		}
 	}
-	if avoid := recentTopics(ctx.RecentHistory); avoid != "" {
+	if avoid := RecentTopics(ctx.RecentHistory); avoid != "" {
 		fmt.Fprintf(&usr, "\nAvoid repeating these recent topics/settings: %s\n", avoid)
 	}
 	for i, ex := range examplesOf(b.Assets, ctx.Level) {
@@ -116,8 +124,8 @@ func (b TaskBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
 	sys.WriteString("Return JSON only — no prose, no markdown.")
 
 	var usr strings.Builder
-	fmt.Fprintf(&usr, "Level: %s\n", levelOrDefault(ctx.Level))
-	writeItemBlock(&usr, "Exercise these target items", ctx.Selected.Targets, formatItemTarget)
+	fmt.Fprintf(&usr, "Level: %s\n", LevelOrDefault(ctx.Level))
+	WriteItemBlock(&usr, "Exercise these target items", ctx.Selected.Targets, FormatItemTarget)
 	usr.WriteString("\nStory:\n")
 	usr.WriteString(b.Story)
 	usr.WriteString("\n")
@@ -157,7 +165,7 @@ func (b GraderBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
 	sys.WriteString("\nReturn JSON only — no prose, no markdown.")
 
 	var usr strings.Builder
-	writeItemBlock(&usr, "Target items the task exercises", ctx.Selected.Targets, formatItemTarget)
+	WriteItemBlock(&usr, "Target items the task exercises", ctx.Selected.Targets, FormatItemTarget)
 	usr.WriteString("\nStory (context):\n")
 	usr.WriteString(b.Story)
 	fmt.Fprintf(&usr, "\n\nTask content:\n%s\n", compactJSON(b.TaskContent))
@@ -255,7 +263,7 @@ func (b SkillTierVerifierBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
 	if ctx.UserID != "" {
 		fmt.Fprintf(&usr, "User ID: %s\n", ctx.UserID)
 	}
-	fmt.Fprintf(&usr, "Learner level: %s\n", levelOrDefault(ctx.Level))
+	fmt.Fprintf(&usr, "Learner level: %s\n", LevelOrDefault(ctx.Level))
 	fmt.Fprintf(&usr, "Skill: %s (%s)\n", b.Skill.Name, b.Skill.SkillID)
 	fmt.Fprintf(&usr, "Language: %s\n", b.Skill.Language)
 	if b.Skill.Category != "" {
@@ -431,11 +439,11 @@ func (b ScopeCheckBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
 	sys.WriteString("\nReturn JSON only — no prose, no markdown.")
 
 	var usr strings.Builder
-	if constraints := serializeSkillConstraints(ctx.Skills); constraints != "" {
+	if constraints := SerializeSkillConstraints(ctx.Skills); constraints != "" {
 		usr.WriteString("Learner can handle:\n")
 		usr.WriteString(constraints)
 	} else {
-		fmt.Fprintf(&usr, "Learner level: %s\n", levelOrDefault(ctx.Level))
+		fmt.Fprintf(&usr, "Learner level: %s\n", LevelOrDefault(ctx.Level))
 	}
 	fmt.Fprintf(&usr, "Requested topic: %s\n", b.Topic)
 
@@ -479,11 +487,11 @@ func (b PhraseSetBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
 	sys.WriteString("\nReturn JSON only — no prose, no markdown.")
 
 	var usr strings.Builder
-	if constraints := serializeSkillConstraints(ctx.Skills); constraints != "" {
+	if constraints := SerializeSkillConstraints(ctx.Skills); constraints != "" {
 		usr.WriteString("Complexity constraints:\n")
 		usr.WriteString(constraints)
 	} else {
-		fmt.Fprintf(&usr, "Write at the %s level.\n", levelOrDefault(ctx.Level))
+		fmt.Fprintf(&usr, "Write at the %s level.\n", LevelOrDefault(ctx.Level))
 	}
 	if g := ctx.Guidance; g != nil && len(g.Expressions) > 0 {
 		usr.WriteString("\nThe learner wants to be able to express:\n")
@@ -491,9 +499,9 @@ func (b PhraseSetBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
 			fmt.Fprintf(&usr, "- %s\n", e)
 		}
 	}
-	writeItemBlock(&usr, "TARGET items (teach these)", ctx.Selected.Targets, formatItemTarget)
-	writeItemBlock(&usr, "BACKGROUND vocabulary (known; use freely)", ctx.Selected.Background, formatItemCompact)
-	writeItemBlock(&usr, "NEW items (introduce with context support)", ctx.Selected.New, formatItemNew)
+	WriteItemBlock(&usr, "TARGET items (teach these)", ctx.Selected.Targets, FormatItemTarget)
+	WriteItemBlock(&usr, "BACKGROUND vocabulary (known; use freely)", ctx.Selected.Background, FormatItemCompact)
+	WriteItemBlock(&usr, "NEW items (introduce with context support)", ctx.Selected.New, FormatItemNew)
 
 	return LLMRequest{
 		System:         sys.String(),
