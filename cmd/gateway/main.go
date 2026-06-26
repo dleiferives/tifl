@@ -9,8 +9,10 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"log"
+	"net"
 	"net/http"
 	"time"
 
@@ -20,11 +22,15 @@ import (
 
 func main() {
 	cfgPath := flag.String("config", config.DefaultPath, "path to the YAML config file (optional)")
+	addrFlag := flag.String("addr", "", "listen address override (use 127.0.0.1:0 for a random local port)")
 	flag.Parse()
 
 	cfg, err := config.LoadGateway(*cfgPath)
 	if err != nil {
 		log.Fatalf("config: %v", err)
+	}
+	if *addrFlag != "" {
+		cfg.Addr = *addrFlag
 	}
 
 	provider, err := gateway.NewProvider(gateway.ProviderConfig{
@@ -46,7 +52,21 @@ func main() {
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	ln, err := net.Listen("tcp", cfg.Addr)
+	if err != nil {
+		log.Fatalf("listen %s: %v", cfg.Addr, err)
+	}
 
-	log.Printf("tifl gateway listening on http://%s (provider=%s)", cfg.Addr, provider.Name())
-	log.Fatal(srv.ListenAndServe())
+	log.Printf("tifl gateway listening on %s (provider=%s)", httpURL(ln.Addr()), provider.Name())
+	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Fatal(err)
+	}
+}
+
+func httpURL(addr net.Addr) string {
+	host, port, err := net.SplitHostPort(addr.String())
+	if err != nil {
+		return "http://" + addr.String()
+	}
+	return "http://" + net.JoinHostPort(host, port)
 }

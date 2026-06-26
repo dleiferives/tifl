@@ -19,6 +19,10 @@ annotated template is [`tifl.config.example.yaml`](../tifl.config.example.yaml).
 - **Default path:** `./tifl.yaml` (current working directory).
 - **Override path:** `-config PATH` on either binary
   (`go run ./cmd/gateway -config /etc/tifl/prod.yaml`).
+- **One-off listen address:** `-addr HOST:PORT` on either binary overrides the
+  resolved `addr` for that process. Use port `0` to bind a random unused local
+  port, e.g. `go run ./cmd/server -addr 127.0.0.1:0`; the startup log prints
+  the actual selected URL.
 - **Optional:** if the file does not exist, built-in defaults apply and the
   binary still starts. A file that exists but fails to parse is a fatal error
   (so a typo is loud, never silently ignored).
@@ -63,7 +67,8 @@ built-in default  <  tifl.yaml value  <  environment variable
 So `tifl.yaml` is the normal way to configure a deployment, and an env var still
 wins for a one-off run or in CI — e.g. `GATEWAY_MODEL=… make run-gateway`
 overrides the file's `gateway.model` for that run only. An empty string in the
-file counts as "unset" and falls through to the default.
+file counts as "unset" and falls through to the default. For listen addresses
+only, the `-addr` command-line flag is a final one-off override.
 
 ## `server:` keys
 
