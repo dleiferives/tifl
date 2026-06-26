@@ -66,10 +66,17 @@ func TestResolvePrefersGlossary(t *testing.T) {
 	must(t, repo.ReplaceStoryGlossary(ctx, storyID, []domain.StoryGlossaryEntry{
 		{StoryID: storyID, ItemKey: "a", Gloss: "the first letter"},
 	}))
-	d, err := svc.Resolve(ctx, userID, storyID, "a")
+	res, err := svc.ResolveWithTrace(ctx, userID, storyID, "a")
 	must(t, err)
+	d := res.Definition
 	if d.Source != domain.DefinitionSourceGlossary || d.Gloss != "the first letter" {
 		t.Fatalf("expected glossary hit, got %+v", d)
+	}
+	if res.Trace.QueryKey != "a" || res.Trace.ResolvedKey != "a" || res.Trace.WinningSource != domain.DefinitionSourceGlossary {
+		t.Fatalf("unexpected trace header: %+v", res.Trace)
+	}
+	if step, ok := traceStep(res.Trace, "story_glossary"); !ok || step.Status != "hit" || step.Source != domain.DefinitionSourceGlossary {
+		t.Fatalf("expected glossary trace hit, got %+v present=%v", step, ok)
 	}
 	if len(client.Calls) != 0 {
 		t.Fatalf("glossary hit must not call the LLM, got %d calls", len(client.Calls))
@@ -86,10 +93,17 @@ func TestResolvePrefersUserDictionary(t *testing.T) {
 	})
 	must(t, err)
 
-	d, err := svc.Resolve(ctx, userID, storyID, "a")
+	res, err := svc.ResolveWithTrace(ctx, userID, storyID, "a")
 	must(t, err)
+	d := res.Definition
 	if d.Source != domain.DefinitionSourceUser || d.Gloss != "my custom gloss" || d.Notes != "personal mnemonic" {
 		t.Fatalf("expected user dictionary hit, got %+v", d)
+	}
+	if len(res.Trace.Steps) != 1 {
+		t.Fatalf("user hit should stop trace after first step, got %+v", res.Trace.Steps)
+	}
+	if step := res.Trace.Steps[0]; step.Step != "user_dictionary" || step.Status != "hit" || step.Source != domain.DefinitionSourceUser {
+		t.Fatalf("expected user dictionary trace hit, got %+v", step)
 	}
 	if len(client.Calls) != 0 {
 		t.Fatalf("user dictionary hit must not call the LLM, got %d calls", len(client.Calls))
@@ -104,13 +118,67 @@ func TestResolveFallsBackToMetadata(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	d, err := svc.Resolve(ctx, userID, storyID, "a")
+	res, err := svc.ResolveWithTrace(ctx, userID, storyID, "a")
 	must(t, err)
+	d := res.Definition
 	if d.Source != domain.DefinitionSourceMetadata || d.Gloss != "meta gloss" {
 		t.Fatalf("expected metadata hit, got %+v", d)
 	}
+	if step, ok := traceStep(res.Trace, "knowledge_metadata"); !ok || step.Status != "hit" || step.Source != domain.DefinitionSourceMetadata {
+		t.Fatalf("expected metadata trace hit, got %+v present=%v", step, ok)
+	}
 	if len(client.Calls) != 0 {
 		t.Fatal("metadata hit must not call the LLM")
+	}
+}
+
+func TestResolveWithTraceSharedCache(t *testing.T) {
+	ctx, svc, repo, client, userID, storyID := defFixture(t, `{"gloss":"from llm"}`)
+	must(t, repo.UpsertDefinition(ctx, domain.Definition{
+		Language: "xx", ItemKey: "a", Source: domain.DefinitionSourceWiktionary, Gloss: "cache gloss",
+	}))
+
+	res, err := svc.ResolveWithTrace(ctx, userID, storyID, "a")
+	must(t, err)
+	if res.Definition.Source != domain.DefinitionSourceWiktionary || res.Definition.Gloss != "cache gloss" {
+		t.Fatalf("expected shared cache hit, got %+v", res.Definition)
+	}
+	step, ok := traceStep(res.Trace, "shared_cache")
+	if !ok || step.Status != "hit" || step.Source != domain.DefinitionSourceWiktionary || step.Count != 1 {
+		t.Fatalf("expected shared cache trace hit, got %+v present=%v", step, ok)
+	}
+	if len(client.Calls) != 0 {
+		t.Fatalf("shared cache hit must not call the LLM, got %d calls", len(client.Calls))
+	}
+}
+
+func TestResolveWithTraceCanonicalFollow(t *testing.T) {
+	ctx, svc, repo, client, userID, storyID := defFixture(t, `{"gloss":"from llm"}`)
+	must(t, repo.UpsertDefinitions(ctx, []domain.Definition{
+		{
+			Language: "xx", ItemKey: "a", Source: domain.DefinitionSourceWiktionary,
+			Gloss: "form gloss", CanonicalKey: "lemma",
+		},
+		{
+			Language: "xx", ItemKey: "lemma", Source: domain.DefinitionSourceWiktionary,
+			Gloss: "lemma gloss",
+		},
+	}))
+
+	res, err := svc.ResolveWithTrace(ctx, userID, storyID, "a")
+	must(t, err)
+	if res.Definition.ItemKey != "lemma" || res.Definition.Gloss != "lemma gloss" {
+		t.Fatalf("expected canonical definition, got %+v", res.Definition)
+	}
+	if res.Trace.QueryKey != "a" || res.Trace.ResolvedKey != "lemma" {
+		t.Fatalf("unexpected canonical trace header: %+v", res.Trace)
+	}
+	step, ok := traceStep(res.Trace, "canonical_key_follow")
+	if !ok || step.Status != "hit" || step.TargetKey != "lemma" || step.Source != domain.DefinitionSourceWiktionary {
+		t.Fatalf("expected canonical follow trace hit, got %+v present=%v", step, ok)
+	}
+	if len(client.Calls) != 0 {
+		t.Fatalf("canonical cache hit must not call the LLM, got %d calls", len(client.Calls))
 	}
 }
 
@@ -148,6 +216,15 @@ func TestResolveNoClientIsUnavailable(t *testing.T) {
 	if _, err := svc.Resolve(ctx, user.UserID, story.StoryID, "a"); err != reader.ErrLLMUnavailable {
 		t.Fatalf("want ErrLLMUnavailable, got %v", err)
 	}
+}
+
+func traceStep(trace reader.DefinitionTrace, stepName string) (reader.DefinitionTraceStep, bool) {
+	for _, step := range trace.Steps {
+		if step.Step == stepName {
+			return step, true
+		}
+	}
+	return reader.DefinitionTraceStep{}, false
 }
 
 func TestSentenceBreakdownCaches(t *testing.T) {

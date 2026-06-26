@@ -269,13 +269,31 @@ func (h *Handler) writeReaderError(w http.ResponseWriter, err error) {
 // --- definition & breakdown popups -----------------------------------------
 
 type definitionDTO struct {
-	Key             string `json:"key"`
-	Source          string `json:"source"`
-	Gloss           string `json:"gloss"`
-	GrammaticalNote string `json:"grammatical_note,omitempty"`
-	Example         string `json:"example,omitempty"`
-	Etymology       string `json:"etymology,omitempty"`
-	Notes           string `json:"notes,omitempty"`
+	Key             string             `json:"key"`
+	Source          string             `json:"source"`
+	Gloss           string             `json:"gloss"`
+	GrammaticalNote string             `json:"grammatical_note,omitempty"`
+	Example         string             `json:"example,omitempty"`
+	Etymology       string             `json:"etymology,omitempty"`
+	Notes           string             `json:"notes,omitempty"`
+	Trace           definitionTraceDTO `json:"trace"`
+}
+
+type definitionTraceDTO struct {
+	QueryKey      string                   `json:"query_key"`
+	ResolvedKey   string                   `json:"resolved_key"`
+	WinningSource string                   `json:"winning_source"`
+	Steps         []definitionTraceStepDTO `json:"steps"`
+}
+
+type definitionTraceStepDTO struct {
+	Step      string `json:"step"`
+	Status    string `json:"status"`
+	Source    string `json:"source,omitempty"`
+	Key       string `json:"key,omitempty"`
+	TargetKey string `json:"target_key,omitempty"`
+	Count     int    `json:"count,omitempty"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 // getDefinition resolves a word's definition for the reader popup, walking
@@ -288,15 +306,31 @@ func (h *Handler) getDefinition(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("key query parameter is required"))
 		return
 	}
-	d, err := h.defs.Resolve(h.llmCallContext(r, ""), h.currentUserID(r), storyID, key)
+	res, err := h.defs.ResolveWithTrace(h.llmCallContext(r, ""), h.currentUserID(r), storyID, key)
 	if err != nil {
 		h.writeReaderError(w, err)
 		return
 	}
+	d := res.Definition
 	writeJSON(w, http.StatusOK, definitionDTO{
 		Key: d.ItemKey, Source: d.Source, Gloss: d.Gloss,
 		GrammaticalNote: d.GrammaticalNote, Example: d.Example, Etymology: d.Etymology, Notes: d.Notes,
+		Trace: definitionTraceFromReader(res.Trace),
 	})
+}
+
+func definitionTraceFromReader(trace reader.DefinitionTrace) definitionTraceDTO {
+	steps := make([]definitionTraceStepDTO, 0, len(trace.Steps))
+	for _, step := range trace.Steps {
+		steps = append(steps, definitionTraceStepDTO{
+			Step: step.Step, Status: step.Status, Source: step.Source, Key: step.Key,
+			TargetKey: step.TargetKey, Count: step.Count, Reason: step.Reason,
+		})
+	}
+	return definitionTraceDTO{
+		QueryKey: trace.QueryKey, ResolvedKey: trace.ResolvedKey,
+		WinningSource: trace.WinningSource, Steps: steps,
+	}
 }
 
 type dictionaryEntryDTO struct {

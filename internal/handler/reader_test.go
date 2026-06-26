@@ -234,12 +234,29 @@ func TestGetDefinitionLiveLLM(t *testing.T) {
 	}
 	var out struct {
 		Key, Source, Gloss string
+		Trace              struct {
+			QueryKey      string `json:"query_key"`
+			ResolvedKey   string `json:"resolved_key"`
+			WinningSource string `json:"winning_source"`
+			Steps         []struct {
+				Step   string `json:"step"`
+				Status string `json:"status"`
+				Source string `json:"source"`
+			} `json:"steps"`
+		} `json:"trace"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatal(err)
 	}
 	if out.Key != "a" || out.Source != "llm" || out.Gloss == "" {
 		t.Fatalf("unexpected definition: %+v", out)
+	}
+	if out.Trace.QueryKey != "a" || out.Trace.ResolvedKey != "a" || out.Trace.WinningSource != "llm" {
+		t.Fatalf("unexpected trace header: %+v", out.Trace)
+	}
+	if len(out.Trace.Steps) == 0 || out.Trace.Steps[len(out.Trace.Steps)-1].Step != "llm_fallback" ||
+		out.Trace.Steps[len(out.Trace.Steps)-1].Status != "hit" {
+		t.Fatalf("expected llm fallback trace hit, got %+v", out.Trace.Steps)
 	}
 }
 
@@ -286,12 +303,24 @@ func TestDictionaryEntryOverridesDefinitionThenDeleteRestoresFallback(t *testing
 	defer resp.Body.Close()
 	var def struct {
 		Key, Source, Gloss, Notes string
+		Trace                     struct {
+			WinningSource string `json:"winning_source"`
+			Steps         []struct {
+				Step   string `json:"step"`
+				Status string `json:"status"`
+				Source string `json:"source"`
+			} `json:"steps"`
+		} `json:"trace"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&def); err != nil {
 		t.Fatal(err)
 	}
 	if def.Source != "user" || def.Gloss != "custom a" || def.Notes != "mine" {
 		t.Fatalf("definition did not use custom entry: %+v", def)
+	}
+	if def.Trace.WinningSource != "user" || len(def.Trace.Steps) != 1 ||
+		def.Trace.Steps[0].Step != "user_dictionary" || def.Trace.Steps[0].Status != "hit" {
+		t.Fatalf("definition trace did not use custom entry: %+v", def.Trace)
 	}
 
 	req, _ = http.NewRequest(http.MethodDelete, srv.URL+"/api/v1/dictionary/entry?language=xx&key=a", nil)
@@ -308,14 +337,45 @@ func TestDictionaryEntryOverridesDefinitionThenDeleteRestoresFallback(t *testing
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	def = struct {
+	var fallbackDef struct {
 		Key, Source, Gloss, Notes string
-	}{}
-	if err := json.NewDecoder(resp.Body).Decode(&def); err != nil {
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&fallbackDef); err != nil {
 		t.Fatal(err)
 	}
-	if def.Source == "user" {
-		t.Fatalf("delete should restore fallback chain, got %+v", def)
+	if fallbackDef.Source == "user" {
+		t.Fatalf("delete should restore fallback chain, got %+v", fallbackDef)
+	}
+}
+
+func TestGetDefinitionOtherUserStoryIs404WithoutTrace(t *testing.T) {
+	srv, repo := newServer(t, true)
+	ctx := context.Background()
+	other, err := repo.CreateUser(ctx, domain.User{Email: "other@example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	story, err := repo.CreateStory(ctx, domain.Story{
+		UserID: other.UserID, Language: "xx", Text: "a", Level: "beginner",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(srv.URL + "/api/v1/stories/" + story.StoryID + "/definition?key=a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("want 404 for another user's story, got %d", resp.StatusCode)
+	}
+	var out map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := out["trace"]; ok {
+		t.Fatalf("404 response leaked trace details: %+v", out)
 	}
 }
 
