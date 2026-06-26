@@ -20,10 +20,19 @@ var levelMix = map[string][]Spec{
 		{TypeComprehensionMC, 3},
 		{TypeFillBlank, 1},
 	},
+	"elementary": {
+		{TypeComprehensionMC, 3},
+		{TypeFillBlank, 1},
+	},
 	"intermediate": {
 		{TypeComprehensionMC, 2},
 		{TypeFillBlank, 2},
 		{TypeProduction, 1},
+	},
+	"upper-intermediate": {
+		{TypeComprehensionMC, 1},
+		{TypeFillBlank, 2},
+		{TypeProduction, 2},
 	},
 	"advanced": {
 		{TypeComprehensionMC, 1},
