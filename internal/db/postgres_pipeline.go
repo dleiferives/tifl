@@ -17,6 +17,12 @@ import (
 // transaction so a stage retry is atomic. Behaviour matches the SQLite backend —
 // the parity suite asserts that.
 
+// pgSessionColumns is the ordered SELECT column list consumed by scanPgSessionPrefix.
+// Every SELECT from the sessions table must use this constant to stay in sync.
+const pgSessionColumns = "session_id, user_id, story_id, language, level, selected_targets, selected_new," +
+	" session_type, topic, user_expressions, expression_output, status," +
+	" created_at, reading_started_at, completed_at"
+
 func (r *PostgresRepository) CreateSession(ctx context.Context, s domain.Session) (domain.Session, error) {
 	if s.SessionID == "" {
 		s.SessionID = id.New()
@@ -50,9 +56,7 @@ func (r *PostgresRepository) CreateSession(ctx context.Context, s domain.Session
 
 func (r *PostgresRepository) GetSession(ctx context.Context, sessionID string) (domain.Session, error) {
 	row := r.pool.QueryRow(ctx,
-		`SELECT session_id, user_id, story_id, language, level, selected_targets, selected_new,
-		        session_type, topic, user_expressions, expression_output, status,
-		        created_at, reading_started_at, completed_at
+		`SELECT `+pgSessionColumns+`
 		 FROM sessions WHERE session_id = $1`, sessionID)
 	return scanPgSession(row)
 }
@@ -60,9 +64,7 @@ func (r *PostgresRepository) GetSession(ctx context.Context, sessionID string) (
 func (r *PostgresRepository) ListSessions(ctx context.Context, userID string, opts domain.ListSessionsOptions) ([]domain.SessionOverview, error) {
 	opts = normalizeListSessionsOptions(opts)
 	rows, err := r.pool.Query(ctx,
-		`SELECT session_id, user_id, story_id, language, level, selected_targets, selected_new,
-		        session_type, topic, user_expressions, expression_output, status,
-		        created_at, reading_started_at, completed_at,
+		`SELECT `+pgSessionColumns+`,
 		        (SELECT COUNT(*) FROM tasks t WHERE t.session_id = s.session_id AND t.user_id = s.user_id),
 		        (SELECT COUNT(*) FROM tasks t
 		          WHERE t.session_id = s.session_id AND t.user_id = s.user_id
@@ -89,9 +91,7 @@ func (r *PostgresRepository) ListSessions(ctx context.Context, userID string, op
 
 func (r *PostgresRepository) GetSessionDetail(ctx context.Context, userID, sessionID string) (domain.SessionDetail, error) {
 	row := r.pool.QueryRow(ctx,
-		`SELECT session_id, user_id, story_id, language, level, selected_targets, selected_new,
-		        session_type, topic, user_expressions, expression_output, status,
-		        created_at, reading_started_at, completed_at,
+		`SELECT `+pgSessionColumns+`,
 		        (SELECT COUNT(*) FROM tasks t WHERE t.session_id = s.session_id AND t.user_id = s.user_id),
 		        (SELECT COUNT(*) FROM tasks t
 		          WHERE t.session_id = s.session_id AND t.user_id = s.user_id

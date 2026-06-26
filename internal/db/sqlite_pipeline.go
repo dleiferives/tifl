@@ -16,6 +16,12 @@ import (
 // operations run in a transaction so a stage retry is all-or-nothing. See
 // context/session-types.md and context/database-schema.md.
 
+// sessionColumns is the ordered SELECT column list consumed by scanSessionPrefix.
+// Every SELECT from the sessions table must use this constant to stay in sync.
+const sessionColumns = "session_id, user_id, story_id, language, level, selected_targets, selected_new," +
+	" session_type, topic, user_expressions, expression_output, status," +
+	" created_at, reading_started_at, completed_at"
+
 func (r *SQLiteRepository) CreateSession(ctx context.Context, s domain.Session) (domain.Session, error) {
 	if s.SessionID == "" {
 		s.SessionID = id.New()
@@ -48,9 +54,7 @@ func (r *SQLiteRepository) CreateSession(ctx context.Context, s domain.Session) 
 
 func (r *SQLiteRepository) GetSession(ctx context.Context, sessionID string) (domain.Session, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT session_id, user_id, story_id, language, level, selected_targets, selected_new,
-		        session_type, topic, user_expressions, expression_output, status,
-		        created_at, reading_started_at, completed_at
+		`SELECT `+sessionColumns+`
 		 FROM sessions WHERE session_id = ?`, sessionID)
 	return scanSession(row)
 }
@@ -58,9 +62,7 @@ func (r *SQLiteRepository) GetSession(ctx context.Context, sessionID string) (do
 func (r *SQLiteRepository) ListSessions(ctx context.Context, userID string, opts domain.ListSessionsOptions) ([]domain.SessionOverview, error) {
 	opts = normalizeListSessionsOptions(opts)
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT session_id, user_id, story_id, language, level, selected_targets, selected_new,
-		        session_type, topic, user_expressions, expression_output, status,
-		        created_at, reading_started_at, completed_at,
+		`SELECT `+sessionColumns+`,
 		        (SELECT COUNT(*) FROM tasks t WHERE t.session_id = s.session_id AND t.user_id = s.user_id),
 		        (SELECT COUNT(*) FROM tasks t
 		          WHERE t.session_id = s.session_id AND t.user_id = s.user_id
@@ -87,9 +89,7 @@ func (r *SQLiteRepository) ListSessions(ctx context.Context, userID string, opts
 
 func (r *SQLiteRepository) GetSessionDetail(ctx context.Context, userID, sessionID string) (domain.SessionDetail, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT session_id, user_id, story_id, language, level, selected_targets, selected_new,
-		        session_type, topic, user_expressions, expression_output, status,
-		        created_at, reading_started_at, completed_at,
+		`SELECT `+sessionColumns+`,
 		        (SELECT COUNT(*) FROM tasks t WHERE t.session_id = s.session_id AND t.user_id = s.user_id),
 		        (SELECT COUNT(*) FROM tasks t
 		          WHERE t.session_id = s.session_id AND t.user_id = s.user_id
