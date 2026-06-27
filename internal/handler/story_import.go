@@ -8,10 +8,10 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/dleiferives/tifl/internal/document"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/story"
 )
@@ -21,6 +21,8 @@ const (
 	maxStoryImportMultipartBytes = maxStoryImportBytes + 64<<10
 	maxStoryImportFormValueBytes = 4 << 10
 )
+
+var storyImportExtractors = document.DefaultRegistry()
 
 type importStoryRequest struct {
 	Language string `json:"language"`
@@ -146,7 +148,7 @@ func decodeMultipartImportStoryRequest(w http.ResponseWriter, r *http.Request) (
 				return importStoryRequest{}, errors.New("only one text file may be uploaded")
 			}
 			fileSeen = true
-			req.Text, readErr = readImportTextFile(part)
+			req.Text, readErr = readImportFile(part)
 		default:
 			_, readErr = io.Copy(io.Discard, part)
 		}
@@ -174,36 +176,9 @@ func readImportFormValue(r io.Reader) (string, error) {
 	return string(data), nil
 }
 
-func readImportTextFile(part *multipart.Part) (string, error) {
-	if strings.ToLower(filepath.Ext(part.FileName())) != ".txt" {
-		return "", errors.New("only .txt uploads are supported")
-	}
-	if err := validateImportTextContentType(part.Header.Get("Content-Type")); err != nil {
-		return "", err
-	}
-	data, err := io.ReadAll(io.LimitReader(part, maxStoryImportBytes+1))
-	if err != nil {
-		return "", fmt.Errorf("read text file: %w", err)
-	}
-	if len(data) > maxStoryImportBytes {
-		return "", fmt.Errorf("text file must be %d bytes or smaller", maxStoryImportBytes)
-	}
-	if !utf8.Valid(data) {
-		return "", errors.New("text file must be UTF-8")
-	}
-	return string(data), nil
-}
-
-func validateImportTextContentType(header string) error {
-	if strings.TrimSpace(header) == "" {
-		return nil
-	}
-	mediaType, _, err := mime.ParseMediaType(header)
-	if err != nil {
-		return fmt.Errorf("invalid text file content type: %w", err)
-	}
-	if !strings.EqualFold(mediaType, "text/plain") {
-		return fmt.Errorf("only text/plain uploads are supported, got %q", mediaType)
-	}
-	return nil
+func readImportFile(part *multipart.Part) (string, error) {
+	return storyImportExtractors.Extract(part, document.Metadata{
+		Filename:    part.FileName(),
+		ContentType: part.Header.Get("Content-Type"),
+	}, maxStoryImportBytes)
 }
