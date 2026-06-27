@@ -65,6 +65,9 @@ func (r *SQLiteRepository) CreateUser(ctx context.Context, u domain.User) (domai
 	if u.UserID == "" {
 		u.UserID = id.New()
 	}
+	if u.EmailCanonical == "" {
+		u.EmailCanonical = u.Email
+	}
 	if u.CreatedAt == 0 {
 		u.CreatedAt = float64(time.Now().Unix())
 	}
@@ -73,9 +76,9 @@ func (r *SQLiteRepository) CreateUser(ctx context.Context, u domain.User) (domai
 		return domain.User{}, err
 	}
 	_, err = r.db.ExecContext(ctx,
-		`INSERT INTO users(user_id, email, password_hash, created_at, last_login, settings)
-		 VALUES(?, ?, ?, ?, ?, ?)`,
-		u.UserID, u.Email, u.PasswordHash, u.CreatedAt, nullFloat(u.LastLogin), settings)
+		`INSERT INTO users(user_id, email, email_canonical, password_hash, created_at, last_login, settings)
+		 VALUES(?, ?, ?, ?, ?, ?, ?)`,
+		u.UserID, u.Email, u.EmailCanonical, u.PasswordHash, u.CreatedAt, nullFloat(u.LastLogin), settings)
 	if err != nil {
 		return domain.User{}, err
 	}
@@ -84,14 +87,14 @@ func (r *SQLiteRepository) CreateUser(ctx context.Context, u domain.User) (domai
 
 func (r *SQLiteRepository) GetUser(ctx context.Context, userID string) (domain.User, error) {
 	return scanUser(r.db.QueryRowContext(ctx,
-		`SELECT user_id, email, password_hash, created_at, last_login, settings
+		`SELECT user_id, email, email_canonical, password_hash, created_at, last_login, settings
 		 FROM users WHERE user_id = ?`, userID))
 }
 
-func (r *SQLiteRepository) GetUserByEmail(ctx context.Context, email string) (domain.User, error) {
+func (r *SQLiteRepository) GetUserByEmail(ctx context.Context, emailCanonical string) (domain.User, error) {
 	return scanUser(r.db.QueryRowContext(ctx,
-		`SELECT user_id, email, password_hash, created_at, last_login, settings
-		 FROM users WHERE email = ?`, email))
+		`SELECT user_id, email, email_canonical, password_hash, created_at, last_login, settings
+		 FROM users WHERE email_canonical = ?`, emailCanonical))
 }
 
 func (r *SQLiteRepository) EnsureLocalUser(ctx context.Context) (domain.User, error) {
@@ -103,8 +106,9 @@ func (r *SQLiteRepository) EnsureLocalUser(ctx context.Context) (domain.User, er
 		return domain.User{}, err
 	}
 	return r.CreateUser(ctx, domain.User{
-		UserID: domain.LocalUserID,
-		Email:  "local@tifl.local",
+		UserID:         domain.LocalUserID,
+		Email:          "local@tifl.local",
+		EmailCanonical: "local@tifl.local",
 	})
 }
 
@@ -377,7 +381,7 @@ func scanUser(row *sql.Row) (domain.User, error) {
 		lastLogin sql.NullFloat64
 		settings  sql.NullString
 	)
-	err := row.Scan(&u.UserID, &u.Email, &u.PasswordHash, &u.CreatedAt, &lastLogin, &settings)
+	err := row.Scan(&u.UserID, &u.Email, &u.EmailCanonical, &u.PasswordHash, &u.CreatedAt, &lastLogin, &settings)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.User{}, ErrNotFound
 	}

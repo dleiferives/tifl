@@ -83,8 +83,8 @@ func TestRefreshRotationReplayAndConcurrentSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deviceA.User.Email != "alice@example.com" {
-		t.Fatalf("email not normalized: %q", deviceA.User.Email)
+	if deviceA.User.Email != "Alice@Example.COM" || deviceA.User.EmailCanonical != "alice@example.com" {
+		t.Fatalf("email display/canonical mismatch: %+v", deviceA.User)
 	}
 	deviceB, err := service.Login(ctx, "alice@example.com", password)
 	if err != nil {
@@ -112,6 +112,39 @@ func TestRefreshRotationReplayAndConcurrentSessions(t *testing.T) {
 	}
 	if _, err := service.Refresh(ctx, deviceB2.RefreshToken); !errors.Is(err, ErrInvalidRefresh) {
 		t.Fatalf("logout-all should revoke other device: %v", err)
+	}
+}
+
+func TestRegisterStoresDisplayEmailAndLoginUsesCanonicalEmail(t *testing.T) {
+	ctx := context.Background()
+	repo := db.NewFake()
+	service, err := NewService(repo, testSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	password := "correct horse battery staple"
+
+	session, err := service.Register(ctx, " Alice@bücher.Example ", password)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.User.Email != "Alice@bücher.Example" {
+		t.Fatalf("display email was not preserved: %+v", session.User)
+	}
+	if session.User.EmailCanonical != "alice@xn--bcher-kva.example" {
+		t.Fatalf("canonical email = %q", session.User.EmailCanonical)
+	}
+
+	login, err := service.Login(ctx, "alice@xn--bcher-kva.example", password)
+	if err != nil {
+		t.Fatalf("login with equivalent canonical form: %v", err)
+	}
+	if login.User.UserID != session.User.UserID || login.User.Email != "Alice@bücher.Example" {
+		t.Fatalf("login returned wrong/display-mutated user: %+v", login.User)
+	}
+
+	if _, err := service.Register(ctx, "alice@xn--bcher-kva.example", password); !errors.Is(err, ErrEmailUnavailable) {
+		t.Fatalf("duplicate canonical registration error = %v", err)
 	}
 }
 

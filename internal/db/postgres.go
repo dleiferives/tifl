@@ -125,6 +125,9 @@ func (r *PostgresRepository) CreateUser(ctx context.Context, u domain.User) (dom
 	if u.UserID == "" {
 		u.UserID = id.New()
 	}
+	if u.EmailCanonical == "" {
+		u.EmailCanonical = u.Email
+	}
 	if u.CreatedAt == 0 {
 		u.CreatedAt = float64(time.Now().Unix())
 	}
@@ -133,9 +136,9 @@ func (r *PostgresRepository) CreateUser(ctx context.Context, u domain.User) (dom
 		return domain.User{}, err
 	}
 	_, err = r.pool.Exec(ctx,
-		`INSERT INTO users(user_id, email, password_hash, created_at, last_login, settings)
-		 VALUES($1, $2, $3, $4, $5, $6)`,
-		u.UserID, u.Email, u.PasswordHash, u.CreatedAt, u.LastLogin, settings)
+		`INSERT INTO users(user_id, email, email_canonical, password_hash, created_at, last_login, settings)
+		 VALUES($1, $2, $3, $4, $5, $6, $7)`,
+		u.UserID, u.Email, u.EmailCanonical, u.PasswordHash, u.CreatedAt, u.LastLogin, settings)
 	if err != nil {
 		return domain.User{}, err
 	}
@@ -144,14 +147,14 @@ func (r *PostgresRepository) CreateUser(ctx context.Context, u domain.User) (dom
 
 func (r *PostgresRepository) GetUser(ctx context.Context, userID string) (domain.User, error) {
 	return scanPgUser(r.pool.QueryRow(ctx,
-		`SELECT user_id, email, password_hash, created_at, last_login, settings
+		`SELECT user_id, email, email_canonical, password_hash, created_at, last_login, settings
 		 FROM users WHERE user_id = $1`, userID))
 }
 
-func (r *PostgresRepository) GetUserByEmail(ctx context.Context, email string) (domain.User, error) {
+func (r *PostgresRepository) GetUserByEmail(ctx context.Context, emailCanonical string) (domain.User, error) {
 	return scanPgUser(r.pool.QueryRow(ctx,
-		`SELECT user_id, email, password_hash, created_at, last_login, settings
-		 FROM users WHERE email = $1`, email))
+		`SELECT user_id, email, email_canonical, password_hash, created_at, last_login, settings
+		 FROM users WHERE email_canonical = $1`, emailCanonical))
 }
 
 func (r *PostgresRepository) EnsureLocalUser(ctx context.Context) (domain.User, error) {
@@ -163,8 +166,9 @@ func (r *PostgresRepository) EnsureLocalUser(ctx context.Context) (domain.User, 
 		return domain.User{}, err
 	}
 	return r.CreateUser(ctx, domain.User{
-		UserID: domain.LocalUserID,
-		Email:  "local@tifl.local",
+		UserID:         domain.LocalUserID,
+		Email:          "local@tifl.local",
+		EmailCanonical: "local@tifl.local",
 	})
 }
 
@@ -406,7 +410,7 @@ func scanPgUser(row pgx.Row) (domain.User, error) {
 		u        domain.User
 		settings []byte
 	)
-	err := row.Scan(&u.UserID, &u.Email, &u.PasswordHash, &u.CreatedAt, &u.LastLogin, &settings)
+	err := row.Scan(&u.UserID, &u.Email, &u.EmailCanonical, &u.PasswordHash, &u.CreatedAt, &u.LastLogin, &settings)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.User{}, ErrNotFound
 	}

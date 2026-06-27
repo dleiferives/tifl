@@ -21,7 +21,7 @@ type FakeRepository struct {
 	mu sync.Mutex
 
 	users       map[string]domain.User // user_id -> user
-	emailIndex  map[string]string      // email -> user_id (unique)
+	emailIndex  map[string]string      // canonical email -> user_id (unique)
 	refresh     map[string]domain.RefreshToken
 	authEvents  []domain.AuthSecurityEvent
 	authIDs     map[string]bool
@@ -102,11 +102,19 @@ func (r *FakeRepository) CreateUser(_ context.Context, u domain.User) (domain.Us
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if _, dup := r.emailIndex[u.Email]; dup {
-		return domain.User{}, errFakeUnique("users.email")
-	}
 	if u.UserID == "" {
 		u.UserID = id.New()
+	}
+	if u.EmailCanonical == "" {
+		u.EmailCanonical = u.Email
+	}
+	for _, existing := range r.users {
+		if existing.Email == u.Email {
+			return domain.User{}, errFakeUnique("users.email")
+		}
+	}
+	if _, dup := r.emailIndex[u.EmailCanonical]; dup {
+		return domain.User{}, errFakeUnique("users.email_canonical")
 	}
 	if _, dup := r.users[u.UserID]; dup {
 		return domain.User{}, errFakeUnique("users.user_id")
@@ -117,7 +125,7 @@ func (r *FakeRepository) CreateUser(_ context.Context, u domain.User) (domain.Us
 	u.Settings = cloneJSONMap(u.Settings)
 	u.LastLogin = cloneFloat(u.LastLogin)
 	r.users[u.UserID] = u
-	r.emailIndex[u.Email] = u.UserID
+	r.emailIndex[u.EmailCanonical] = u.UserID
 	return u, nil
 }
 
@@ -131,10 +139,10 @@ func (r *FakeRepository) GetUser(_ context.Context, userID string) (domain.User,
 	return cloneUser(u), nil
 }
 
-func (r *FakeRepository) GetUserByEmail(_ context.Context, email string) (domain.User, error) {
+func (r *FakeRepository) GetUserByEmail(_ context.Context, emailCanonical string) (domain.User, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	uid, ok := r.emailIndex[email]
+	uid, ok := r.emailIndex[emailCanonical]
 	if !ok {
 		return domain.User{}, ErrNotFound
 	}
@@ -146,8 +154,9 @@ func (r *FakeRepository) EnsureLocalUser(ctx context.Context) (domain.User, erro
 		return u, nil
 	}
 	return r.CreateUser(ctx, domain.User{
-		UserID: domain.LocalUserID,
-		Email:  "local@tifl.local",
+		UserID:         domain.LocalUserID,
+		Email:          "local@tifl.local",
+		EmailCanonical: "local@tifl.local",
 	})
 }
 

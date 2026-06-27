@@ -43,7 +43,7 @@ type Repository interface {
 	// Users.
 	CreateUser(ctx context.Context, u domain.User) (domain.User, error)
 	GetUser(ctx context.Context, userID string) (domain.User, error)
-	GetUserByEmail(ctx context.Context, email string) (domain.User, error)
+	GetUserByEmail(ctx context.Context, emailCanonical string) (domain.User, error)
 	EnsureLocalUser(ctx context.Context) (domain.User, error)
 	UpdateUserLastLogin(ctx context.Context, userID string, at float64) error
 	GetUserProfile(ctx context.Context, userID string) (domain.UserProfile, error)

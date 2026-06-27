@@ -212,13 +212,14 @@ func upsertLocalUser(ctx context.Context, tx *sql.Tx) error {
 		},
 	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO users(user_id, email, password_hash, created_at, last_login, settings)
-		 VALUES(?, ?, ?, ?, ?, ?)
+		`INSERT INTO users(user_id, email, email_canonical, password_hash, created_at, last_login, settings)
+		 VALUES(?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(user_id) DO UPDATE SET
 		   email = excluded.email,
+		   email_canonical = excluded.email_canonical,
 		   password_hash = excluded.password_hash,
 		   settings = excluded.settings`,
-		domain.LocalUserID, "local@tifl.local", "", demoCreatedAt, nil, jsonString(settings)); err != nil {
+		domain.LocalUserID, "local@tifl.local", "local@tifl.local", "", demoCreatedAt, nil, jsonString(settings)); err != nil {
 		return fmt.Errorf("seed local user: %w", err)
 	}
 	return nil
