@@ -1,8 +1,12 @@
 package handler
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -64,7 +68,7 @@ func (h *Handler) requireUser(next http.Handler) http.Handler {
 }
 
 func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
-	if !h.allowAuthAttempt(w, r) {
+	if !h.allowAuthAttempt(w, r, domain.AuthFlowRegister) {
 		return
 	}
 	var req credentialsRequest
@@ -89,7 +93,7 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
-	if !h.allowAuthAttempt(w, r) {
+	if !h.allowAuthAttempt(w, r, domain.AuthFlowLogin) {
 		return
 	}
 	var req credentialsRequest
@@ -159,13 +163,54 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toUserDTO(user))
 }
 
-func (h *Handler) allowAuthAttempt(w http.ResponseWriter, r *http.Request) bool {
+func (h *Handler) allowAuthAttempt(w http.ResponseWriter, r *http.Request, flow domain.AuthFlow) bool {
 	if h.authLimiter.Allow(r) {
 		return true
 	}
+	h.recordThrottledAuthAttempt(r, flow)
 	w.Header().Set("Retry-After", "60")
 	writeError(w, http.StatusTooManyRequests, errors.New("too many authentication attempts"))
 	return false
+}
+
+func (h *Handler) recordThrottledAuthAttempt(r *http.Request, flow domain.AuthFlow) {
+	var req credentialsRequest
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	_, _, _ = h.repo.InsertAuthSecurityEvent(r.Context(), domain.AuthSecurityEvent{
+		EventType:           domain.AuthSecurityEventThrottledAttempt,
+		Flow:                flow,
+		EmailHash:           authn.SecurityEmailHash(req.Email),
+		SourceAddressBucket: authSourceAddressBucket(r),
+		Details: map[string]any{
+			"reason": "auth_limiter",
+		},
+	})
+}
+
+func authSourceAddressBucket(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	host = strings.TrimSpace(host)
+	if host == "" {
+		host = "unknown"
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return "remote:" + hashString(host)
+	}
+	if v4 := ip.To4(); v4 != nil {
+		masked := net.IP(v4).Mask(net.CIDRMask(24, 32))
+		return fmt.Sprintf("ip:%s/24", masked.String())
+	}
+	masked := ip.Mask(net.CIDRMask(64, 128))
+	return fmt.Sprintf("ip:%s/64", masked.String())
+}
+
+func hashString(raw string) string {
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
 }
 
 func (h *Handler) setRefreshCookie(w http.ResponseWriter, session authn.Session) {
