@@ -54,6 +54,7 @@ type SyntaxTreeBranch = {
 };
 
 const FLUSH_DELAY_MS = 4000;
+const READER_POSITION_PREFIX = "tifl.reader.position.";
 
 // 1-5 are self-rating; w/i are the well-known / ignored shortcuts. The reader
 // event log wants the keystroke ("w"/"i"); the knowledge write wants the level.
@@ -131,8 +132,7 @@ export function ReaderView(props: { storyId: string; sessionId?: string }) {
       setSurfaceKnowledge(seededSurface);
       setTokens(story.tokens);
       setLanguage(story.language);
-      const first = story.tokens.findIndex((token) => token.is_word && token.key);
-      setCursor(first < 0 ? 0 : first);
+      setCursor(resolveCursorIndex(story.tokens, readSavedCursor(props.storyId)));
       setStatus("ready");
     } catch {
       setStatus("error");
@@ -146,10 +146,14 @@ export function ReaderView(props: { storyId: string; sessionId?: string }) {
     if (status() !== "ready") {
       return;
     }
-    if (prevCursor !== undefined && prevCursor !== c) {
-      wordEls[prevCursor]?.removeAttribute("data-cursor");
+    const token = tokens()[c];
+    if (token) {
+      writeSavedCursor(props.storyId, token.position);
     }
-    const el = wordEls[c];
+    if (prevCursor !== undefined && prevCursor !== c) {
+      wordElementForCursor(prevCursor)?.removeAttribute("data-cursor");
+    }
+    const el = wordElementForCursor(c);
     if (el) {
       el.setAttribute("data-cursor", "");
       el.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -184,6 +188,15 @@ export function ReaderView(props: { storyId: string; sessionId?: string }) {
     }
   }
 
+  function setReaderCursorPosition(position: number) {
+    setCursor(resolveCursorIndex(tokens(), position));
+  }
+
+  function wordElementForCursor(index: number): HTMLElement | undefined {
+    const token = tokens()[index];
+    return token ? wordEls[token.position] : undefined;
+  }
+
   function togglePopup() {
     if (!currentToken()?.key) {
       return;
@@ -195,7 +208,7 @@ export function ReaderView(props: { storyId: string; sessionId?: string }) {
     if (!popupVisible()) {
       return;
     }
-    const el = wordEls[cursor()];
+    const el = wordElementForCursor(cursor());
     if (!el) {
       setPopupPos(null);
       return;
@@ -502,7 +515,7 @@ export function ReaderView(props: { storyId: string; sessionId?: string }) {
                     class="reader-word"
                     data-level={dataLevel(displayLevel(token))}
                     ref={(el) => (wordEls[token.position] = el)}
-                    onClick={() => setCursor(token.position)}
+                    onClick={() => setReaderCursorPosition(token.position)}
                   >
                     {token.surface}
                   </span>
@@ -615,6 +628,60 @@ export function ReaderView(props: { storyId: string; sessionId?: string }) {
       </Show>
     </section>
   );
+}
+
+function readSavedCursor(storyId: string): number | undefined {
+  try {
+    const raw = localStorage.getItem(readerPositionKey(storyId));
+    if (raw === null) {
+      return undefined;
+    }
+    const value = Number(raw);
+    return Number.isSafeInteger(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeSavedCursor(storyId: string, position: number) {
+  try {
+    localStorage.setItem(readerPositionKey(storyId), String(position));
+  } catch {
+    // Reading should continue even when localStorage is unavailable.
+  }
+}
+
+function readerPositionKey(storyId: string): string {
+  return `${READER_POSITION_PREFIX}${storyId}`;
+}
+
+function resolveCursorIndex(list: StoryToken[], position: number | undefined): number {
+  const first = findSelectableToken(list, 0, 1);
+  if (first === undefined) {
+    return 0;
+  }
+  if (position === undefined) {
+    return first;
+  }
+  const next = list.findIndex((token) => token.position >= position);
+  const target = next >= 0 ? next : list.length - 1;
+  if (isSelectableToken(list[target])) {
+    return target;
+  }
+  return findSelectableToken(list, target + 1, 1) ?? findSelectableToken(list, target - 1, -1) ?? first;
+}
+
+function findSelectableToken(list: StoryToken[], start: number, direction: 1 | -1): number | undefined {
+  for (let i = start; i >= 0 && i < list.length; i += direction) {
+    if (isSelectableToken(list[i])) {
+      return i;
+    }
+  }
+  return undefined;
+}
+
+function isSelectableToken(token: StoryToken | undefined): boolean {
+  return Boolean(token?.is_word && token.key);
 }
 
 function definitionBody(entry: Loadable<Definition> | undefined, lang: string): JSX.Element {
