@@ -22,7 +22,7 @@ const sessionColumns = "session_id, user_id, story_id, language, level, selected
 	" session_type, topic, user_expressions, expression_output, status," +
 	" created_at, archived_at, reading_started_at, completed_at"
 
-func (r *SQLiteRepository) CreateSession(ctx context.Context, s domain.Session) (domain.Session, error) {
+func (r *SQLRepository) CreateSession(ctx context.Context, s domain.Session) (domain.Session, error) {
 	if s.SessionID == "" {
 		s.SessionID = id.New()
 	}
@@ -35,7 +35,7 @@ func (r *SQLiteRepository) CreateSession(ctx context.Context, s domain.Session) 
 	if s.SessionType == "" {
 		s.SessionType = domain.SessionSystem
 	}
-	_, err := r.db.ExecContext(ctx,
+	_, err := r.exec(ctx,
 		`INSERT INTO sessions(
 		   session_id, user_id, story_id, language, level, selected_targets, selected_new,
 		   session_type, topic, user_expressions, expression_output, status,
@@ -52,16 +52,16 @@ func (r *SQLiteRepository) CreateSession(ctx context.Context, s domain.Session) 
 	return s, nil
 }
 
-func (r *SQLiteRepository) GetSession(ctx context.Context, sessionID string) (domain.Session, error) {
-	row := r.db.QueryRowContext(ctx,
+func (r *SQLRepository) GetSession(ctx context.Context, sessionID string) (domain.Session, error) {
+	row := r.queryRow(ctx,
 		`SELECT `+sessionColumns+`
 		 FROM sessions WHERE session_id = ?`, sessionID)
 	return scanSession(row)
 }
 
-func (r *SQLiteRepository) ListSessions(ctx context.Context, userID string, opts domain.ListSessionsOptions) ([]domain.SessionOverview, error) {
+func (r *SQLRepository) ListSessions(ctx context.Context, userID string, opts domain.ListSessionsOptions) ([]domain.SessionOverview, error) {
 	opts = normalizeListSessionsOptions(opts)
-	rows, err := r.db.QueryContext(ctx,
+	rows, err := r.query(ctx,
 		`SELECT `+sessionColumns+`,
 		        (SELECT COUNT(*) FROM tasks t WHERE t.session_id = s.session_id AND t.user_id = s.user_id),
 		        (SELECT COUNT(*) FROM tasks t
@@ -87,8 +87,8 @@ func (r *SQLiteRepository) ListSessions(ctx context.Context, userID string, opts
 	return out, rows.Err()
 }
 
-func (r *SQLiteRepository) GetSessionDetail(ctx context.Context, userID, sessionID string) (domain.SessionDetail, error) {
-	row := r.db.QueryRowContext(ctx,
+func (r *SQLRepository) GetSessionDetail(ctx context.Context, userID, sessionID string) (domain.SessionDetail, error) {
+	row := r.queryRow(ctx,
 		`SELECT `+sessionColumns+`,
 		        (SELECT COUNT(*) FROM tasks t WHERE t.session_id = s.session_id AND t.user_id = s.user_id),
 		        (SELECT COUNT(*) FROM tasks t
@@ -107,8 +107,8 @@ func (r *SQLiteRepository) GetSessionDetail(ctx context.Context, userID, session
 	return domain.SessionDetail{SessionOverview: overview, Stages: stages}, nil
 }
 
-func (r *SQLiteRepository) UpdateSessionStatus(ctx context.Context, sessionID string, status domain.SessionStatus) error {
-	res, err := r.db.ExecContext(ctx,
+func (r *SQLRepository) UpdateSessionStatus(ctx context.Context, sessionID string, status domain.SessionStatus) error {
+	res, err := r.exec(ctx,
 		`UPDATE sessions SET status = ? WHERE session_id = ?`, string(status), sessionID)
 	if err != nil {
 		return err
@@ -116,13 +116,13 @@ func (r *SQLiteRepository) UpdateSessionStatus(ctx context.Context, sessionID st
 	return requireRow(res)
 }
 
-func (r *SQLiteRepository) SetSessionArchived(ctx context.Context, userID, sessionID string, archived bool) error {
+func (r *SQLRepository) SetSessionArchived(ctx context.Context, userID, sessionID string, archived bool) error {
 	var archivedAt any
 	if archived {
 		ts := float64(time.Now().UnixMilli()) / 1000
 		archivedAt = ts
 	}
-	res, err := r.db.ExecContext(ctx,
+	res, err := r.exec(ctx,
 		`UPDATE sessions
 		 SET archived_at = CASE WHEN ? = 1 THEN COALESCE(archived_at, ?) ELSE NULL END
 		 WHERE session_id = ? AND user_id = ?`,
@@ -133,10 +133,10 @@ func (r *SQLiteRepository) SetSessionArchived(ctx context.Context, userID, sessi
 	return requireRow(res)
 }
 
-func (r *SQLiteRepository) DeleteSession(ctx context.Context, userID, sessionID string) error {
-	return r.inTx(ctx, func(tx *sql.Tx) error {
+func (r *SQLRepository) DeleteSession(ctx context.Context, userID, sessionID string) error {
+	return r.inTx(ctx, func(tx *dtx) error {
 		var storyID sql.NullString
-		err := tx.QueryRowContext(ctx,
+		err := tx.queryRow(ctx,
 			`SELECT story_id FROM sessions WHERE session_id = ? AND user_id = ?`,
 			sessionID, userID).Scan(&storyID)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -146,46 +146,46 @@ func (r *SQLiteRepository) DeleteSession(ctx context.Context, userID, sessionID 
 			return err
 		}
 
-		if _, err := tx.ExecContext(ctx, `DELETE FROM session_phrase_sets WHERE session_id = ?`, sessionID); err != nil {
+		if _, err := tx.exec(ctx, `DELETE FROM session_phrase_sets WHERE session_id = ?`, sessionID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx,
+		if _, err := tx.exec(ctx,
 			`DELETE FROM task_targets WHERE task_id IN (SELECT task_id FROM tasks WHERE session_id = ?)`,
 			sessionID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM tasks WHERE session_id = ?`, sessionID); err != nil {
+		if _, err := tx.exec(ctx, `DELETE FROM tasks WHERE session_id = ?`, sessionID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM session_generation_stages WHERE session_id = ?`, sessionID); err != nil {
+		if _, err := tx.exec(ctx, `DELETE FROM session_generation_stages WHERE session_id = ?`, sessionID); err != nil {
 			return err
 		}
 
 		if storyID.Valid {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM story_glossary WHERE story_id = ?`, storyID.String); err != nil {
+			if _, err := tx.exec(ctx, `DELETE FROM story_glossary WHERE story_id = ?`, storyID.String); err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, `DELETE FROM story_tokens WHERE story_id = ?`, storyID.String); err != nil {
+			if _, err := tx.exec(ctx, `DELETE FROM story_tokens WHERE story_id = ?`, storyID.String); err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, `DELETE FROM story_audio WHERE story_id = ?`, storyID.String); err != nil {
+			if _, err := tx.exec(ctx, `DELETE FROM story_audio WHERE story_id = ?`, storyID.String); err != nil {
 				return err
 			}
 		}
 
-		if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE session_id = ? AND user_id = ?`, sessionID, userID); err != nil {
+		if _, err := tx.exec(ctx, `DELETE FROM sessions WHERE session_id = ? AND user_id = ?`, sessionID, userID); err != nil {
 			return err
 		}
 
 		if storyID.Valid {
 			var readerEvents int
-			if err := tx.QueryRowContext(ctx,
+			if err := tx.queryRow(ctx,
 				`SELECT COUNT(*) FROM reader_events WHERE story_id = ?`,
 				storyID.String).Scan(&readerEvents); err != nil {
 				return err
 			}
 			if readerEvents == 0 {
-				if _, err := tx.ExecContext(ctx,
+				if _, err := tx.exec(ctx,
 					`DELETE FROM stories WHERE story_id = ? AND user_id = ? AND session_id = ?`,
 					storyID.String, userID, sessionID); err != nil {
 					return err
@@ -196,8 +196,8 @@ func (r *SQLiteRepository) DeleteSession(ctx context.Context, userID, sessionID 
 	})
 }
 
-func (r *SQLiteRepository) SetSessionTopic(ctx context.Context, sessionID, topic string) error {
-	res, err := r.db.ExecContext(ctx,
+func (r *SQLRepository) SetSessionTopic(ctx context.Context, sessionID, topic string) error {
+	res, err := r.exec(ctx,
 		`UPDATE sessions SET topic = ? WHERE session_id = ?`, nullEmpty(topic), sessionID)
 	if err != nil {
 		return err
@@ -205,11 +205,11 @@ func (r *SQLiteRepository) SetSessionTopic(ctx context.Context, sessionID, topic
 	return requireRow(res)
 }
 
-func (r *SQLiteRepository) RecentSessionTopics(ctx context.Context, userID, language string, limit int) ([]string, error) {
+func (r *SQLRepository) RecentSessionTopics(ctx context.Context, userID, language string, limit int) ([]string, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
-	rows, err := r.db.QueryContext(ctx,
+	rows, err := r.query(ctx,
 		`SELECT topic FROM sessions
 		 WHERE user_id = ? AND language = ? AND topic IS NOT NULL AND topic <> ''
 		 ORDER BY created_at DESC, session_id DESC
@@ -230,9 +230,9 @@ func (r *SQLiteRepository) RecentSessionTopics(ctx context.Context, userID, lang
 	return out, rows.Err()
 }
 
-func (r *SQLiteRepository) MarkSessionReading(ctx context.Context, userID, sessionID string) error {
+func (r *SQLRepository) MarkSessionReading(ctx context.Context, userID, sessionID string) error {
 	ts := float64(time.Now().UnixMilli()) / 1000
-	res, err := r.db.ExecContext(ctx,
+	res, err := r.exec(ctx,
 		`UPDATE sessions SET status = 'reading', reading_started_at = ?
 		 WHERE session_id = ? AND user_id = ? AND status = 'ready'`,
 		ts, sessionID, userID)
@@ -245,7 +245,7 @@ func (r *SQLiteRepository) MarkSessionReading(ctx context.Context, userID, sessi
 	}
 	if n == 0 {
 		var count int
-		if err := r.db.QueryRowContext(ctx,
+		if err := r.queryRow(ctx,
 			`SELECT COUNT(*) FROM sessions WHERE session_id = ? AND user_id = ?`,
 			sessionID, userID).Scan(&count); err != nil {
 			return err
@@ -257,9 +257,9 @@ func (r *SQLiteRepository) MarkSessionReading(ctx context.Context, userID, sessi
 	return nil
 }
 
-func (r *SQLiteRepository) MarkSessionComplete(ctx context.Context, userID, sessionID string) error {
+func (r *SQLRepository) MarkSessionComplete(ctx context.Context, userID, sessionID string) error {
 	ts := float64(time.Now().UnixMilli()) / 1000
-	res, err := r.db.ExecContext(ctx,
+	res, err := r.exec(ctx,
 		`UPDATE sessions SET status = 'complete', completed_at = ?
 		 WHERE session_id = ? AND user_id = ? AND status = 'reading'`,
 		ts, sessionID, userID)
@@ -272,7 +272,7 @@ func (r *SQLiteRepository) MarkSessionComplete(ctx context.Context, userID, sess
 	}
 	if n == 0 {
 		var count int
-		if err := r.db.QueryRowContext(ctx,
+		if err := r.queryRow(ctx,
 			`SELECT COUNT(*) FROM sessions WHERE session_id = ? AND user_id = ?`,
 			sessionID, userID).Scan(&count); err != nil {
 			return err
@@ -284,8 +284,8 @@ func (r *SQLiteRepository) MarkSessionComplete(ctx context.Context, userID, sess
 	return nil
 }
 
-func (r *SQLiteRepository) SetSessionSelection(ctx context.Context, sessionID, storyID string, targets, new []string) error {
-	res, err := r.db.ExecContext(ctx,
+func (r *SQLRepository) SetSessionSelection(ctx context.Context, sessionID, storyID string, targets, new []string) error {
+	res, err := r.exec(ctx,
 		`UPDATE sessions SET story_id = ?, selected_targets = ?, selected_new = ? WHERE session_id = ?`,
 		nullEmpty(storyID), marshalStrings(targets), marshalStrings(new), sessionID)
 	if err != nil {
@@ -294,8 +294,8 @@ func (r *SQLiteRepository) SetSessionSelection(ctx context.Context, sessionID, s
 	return requireRow(res)
 }
 
-func (r *SQLiteRepository) UpsertStage(ctx context.Context, st domain.GenerationStage) error {
-	_, err := r.db.ExecContext(ctx,
+func (r *SQLRepository) UpsertStage(ctx context.Context, st domain.GenerationStage) error {
+	_, err := r.exec(ctx,
 		`INSERT INTO session_generation_stages(
 		   session_id, stage, status, started_at, completed_at, error_code, error_detail, retry_count)
 		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)
@@ -311,8 +311,8 @@ func (r *SQLiteRepository) UpsertStage(ctx context.Context, st domain.Generation
 	return err
 }
 
-func (r *SQLiteRepository) ListStages(ctx context.Context, sessionID string) ([]domain.GenerationStage, error) {
-	rows, err := r.db.QueryContext(ctx,
+func (r *SQLRepository) ListStages(ctx context.Context, sessionID string) ([]domain.GenerationStage, error) {
+	rows, err := r.query(ctx,
 		`SELECT session_id, stage, status, started_at, completed_at, error_code, error_detail, retry_count
 		 FROM session_generation_stages WHERE session_id = ? ORDER BY stage`, sessionID)
 	if err != nil {
@@ -342,14 +342,14 @@ func (r *SQLiteRepository) ListStages(ctx context.Context, sessionID string) ([]
 	return out, rows.Err()
 }
 
-func (r *SQLiteRepository) CreateStory(ctx context.Context, s domain.Story) (domain.Story, error) {
+func (r *SQLRepository) CreateStory(ctx context.Context, s domain.Story) (domain.Story, error) {
 	if s.StoryID == "" {
 		s.StoryID = id.New()
 	}
 	if s.GeneratedAt == 0 {
 		s.GeneratedAt = float64(time.Now().Unix())
 	}
-	_, err := r.db.ExecContext(ctx,
+	_, err := r.exec(ctx,
 		`INSERT INTO stories(story_id, user_id, language, text, level, topic,
 		   estimated_coverage, generated_at, session_id)
 		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -361,14 +361,14 @@ func (r *SQLiteRepository) CreateStory(ctx context.Context, s domain.Story) (dom
 	return s, nil
 }
 
-func (r *SQLiteRepository) GetStory(ctx context.Context, storyID string) (domain.Story, error) {
+func (r *SQLRepository) GetStory(ctx context.Context, storyID string) (domain.Story, error) {
 	var (
 		s        domain.Story
 		topic    sql.NullString
 		coverage sql.NullFloat64
 		sessID   sql.NullString
 	)
-	err := r.db.QueryRowContext(ctx,
+	err := r.queryRow(ctx,
 		`SELECT story_id, user_id, language, text, level, topic, estimated_coverage, generated_at, session_id
 		 FROM stories WHERE story_id = ?`, storyID).
 		Scan(&s.StoryID, &s.UserID, &s.Language, &s.Text, &s.Level, &topic, &coverage, &s.GeneratedAt, &sessID)
@@ -384,20 +384,20 @@ func (r *SQLiteRepository) GetStory(ctx context.Context, storyID string) (domain
 	return s, nil
 }
 
-func (r *SQLiteRepository) CountUserStories(ctx context.Context, userID, language string) (int, error) {
+func (r *SQLRepository) CountUserStories(ctx context.Context, userID, language string) (int, error) {
 	var n int
-	err := r.db.QueryRowContext(ctx,
+	err := r.queryRow(ctx,
 		`SELECT COUNT(*) FROM stories WHERE user_id = ? AND language = ?`, userID, language).Scan(&n)
 	return n, err
 }
 
-func (r *SQLiteRepository) ReplaceStoryTokens(ctx context.Context, storyID string, tokens []domain.StoryToken) error {
-	return r.inTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM story_tokens WHERE story_id = ?`, storyID); err != nil {
+func (r *SQLRepository) ReplaceStoryTokens(ctx context.Context, storyID string, tokens []domain.StoryToken) error {
+	return r.inTx(ctx, func(tx *dtx) error {
+		if _, err := tx.exec(ctx, `DELETE FROM story_tokens WHERE story_id = ?`, storyID); err != nil {
 			return err
 		}
 		for _, t := range tokens {
-			if _, err := tx.ExecContext(ctx,
+			if _, err := tx.exec(ctx,
 				`INSERT INTO story_tokens(story_id, position, surface, item_key, surface_key, is_word)
 				 VALUES(?, ?, ?, ?, ?, ?)`,
 				storyID, t.Position, t.Surface, nullEmpty(t.ItemKey), nullEmpty(t.SurfaceKey), boolToInt(t.IsWord)); err != nil {
@@ -408,8 +408,8 @@ func (r *SQLiteRepository) ReplaceStoryTokens(ctx context.Context, storyID strin
 	})
 }
 
-func (r *SQLiteRepository) ListStoryTokens(ctx context.Context, storyID string) ([]domain.StoryToken, error) {
-	rows, err := r.db.QueryContext(ctx,
+func (r *SQLRepository) ListStoryTokens(ctx context.Context, storyID string) ([]domain.StoryToken, error) {
+	rows, err := r.query(ctx,
 		`SELECT story_id, position, surface, item_key, surface_key, is_word
 		 FROM story_tokens WHERE story_id = ? ORDER BY position`, storyID)
 	if err != nil {
@@ -436,13 +436,13 @@ func (r *SQLiteRepository) ListStoryTokens(ctx context.Context, storyID string) 
 	return out, rows.Err()
 }
 
-func (r *SQLiteRepository) ReplaceStoryGlossary(ctx context.Context, storyID string, entries []domain.StoryGlossaryEntry) error {
-	return r.inTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM story_glossary WHERE story_id = ?`, storyID); err != nil {
+func (r *SQLRepository) ReplaceStoryGlossary(ctx context.Context, storyID string, entries []domain.StoryGlossaryEntry) error {
+	return r.inTx(ctx, func(tx *dtx) error {
+		if _, err := tx.exec(ctx, `DELETE FROM story_glossary WHERE story_id = ?`, storyID); err != nil {
 			return err
 		}
 		for _, e := range entries {
-			if _, err := tx.ExecContext(ctx,
+			if _, err := tx.exec(ctx,
 				`INSERT INTO story_glossary(story_id, item_key, gloss, grammatical_note, example)
 				 VALUES(?, ?, ?, ?, ?)`,
 				storyID, e.ItemKey, e.Gloss, nullEmpty(e.GrammaticalNote), nullEmpty(e.Example)); err != nil {
@@ -453,8 +453,8 @@ func (r *SQLiteRepository) ReplaceStoryGlossary(ctx context.Context, storyID str
 	})
 }
 
-func (r *SQLiteRepository) ListStoryGlossary(ctx context.Context, storyID string) ([]domain.StoryGlossaryEntry, error) {
-	rows, err := r.db.QueryContext(ctx,
+func (r *SQLRepository) ListStoryGlossary(ctx context.Context, storyID string) ([]domain.StoryGlossaryEntry, error) {
+	rows, err := r.query(ctx,
 		`SELECT story_id, item_key, gloss, grammatical_note, example
 		 FROM story_glossary WHERE story_id = ? ORDER BY item_key`, storyID)
 	if err != nil {
@@ -478,7 +478,7 @@ func (r *SQLiteRepository) ListStoryGlossary(ctx context.Context, storyID string
 	return out, rows.Err()
 }
 
-func (r *SQLiteRepository) CreatePhraseSet(ctx context.Context, ps domain.PhraseSet) (domain.PhraseSet, error) {
+func (r *SQLRepository) CreatePhraseSet(ctx context.Context, ps domain.PhraseSet) (domain.PhraseSet, error) {
 	if ps.GeneratedAt == 0 {
 		ps.GeneratedAt = float64(time.Now().Unix())
 	}
@@ -488,7 +488,7 @@ func (r *SQLiteRepository) CreatePhraseSet(ctx context.Context, ps domain.Phrase
 	}
 	// Upsert keyed by session_id so a phrase-generation stage retry replaces the
 	// prior attempt rather than failing on the primary key.
-	_, err = r.db.ExecContext(ctx,
+	_, err = r.exec(ctx,
 		`INSERT INTO session_phrase_sets(session_id, user_id, language, items, generated_at)
 		 VALUES(?, ?, ?, ?, ?)
 		 ON CONFLICT(session_id) DO UPDATE SET
@@ -503,12 +503,12 @@ func (r *SQLiteRepository) CreatePhraseSet(ctx context.Context, ps domain.Phrase
 	return ps, nil
 }
 
-func (r *SQLiteRepository) GetPhraseSet(ctx context.Context, sessionID string) (domain.PhraseSet, error) {
+func (r *SQLRepository) GetPhraseSet(ctx context.Context, sessionID string) (domain.PhraseSet, error) {
 	var (
 		ps    domain.PhraseSet
 		items string
 	)
-	err := r.db.QueryRowContext(ctx,
+	err := r.queryRow(ctx,
 		`SELECT session_id, user_id, language, items, generated_at
 		 FROM session_phrase_sets WHERE session_id = ?`, sessionID).
 		Scan(&ps.SessionID, &ps.UserID, &ps.Language, &items, &ps.GeneratedAt)
@@ -526,7 +526,7 @@ func (r *SQLiteRepository) GetPhraseSet(ctx context.Context, sessionID string) (
 	return ps, nil
 }
 
-func (r *SQLiteRepository) CreateTask(ctx context.Context, t domain.Task, targets []string) (domain.Task, error) {
+func (r *SQLRepository) CreateTask(ctx context.Context, t domain.Task, targets []string) (domain.Task, error) {
 	if t.TaskID == "" {
 		t.TaskID = id.New()
 	}
@@ -546,8 +546,8 @@ func (r *SQLiteRepository) CreateTask(ctx context.Context, t domain.Task, target
 		return domain.Task{}, err
 	}
 
-	err = r.inTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx,
+	err = r.inTx(ctx, func(tx *dtx) error {
+		if _, err := tx.exec(ctx,
 			`INSERT INTO tasks(task_id, session_id, user_id, task_type, language, content,
 			   response, input_method, media_path, grade, graded_by, graded_at, attempt_count, created_at)
 			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -557,8 +557,8 @@ func (r *SQLiteRepository) CreateTask(ctx context.Context, t domain.Task, target
 			return err
 		}
 		for _, itemID := range targets {
-			if _, err := tx.ExecContext(ctx,
-				`INSERT OR IGNORE INTO task_targets(task_id, item_id) VALUES(?, ?)`,
+			if _, err := tx.exec(ctx,
+				`INSERT INTO task_targets(task_id, item_id) VALUES(?, ?) ON CONFLICT DO NOTHING`,
 				t.TaskID, itemID); err != nil {
 				return err
 			}
@@ -571,8 +571,8 @@ func (r *SQLiteRepository) CreateTask(ctx context.Context, t domain.Task, target
 	return t, nil
 }
 
-func (r *SQLiteRepository) GetTask(ctx context.Context, userID, taskID string) (domain.Task, error) {
-	row := r.db.QueryRowContext(ctx,
+func (r *SQLRepository) GetTask(ctx context.Context, userID, taskID string) (domain.Task, error) {
+	row := r.queryRow(ctx,
 		`SELECT task_id, session_id, user_id, task_type, language, content, response,
 		        input_method, media_path, grade, graded_by, graded_at, attempt_count, created_at
 		 FROM tasks WHERE task_id = ? AND user_id = ?`, taskID, userID)
@@ -583,7 +583,7 @@ func (r *SQLiteRepository) GetTask(ctx context.Context, userID, taskID string) (
 	return t, err
 }
 
-func (r *SQLiteRepository) RecordTaskGrade(ctx context.Context, userID, taskID string, g domain.TaskGrade) error {
+func (r *SQLRepository) RecordTaskGrade(ctx context.Context, userID, taskID string, g domain.TaskGrade) error {
 	response, err := marshalJSON(g.Response)
 	if err != nil {
 		return err
@@ -592,7 +592,7 @@ func (r *SQLiteRepository) RecordTaskGrade(ctx context.Context, userID, taskID s
 	if err != nil {
 		return err
 	}
-	res, err := r.db.ExecContext(ctx,
+	res, err := r.exec(ctx,
 		`UPDATE tasks SET response = ?, input_method = ?, grade = ?, graded_by = ?, graded_at = ?
 		 WHERE task_id = ? AND user_id = ?`,
 		response, nullEmpty(g.InputMethod), grade, nullEmpty(g.GradedBy), g.GradedAt, taskID, userID)
@@ -609,9 +609,9 @@ func (r *SQLiteRepository) RecordTaskGrade(ctx context.Context, userID, taskID s
 	return nil
 }
 
-func (r *SQLiteRepository) IncrementTaskAttempt(ctx context.Context, taskID string) (int, error) {
+func (r *SQLRepository) IncrementTaskAttempt(ctx context.Context, taskID string) (int, error) {
 	var count int
-	err := r.db.QueryRowContext(ctx,
+	err := r.queryRow(ctx,
 		`UPDATE tasks SET attempt_count = attempt_count + 1 WHERE task_id = ? RETURNING attempt_count`,
 		taskID).Scan(&count)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -620,8 +620,8 @@ func (r *SQLiteRepository) IncrementTaskAttempt(ctx context.Context, taskID stri
 	return count, err
 }
 
-func (r *SQLiteRepository) ListSessionTasks(ctx context.Context, sessionID string) ([]domain.Task, error) {
-	rows, err := r.db.QueryContext(ctx,
+func (r *SQLRepository) ListSessionTasks(ctx context.Context, sessionID string) ([]domain.Task, error) {
+	rows, err := r.query(ctx,
 		`SELECT task_id, session_id, user_id, task_type, language, content, response,
 		        input_method, media_path, grade, graded_by, graded_at, attempt_count, created_at
 		 FROM tasks WHERE session_id = ? ORDER BY created_at, task_id`, sessionID)
@@ -736,8 +736,8 @@ func scanTask(row rowScanner) (domain.Task, error) {
 // inTx runs fn inside a transaction, committing on success and rolling back on
 // any error so multi-row writes (token/glossary replace, task + targets) are
 // atomic.
-func (r *SQLiteRepository) inTx(ctx context.Context, fn func(*sql.Tx) error) error {
-	tx, err := r.db.BeginTx(ctx, nil)
+func (r *SQLRepository) inTx(ctx context.Context, fn func(*dtx) error) error {
+	tx, err := r.begin(ctx)
 	if err != nil {
 		return err
 	}

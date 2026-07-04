@@ -11,8 +11,8 @@ import (
 	"github.com/dleiferives/tifl/internal/id"
 )
 
-func (r *SQLiteRepository) UpsertSkill(ctx context.Context, skill domain.Skill) error {
-	_, err := r.db.ExecContext(ctx,
+func (r *SQLRepository) UpsertSkill(ctx context.Context, skill domain.Skill) error {
+	_, err := r.exec(ctx,
 		`INSERT INTO skills(skill_id, language, name, description, category, tier_count, xp_per_tier, sort_order)
 		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(skill_id) DO UPDATE SET
@@ -28,8 +28,8 @@ func (r *SQLiteRepository) UpsertSkill(ctx context.Context, skill domain.Skill) 
 	return err
 }
 
-func (r *SQLiteRepository) ListSkills(ctx context.Context, language string) ([]domain.Skill, error) {
-	rows, err := r.db.QueryContext(ctx,
+func (r *SQLRepository) ListSkills(ctx context.Context, language string) ([]domain.Skill, error) {
+	rows, err := r.query(ctx,
 		`SELECT skill_id, language, name, description, category, tier_count, xp_per_tier, sort_order
 		 FROM skills WHERE language = ?
 		 ORDER BY category, sort_order IS NULL, sort_order, name, skill_id`, language)
@@ -40,8 +40,8 @@ func (r *SQLiteRepository) ListSkills(ctx context.Context, language string) ([]d
 	return scanSQLiteSkills(rows)
 }
 
-func (r *SQLiteRepository) GetSkill(ctx context.Context, skillID string) (domain.Skill, error) {
-	skill, err := scanSQLiteSkill(r.db.QueryRowContext(ctx,
+func (r *SQLRepository) GetSkill(ctx context.Context, skillID string) (domain.Skill, error) {
+	skill, err := scanSQLiteSkill(r.queryRow(ctx,
 		`SELECT skill_id, language, name, description, category, tier_count, xp_per_tier, sort_order
 		 FROM skills WHERE skill_id = ?`, skillID))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -50,18 +50,18 @@ func (r *SQLiteRepository) GetSkill(ctx context.Context, skillID string) (domain
 	return skill, err
 }
 
-func (r *SQLiteRepository) UpsertItemSkillAssociations(ctx context.Context, itemID string, skillIDs []string) error {
-	tx, err := r.db.BeginTx(ctx, nil)
+func (r *SQLRepository) UpsertItemSkillAssociations(ctx context.Context, itemID string, skillIDs []string) error {
+	tx, err := r.begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.ExecContext(ctx, `DELETE FROM item_skill_associations WHERE item_id = ?`, itemID); err != nil {
+	if _, err := tx.exec(ctx, `DELETE FROM item_skill_associations WHERE item_id = ?`, itemID); err != nil {
 		return err
 	}
 	for _, skillID := range uniqueStrings(skillIDs) {
-		if _, err := tx.ExecContext(ctx,
+		if _, err := tx.exec(ctx,
 			`INSERT INTO item_skill_associations(item_id, skill_id) VALUES(?, ?)`,
 			itemID, skillID); err != nil {
 			return err
@@ -70,7 +70,7 @@ func (r *SQLiteRepository) UpsertItemSkillAssociations(ctx context.Context, item
 	return tx.Commit()
 }
 
-func (r *SQLiteRepository) ListItemSkillAssociations(ctx context.Context, itemIDs []string) ([]domain.ItemSkillAssociation, error) {
+func (r *SQLRepository) ListItemSkillAssociations(ctx context.Context, itemIDs []string) ([]domain.ItemSkillAssociation, error) {
 	itemIDs = uniqueStrings(itemIDs)
 	if len(itemIDs) == 0 {
 		return nil, nil
@@ -79,7 +79,7 @@ func (r *SQLiteRepository) ListItemSkillAssociations(ctx context.Context, itemID
 	for i, itemID := range itemIDs {
 		args[i] = itemID
 	}
-	rows, err := r.db.QueryContext(ctx,
+	rows, err := r.query(ctx,
 		`SELECT item_id, skill_id FROM item_skill_associations
 		 WHERE item_id IN (`+sqlitePlaceholders(len(itemIDs))+`)
 		 ORDER BY item_id, skill_id`, args...)
@@ -90,8 +90,8 @@ func (r *SQLiteRepository) ListItemSkillAssociations(ctx context.Context, itemID
 	return scanSQLiteItemSkillAssociations(rows)
 }
 
-func (r *SQLiteRepository) ListSkillAssociations(ctx context.Context, skillID string) ([]domain.ItemSkillAssociation, error) {
-	rows, err := r.db.QueryContext(ctx,
+func (r *SQLRepository) ListSkillAssociations(ctx context.Context, skillID string) ([]domain.ItemSkillAssociation, error) {
+	rows, err := r.query(ctx,
 		`SELECT item_id, skill_id FROM item_skill_associations
 		 WHERE skill_id = ? ORDER BY item_id`, skillID)
 	if err != nil {
@@ -101,8 +101,8 @@ func (r *SQLiteRepository) ListSkillAssociations(ctx context.Context, skillID st
 	return scanSQLiteItemSkillAssociations(rows)
 }
 
-func (r *SQLiteRepository) GetUserSkillXP(ctx context.Context, userID, skillID string) (domain.UserSkillXP, error) {
-	xp, err := scanSQLiteUserSkillXP(r.db.QueryRowContext(ctx,
+func (r *SQLRepository) GetUserSkillXP(ctx context.Context, userID, skillID string) (domain.UserSkillXP, error) {
+	xp, err := scanSQLiteUserSkillXP(r.queryRow(ctx,
 		`SELECT user_id, skill_id, xp, tier, pending_verify, last_verified_at, updated_at
 		 FROM user_skill_xp WHERE user_id = ? AND skill_id = ?`, userID, skillID))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -111,7 +111,7 @@ func (r *SQLiteRepository) GetUserSkillXP(ctx context.Context, userID, skillID s
 	return xp, err
 }
 
-func (r *SQLiteRepository) ListUserSkillXP(ctx context.Context, userID string, skillIDs []string) ([]domain.UserSkillXP, error) {
+func (r *SQLRepository) ListUserSkillXP(ctx context.Context, userID string, skillIDs []string) ([]domain.UserSkillXP, error) {
 	skillIDs = uniqueStrings(skillIDs)
 	query := `SELECT user_id, skill_id, xp, tier, pending_verify, last_verified_at, updated_at
 	          FROM user_skill_xp WHERE user_id = ?`
@@ -123,7 +123,7 @@ func (r *SQLiteRepository) ListUserSkillXP(ctx context.Context, userID string, s
 		query += ` AND skill_id IN (` + sqlitePlaceholders(len(skillIDs)) + `)`
 	}
 	query += ` ORDER BY skill_id`
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	rows, err := r.query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -131,11 +131,11 @@ func (r *SQLiteRepository) ListUserSkillXP(ctx context.Context, userID string, s
 	return scanSQLiteUserSkillXPs(rows)
 }
 
-func (r *SQLiteRepository) UpsertUserSkillXP(ctx context.Context, xp domain.UserSkillXP) error {
+func (r *SQLRepository) UpsertUserSkillXP(ctx context.Context, xp domain.UserSkillXP) error {
 	if xp.UpdatedAt == 0 {
 		xp.UpdatedAt = float64(time.Now().Unix())
 	}
-	_, err := r.db.ExecContext(ctx,
+	_, err := r.exec(ctx,
 		`INSERT INTO user_skill_xp(user_id, skill_id, xp, tier, pending_verify, last_verified_at, updated_at)
 		 VALUES(?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(user_id, skill_id) DO UPDATE SET
@@ -149,8 +149,8 @@ func (r *SQLiteRepository) UpsertUserSkillXP(ctx context.Context, xp domain.User
 	return err
 }
 
-func (r *SQLiteRepository) ListSkillProgress(ctx context.Context, userID, language string) ([]domain.SkillProgress, error) {
-	rows, err := r.db.QueryContext(ctx,
+func (r *SQLRepository) ListSkillProgress(ctx context.Context, userID, language string) ([]domain.SkillProgress, error) {
+	rows, err := r.query(ctx,
 		`SELECT s.skill_id, s.language, s.name, s.description, s.category,
 		        s.tier_count, s.xp_per_tier, s.sort_order,
 		        COALESCE(ux.xp, 0), COALESCE(ux.tier, 0), COALESCE(ux.pending_verify, 0),
@@ -192,21 +192,21 @@ func (r *SQLiteRepository) ListSkillProgress(ctx context.Context, userID, langua
 	return out, rows.Err()
 }
 
-func (r *SQLiteRepository) InsertTaskSkillXPLog(ctx context.Context, row domain.TaskSkillXPLog) error {
+func (r *SQLRepository) InsertTaskSkillXPLog(ctx context.Context, row domain.TaskSkillXPLog) error {
 	if row.LogID == "" {
 		row.LogID = id.New()
 	}
 	if row.LoggedAt == 0 {
 		row.LoggedAt = float64(time.Now().Unix())
 	}
-	_, err := r.db.ExecContext(ctx,
+	_, err := r.exec(ctx,
 		`INSERT INTO task_skill_xp_log(log_id, user_id, task_id, skill_id, xp_delta, xp_after, logged_at)
 		 VALUES(?, ?, ?, ?, ?, ?, ?)`,
 		row.LogID, row.UserID, row.TaskID, row.SkillID, row.XPDelta, row.XPAfter, row.LoggedAt)
 	return err
 }
 
-func (r *SQLiteRepository) ListTaskSkillXPLog(ctx context.Context, userID string, limit int) ([]domain.TaskSkillXPLog, error) {
+func (r *SQLRepository) ListTaskSkillXPLog(ctx context.Context, userID string, limit int) ([]domain.TaskSkillXPLog, error) {
 	query := `SELECT log_id, user_id, task_id, skill_id, xp_delta, xp_after, logged_at
 	          FROM task_skill_xp_log WHERE user_id = ?
 	          ORDER BY logged_at DESC, log_id DESC`
@@ -215,7 +215,7 @@ func (r *SQLiteRepository) ListTaskSkillXPLog(ctx context.Context, userID string
 		query += ` LIMIT ?`
 		args = append(args, limit)
 	}
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	rows, err := r.query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -1,7 +1,7 @@
-// Package db defines the storage contract and its SQLite implementation (the
-// Postgres implementation lands later, behind the same interface). Handlers and
-// domain logic call the Repository interface and never know which backend is
-// running — that is what makes the same binary work in desktop-local (SQLite)
+// Package db defines the storage contract and its single SQL implementation,
+// which serves both SQLite (desktop/local) and Postgres (cloud) through a small
+// dialect shim (see dialect.go). Handlers and domain logic call the Repository
+// interface and never know which backend is running — that is what makes the same binary work in desktop-local (SQLite)
 // and cloud (Postgres) modes. Every user-scoped method takes a userID for
 // multi-tenancy (the synthetic "local" user in desktop mode). See
 // context/backend-server.md ("Repository Interface") and

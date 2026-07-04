@@ -18,9 +18,11 @@ var migrationFS embed.FS
 // "migrations/sqlite") not yet recorded in schema_migrations, in filename order,
 // each in its own transaction. It is idempotent: already-applied migrations are
 // skipped, so it is safe to call on every startup. The runner owns the
-// schema_migrations bookkeeping table. This is the database/sql variant used by
-// the SQLite backend; the Postgres backend has its own pgx-based runner.
-func runMigrations(ctx context.Context, sdb *sql.DB, dir string) error {
+// schema_migrations bookkeeping table and serves both engines; d rewrites the
+// record-insert placeholders (the migration bodies themselves are engine-native
+// SQL and pass through untouched). REAL is a valid alias for DOUBLE PRECISION
+// on Postgres, so the bookkeeping DDL is shared.
+func runMigrations(ctx context.Context, sdb *sql.DB, d dialect, dir string) error {
 	if _, err := sdb.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		version    TEXT PRIMARY KEY,
 		applied_at REAL NOT NULL
@@ -48,7 +50,7 @@ func runMigrations(ctx context.Context, sdb *sql.DB, dir string) error {
 		if err != nil {
 			return err
 		}
-		if err := applyOne(ctx, sdb, version, string(body)); err != nil {
+		if err := applyOne(ctx, sdb, d, version, string(body)); err != nil {
 			return err
 		}
 	}
@@ -73,7 +75,7 @@ func appliedVersions(ctx context.Context, sdb *sql.DB) (map[string]bool, error) 
 	return applied, rows.Err()
 }
 
-func applyOne(ctx context.Context, sdb *sql.DB, version, body string) error {
+func applyOne(ctx context.Context, sdb *sql.DB, d dialect, version, body string) error {
 	tx, err := sdb.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -83,7 +85,7 @@ func applyOne(ctx context.Context, sdb *sql.DB, version, body string) error {
 		return fmt.Errorf("apply migration %s: %w", version, err)
 	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`,
+		d.rebind(`INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`),
 		version, float64(time.Now().Unix()),
 	); err != nil {
 		_ = tx.Rollback()

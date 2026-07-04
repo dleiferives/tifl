@@ -11,26 +11,32 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite" // pure-Go SQLite driver (no cgo; cross-compiles cleanly)
+	_ "github.com/jackc/pgx/v5/stdlib" // database/sql driver "pgx" for Postgres
+	_ "modernc.org/sqlite"             // pure-Go SQLite driver (no cgo; cross-compiles cleanly)
 
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/id"
 )
 
-// SQLiteRepository is the desktop/local Repository backed by a single SQLite
-// file. The pure-Go driver means the server binary cross-compiles for the Tauri
-// sidecar with no cgo toolchain.
-type SQLiteRepository struct {
+// SQLRepository is the Repository implementation shared by both storage
+// engines: SQLite (desktop/local; pure-Go driver, so the server binary
+// cross-compiles for the Tauri sidecar with no cgo toolchain) and Postgres
+// (cloud/SaaS, via the pgx stdlib driver). Queries are written once in `?`
+// placeholder form; the dialect shim (dialect.go) rewrites them per engine.
+// database/sql over pgx stdlib is marginally slower than pgx-native — an
+// accepted trade for having exactly one SQL codebase (#199).
+type SQLRepository struct {
 	db *sql.DB
+	d  dialect
 }
 
 // compile-time assertion that we satisfy the interface.
-var _ Repository = (*SQLiteRepository)(nil)
+var _ Repository = (*SQLRepository)(nil)
 
 // OpenSQLite opens the SQLite database at path, creating parent directories as
 // needed. Pass ":memory:" for an ephemeral database. Foreign-key enforcement and
 // a busy timeout are enabled on every connection.
-func OpenSQLite(path string) (*SQLiteRepository, error) {
+func OpenSQLite(path string) (*SQLRepository, error) {
 	if path != ":memory:" {
 		if dir := filepath.Dir(path); dir != "" && dir != "." {
 			if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -50,18 +56,33 @@ func OpenSQLite(path string) (*SQLiteRepository, error) {
 		_ = sdb.Close()
 		return nil, err
 	}
-	return &SQLiteRepository{db: sdb}, nil
+	return &SQLRepository{db: sdb, d: dialectSQLite}, nil
 }
 
-func (r *SQLiteRepository) Close() error { return r.db.Close() }
+// OpenPostgres connects to the database at dsn via the pgx stdlib driver and
+// verifies the connection. It returns the same repository type as OpenSQLite,
+// configured with the Postgres dialect.
+func OpenPostgres(ctx context.Context, dsn string) (*SQLRepository, error) {
+	sdb, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("postgres connect: %w", err)
+	}
+	if err := sdb.PingContext(ctx); err != nil {
+		_ = sdb.Close()
+		return nil, fmt.Errorf("postgres ping: %w", err)
+	}
+	return &SQLRepository{db: sdb, d: dialectPostgres}, nil
+}
 
-func (r *SQLiteRepository) Migrate(ctx context.Context) error {
-	return runMigrations(ctx, r.db, "migrations/sqlite")
+func (r *SQLRepository) Close() error { return r.db.Close() }
+
+func (r *SQLRepository) Migrate(ctx context.Context) error {
+	return runMigrations(ctx, r.db, r.d, r.d.migrationsDir())
 }
 
 // --- users -----------------------------------------------------------------
 
-func (r *SQLiteRepository) CreateUser(ctx context.Context, u domain.User) (domain.User, error) {
+func (r *SQLRepository) CreateUser(ctx context.Context, u domain.User) (domain.User, error) {
 	if u.UserID == "" {
 		u.UserID = id.New()
 	}
@@ -75,7 +96,7 @@ func (r *SQLiteRepository) CreateUser(ctx context.Context, u domain.User) (domai
 	if err != nil {
 		return domain.User{}, err
 	}
-	_, err = r.db.ExecContext(ctx,
+	_, err = r.exec(ctx,
 		`INSERT INTO users(user_id, email, email_canonical, password_hash, created_at, last_login, settings)
 		 VALUES(?, ?, ?, ?, ?, ?, ?)`,
 		u.UserID, u.Email, u.EmailCanonical, u.PasswordHash, u.CreatedAt, nullFloat(u.LastLogin), settings)
@@ -85,19 +106,19 @@ func (r *SQLiteRepository) CreateUser(ctx context.Context, u domain.User) (domai
 	return u, nil
 }
 
-func (r *SQLiteRepository) GetUser(ctx context.Context, userID string) (domain.User, error) {
-	return scanUser(r.db.QueryRowContext(ctx,
+func (r *SQLRepository) GetUser(ctx context.Context, userID string) (domain.User, error) {
+	return scanUser(r.queryRow(ctx,
 		`SELECT user_id, email, email_canonical, password_hash, created_at, last_login, settings
 		 FROM users WHERE user_id = ?`, userID))
 }
 
-func (r *SQLiteRepository) GetUserByEmail(ctx context.Context, emailCanonical string) (domain.User, error) {
-	return scanUser(r.db.QueryRowContext(ctx,
+func (r *SQLRepository) GetUserByEmail(ctx context.Context, emailCanonical string) (domain.User, error) {
+	return scanUser(r.queryRow(ctx,
 		`SELECT user_id, email, email_canonical, password_hash, created_at, last_login, settings
 		 FROM users WHERE email_canonical = ?`, emailCanonical))
 }
 
-func (r *SQLiteRepository) EnsureLocalUser(ctx context.Context) (domain.User, error) {
+func (r *SQLRepository) EnsureLocalUser(ctx context.Context) (domain.User, error) {
 	u, err := r.GetUser(ctx, domain.LocalUserID)
 	if err == nil {
 		return u, nil
@@ -112,8 +133,8 @@ func (r *SQLiteRepository) EnsureLocalUser(ctx context.Context) (domain.User, er
 	})
 }
 
-func (r *SQLiteRepository) UpdateUserLastLogin(ctx context.Context, userID string, at float64) error {
-	res, err := r.db.ExecContext(ctx, `UPDATE users SET last_login = ? WHERE user_id = ?`, at, userID)
+func (r *SQLRepository) UpdateUserLastLogin(ctx context.Context, userID string, at float64) error {
+	res, err := r.exec(ctx, `UPDATE users SET last_login = ? WHERE user_id = ?`, at, userID)
 	if err != nil {
 		return err
 	}
@@ -127,7 +148,7 @@ func (r *SQLiteRepository) UpdateUserLastLogin(ctx context.Context, userID strin
 	return nil
 }
 
-func (r *SQLiteRepository) GetUserProfile(ctx context.Context, userID string) (domain.UserProfile, error) {
+func (r *SQLRepository) GetUserProfile(ctx context.Context, userID string) (domain.UserProfile, error) {
 	user, err := r.GetUser(ctx, userID)
 	if err != nil {
 		return domain.UserProfile{}, err
@@ -139,7 +160,7 @@ func (r *SQLiteRepository) GetUserProfile(ctx context.Context, userID string) (d
 	return profileFromSettings(user.UserID, user.Settings, firstEnabledLanguage(languages)), nil
 }
 
-func (r *SQLiteRepository) UpdateUserProfile(ctx context.Context, userID string, patch domain.UserProfilePatch) (domain.UserProfile, error) {
+func (r *SQLRepository) UpdateUserProfile(ctx context.Context, userID string, patch domain.UserProfilePatch) (domain.UserProfile, error) {
 	if patch.ActiveLanguage != nil {
 		language, err := r.GetLanguage(ctx, *patch.ActiveLanguage)
 		if errors.Is(err, ErrNotFound) || (err == nil && !language.Enabled) {
@@ -166,7 +187,7 @@ func (r *SQLiteRepository) UpdateUserProfile(ctx context.Context, userID string,
 	if err != nil {
 		return domain.UserProfile{}, err
 	}
-	res, err := r.db.ExecContext(ctx, `UPDATE users SET settings = ? WHERE user_id = ?`, settings, userID)
+	res, err := r.exec(ctx, `UPDATE users SET settings = ? WHERE user_id = ?`, settings, userID)
 	if err != nil {
 		return domain.UserProfile{}, err
 	}
@@ -180,8 +201,8 @@ func (r *SQLiteRepository) UpdateUserProfile(ctx context.Context, userID string,
 	return profile, nil
 }
 
-func (r *SQLiteRepository) CreateRefreshToken(ctx context.Context, token domain.RefreshToken) error {
-	_, err := r.db.ExecContext(ctx,
+func (r *SQLRepository) CreateRefreshToken(ctx context.Context, token domain.RefreshToken) error {
+	_, err := r.exec(ctx,
 		`INSERT INTO refresh_tokens(token_hash, family_id, user_id, issued_at, expires_at, revoked_at, replaced_by_hash)
 		 VALUES(?, ?, ?, ?, ?, ?, ?)`,
 		token.TokenHash, token.FamilyID, token.UserID, token.IssuedAt, token.ExpiresAt,
@@ -189,13 +210,13 @@ func (r *SQLiteRepository) CreateRefreshToken(ctx context.Context, token domain.
 	return err
 }
 
-func (r *SQLiteRepository) GetRefreshToken(ctx context.Context, tokenHash string) (domain.RefreshToken, error) {
+func (r *SQLRepository) GetRefreshToken(ctx context.Context, tokenHash string) (domain.RefreshToken, error) {
 	var (
 		token          domain.RefreshToken
 		revoked        sql.NullFloat64
 		replacedByHash sql.NullString
 	)
-	err := r.db.QueryRowContext(ctx,
+	err := r.queryRow(ctx,
 		`SELECT token_hash, family_id, user_id, issued_at, expires_at, revoked_at, replaced_by_hash
 		 FROM refresh_tokens WHERE token_hash = ?`, tokenHash).
 		Scan(&token.TokenHash, &token.FamilyID, &token.UserID, &token.IssuedAt, &token.ExpiresAt,
@@ -215,8 +236,8 @@ func (r *SQLiteRepository) GetRefreshToken(ctx context.Context, tokenHash string
 	return token, nil
 }
 
-func (r *SQLiteRepository) RotateRefreshToken(ctx context.Context, oldHash string, next domain.RefreshToken, now float64) error {
-	tx, err := r.db.BeginTx(ctx, nil)
+func (r *SQLRepository) RotateRefreshToken(ctx context.Context, oldHash string, next domain.RefreshToken, now float64) error {
+	tx, err := r.begin(ctx)
 	if err != nil {
 		return err
 	}
@@ -227,7 +248,7 @@ func (r *SQLiteRepository) RotateRefreshToken(ctx context.Context, oldHash strin
 		revoked        sql.NullFloat64
 		replacedByHash sql.NullString
 	)
-	err = tx.QueryRowContext(ctx,
+	err = tx.queryRow(ctx,
 		`SELECT token_hash, family_id, user_id, issued_at, expires_at, revoked_at, replaced_by_hash
 		 FROM refresh_tokens WHERE token_hash = ?`, oldHash).
 		Scan(&old.TokenHash, &old.FamilyID, &old.UserID, &old.IssuedAt, &old.ExpiresAt, &revoked, &replacedByHash)
@@ -241,7 +262,7 @@ func (r *SQLiteRepository) RotateRefreshToken(ctx context.Context, oldHash strin
 		return ErrNotFound
 	}
 	if replacedByHash.Valid {
-		if _, err := tx.ExecContext(ctx,
+		if _, err := tx.exec(ctx,
 			`UPDATE refresh_tokens SET revoked_at = COALESCE(revoked_at, ?)
 			 WHERE family_id = ?`, now, old.FamilyID); err != nil {
 			return err
@@ -257,12 +278,12 @@ func (r *SQLiteRepository) RotateRefreshToken(ctx context.Context, oldHash strin
 	if next.FamilyID != old.FamilyID || next.UserID != old.UserID {
 		return errors.New("db: refresh rotation family/user mismatch")
 	}
-	if _, err := tx.ExecContext(ctx,
+	if _, err := tx.exec(ctx,
 		`UPDATE refresh_tokens SET revoked_at = ?, replaced_by_hash = ? WHERE token_hash = ?`,
 		now, next.TokenHash, oldHash); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx,
+	if _, err := tx.exec(ctx,
 		`INSERT INTO refresh_tokens(token_hash, family_id, user_id, issued_at, expires_at)
 		 VALUES(?, ?, ?, ?, ?)`,
 		next.TokenHash, next.FamilyID, next.UserID, next.IssuedAt, next.ExpiresAt); err != nil {
@@ -271,15 +292,15 @@ func (r *SQLiteRepository) RotateRefreshToken(ctx context.Context, oldHash strin
 	return tx.Commit()
 }
 
-func (r *SQLiteRepository) RevokeRefreshToken(ctx context.Context, tokenHash string, now float64) error {
-	_, err := r.db.ExecContext(ctx,
+func (r *SQLRepository) RevokeRefreshToken(ctx context.Context, tokenHash string, now float64) error {
+	_, err := r.exec(ctx,
 		`UPDATE refresh_tokens SET revoked_at = COALESCE(revoked_at, ?) WHERE token_hash = ?`,
 		now, tokenHash)
 	return err
 }
 
-func (r *SQLiteRepository) RevokeAllRefreshTokens(ctx context.Context, userID string, now float64) error {
-	_, err := r.db.ExecContext(ctx,
+func (r *SQLRepository) RevokeAllRefreshTokens(ctx context.Context, userID string, now float64) error {
+	_, err := r.exec(ctx,
 		`UPDATE refresh_tokens SET revoked_at = COALESCE(revoked_at, ?) WHERE user_id = ?`,
 		now, userID)
 	return err
@@ -287,7 +308,7 @@ func (r *SQLiteRepository) RevokeAllRefreshTokens(ctx context.Context, userID st
 
 // --- auth security events --------------------------------------------------
 
-func (r *SQLiteRepository) InsertAuthSecurityEvent(ctx context.Context, event domain.AuthSecurityEvent) (domain.AuthSecurityEvent, bool, error) {
+func (r *SQLRepository) InsertAuthSecurityEvent(ctx context.Context, event domain.AuthSecurityEvent) (domain.AuthSecurityEvent, bool, error) {
 	if err := validateAuthSecurityEvent(event); err != nil {
 		return domain.AuthSecurityEvent{}, false, err
 	}
@@ -301,10 +322,11 @@ func (r *SQLiteRepository) InsertAuthSecurityEvent(ctx context.Context, event do
 	if err != nil {
 		return domain.AuthSecurityEvent{}, false, err
 	}
-	res, err := r.db.ExecContext(ctx,
-		`INSERT OR IGNORE INTO auth_security_events(
+	res, err := r.exec(ctx,
+		`INSERT INTO auth_security_events(
 		   event_id, event_type, flow, email_hash, source_address_bucket, user_id, created_at, details)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(event_id) DO NOTHING`,
 		event.EventID, string(event.EventType), string(event.Flow), event.EmailHash,
 		event.SourceAddressBucket, nullString(event.UserID), event.CreatedAt, details)
 	if err != nil {
@@ -314,7 +336,7 @@ func (r *SQLiteRepository) InsertAuthSecurityEvent(ctx context.Context, event do
 	return event, inserted > 0, nil
 }
 
-func (r *SQLiteRepository) ListAuthSecurityEvents(ctx context.Context, opts domain.ListAuthSecurityEventsOptions) ([]domain.AuthSecurityEvent, error) {
+func (r *SQLRepository) ListAuthSecurityEvents(ctx context.Context, opts domain.ListAuthSecurityEventsOptions) ([]domain.AuthSecurityEvent, error) {
 	opts = normalizeListAuthSecurityEventsOptions(opts)
 	query := `SELECT event_id, event_type, flow, email_hash, source_address_bucket, user_id, created_at, details
 	          FROM auth_security_events WHERE 1 = 1`
@@ -359,7 +381,7 @@ func (r *SQLiteRepository) ListAuthSecurityEvents(ctx context.Context, opts doma
 		query += ` LIMIT -1 OFFSET ?`
 		args = append(args, opts.Offset)
 	}
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	rows, err := r.query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -399,8 +421,8 @@ func scanUser(row *sql.Row) (domain.User, error) {
 
 // --- languages -------------------------------------------------------------
 
-func (r *SQLiteRepository) UpsertLanguage(ctx context.Context, l domain.Language) error {
-	_, err := r.db.ExecContext(ctx,
+func (r *SQLRepository) UpsertLanguage(ctx context.Context, l domain.Language) error {
+	_, err := r.exec(ctx,
 		`INSERT INTO languages(code, name, key_strategy, enabled) VALUES(?, ?, ?, ?)
 		 ON CONFLICT(code) DO UPDATE SET
 		   name = excluded.name,
@@ -410,12 +432,12 @@ func (r *SQLiteRepository) UpsertLanguage(ctx context.Context, l domain.Language
 	return err
 }
 
-func (r *SQLiteRepository) GetLanguage(ctx context.Context, code string) (domain.Language, error) {
+func (r *SQLRepository) GetLanguage(ctx context.Context, code string) (domain.Language, error) {
 	var (
 		l       domain.Language
 		enabled int
 	)
-	err := r.db.QueryRowContext(ctx,
+	err := r.queryRow(ctx,
 		`SELECT code, name, key_strategy, enabled FROM languages WHERE code = ?`, code).
 		Scan(&l.Code, &l.Name, &l.KeyStrategy, &enabled)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -428,8 +450,8 @@ func (r *SQLiteRepository) GetLanguage(ctx context.Context, code string) (domain
 	return l, nil
 }
 
-func (r *SQLiteRepository) ListLanguages(ctx context.Context) ([]domain.Language, error) {
-	rows, err := r.db.QueryContext(ctx,
+func (r *SQLRepository) ListLanguages(ctx context.Context) ([]domain.Language, error) {
+	rows, err := r.query(ctx,
 		`SELECT code, name, key_strategy, enabled FROM languages ORDER BY code`)
 	if err != nil {
 		return nil, err
@@ -453,7 +475,7 @@ func (r *SQLiteRepository) ListLanguages(ctx context.Context) ([]domain.Language
 
 // --- knowledge items -------------------------------------------------------
 
-func (r *SQLiteRepository) UpsertKnowledgeItem(ctx context.Context, item domain.KnowledgeItem) (string, error) {
+func (r *SQLRepository) UpsertKnowledgeItem(ctx context.Context, item domain.KnowledgeItem) (string, error) {
 	if item.ItemID == "" {
 		item.ItemID = id.New()
 	}
@@ -468,7 +490,7 @@ func (r *SQLiteRepository) UpsertKnowledgeItem(ctx context.Context, item domain.
 	// On conflict the existing row's item_id is preserved and returned, so callers
 	// always get the canonical id for this (language, item_type, key).
 	var gotID string
-	err = r.db.QueryRowContext(ctx,
+	err = r.queryRow(ctx,
 		`INSERT INTO knowledge_items(item_id, language, item_type, key, frequency, metadata)
 		 VALUES(?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(language, item_type, key) DO UPDATE SET
@@ -482,13 +504,13 @@ func (r *SQLiteRepository) UpsertKnowledgeItem(ctx context.Context, item domain.
 	return gotID, nil
 }
 
-func (r *SQLiteRepository) GetKnowledgeItem(ctx context.Context, itemID string) (domain.KnowledgeItem, error) {
+func (r *SQLRepository) GetKnowledgeItem(ctx context.Context, itemID string) (domain.KnowledgeItem, error) {
 	var (
 		ki   domain.KnowledgeItem
 		freq sql.NullInt64
 		meta sql.NullString
 	)
-	err := r.db.QueryRowContext(ctx,
+	err := r.queryRow(ctx,
 		`SELECT item_id, language, item_type, key, frequency, metadata
 		 FROM knowledge_items WHERE item_id = ?`, itemID).
 		Scan(&ki.ItemID, &ki.Language, &ki.ItemType, &ki.Key, &freq, &meta)
@@ -507,8 +529,8 @@ func (r *SQLiteRepository) GetKnowledgeItem(ctx context.Context, itemID string) 
 	return ki, nil
 }
 
-func (r *SQLiteRepository) ListKnowledgeItems(ctx context.Context, language string) ([]domain.KnowledgeItem, error) {
-	rows, err := r.db.QueryContext(ctx,
+func (r *SQLRepository) ListKnowledgeItems(ctx context.Context, language string) ([]domain.KnowledgeItem, error) {
+	rows, err := r.query(ctx,
 		`SELECT item_id, language, item_type, key, frequency, metadata
 		 FROM knowledge_items WHERE language = ? ORDER BY frequency IS NULL, frequency, key`, language)
 	if err != nil {
@@ -539,11 +561,11 @@ func (r *SQLiteRepository) ListKnowledgeItems(ctx context.Context, language stri
 
 // --- user knowledge --------------------------------------------------------
 
-func (r *SQLiteRepository) UpsertUserKnowledge(ctx context.Context, uk domain.UserKnowledge) error {
+func (r *SQLRepository) UpsertUserKnowledge(ctx context.Context, uk domain.UserKnowledge) error {
 	if uk.AcquisitionStage == "" {
 		uk.AcquisitionStage = domain.StageUnseen
 	}
-	_, err := r.db.ExecContext(ctx,
+	_, err := r.exec(ctx,
 		`INSERT INTO user_knowledge(
 		   user_id, item_id, acquisition_stage, level, exposure_count, context_variety,
 		   lookup_count, task_correct, task_total, last_seen, last_targeted,
@@ -567,8 +589,8 @@ func (r *SQLiteRepository) UpsertUserKnowledge(ctx context.Context, uk domain.Us
 	return err
 }
 
-func (r *SQLiteRepository) UserKnowledge(ctx context.Context, userID, language string) ([]domain.UserKnowledge, error) {
-	rows, err := r.db.QueryContext(ctx,
+func (r *SQLRepository) UserKnowledge(ctx context.Context, userID, language string) ([]domain.UserKnowledge, error) {
+	rows, err := r.query(ctx,
 		`SELECT uk.user_id, uk.item_id, uk.acquisition_stage, uk.level, uk.exposure_count,
 		        uk.context_variety, uk.lookup_count, uk.task_correct, uk.task_total,
 		        uk.last_seen, uk.last_targeted, uk.confidence_score, uk.next_target_after
@@ -605,14 +627,14 @@ func (r *SQLiteRepository) UserKnowledge(ctx context.Context, userID, language s
 	return out, rows.Err()
 }
 
-func (r *SQLiteRepository) GetUserKnowledgeItem(ctx context.Context, userID, itemID string) (domain.UserKnowledge, error) {
+func (r *SQLRepository) GetUserKnowledgeItem(ctx context.Context, userID, itemID string) (domain.UserKnowledge, error) {
 	var (
 		uk                                             domain.UserKnowledge
 		stage                                          string
 		level                                          sql.NullString
 		lastSeen, lastTargeted, confidence, nextTarget sql.NullFloat64
 	)
-	err := r.db.QueryRowContext(ctx,
+	err := r.queryRow(ctx,
 		`SELECT user_id, item_id, acquisition_stage, level, exposure_count, context_variety,
 		        lookup_count, task_correct, task_total, last_seen, last_targeted,
 		        confidence_score, next_target_after
@@ -635,8 +657,8 @@ func (r *SQLiteRepository) GetUserKnowledgeItem(ctx context.Context, userID, ite
 	return uk, nil
 }
 
-func (r *SQLiteRepository) LoadReaderKnowledge(ctx context.Context, userID, language string) ([]domain.ReaderKnowledge, error) {
-	rows, err := r.db.QueryContext(ctx,
+func (r *SQLRepository) LoadReaderKnowledge(ctx context.Context, userID, language string) ([]domain.ReaderKnowledge, error) {
+	rows, err := r.query(ctx,
 		`SELECT ki.key, uk.level, uk.lookup_count
 		 FROM user_knowledge uk
 		 JOIN knowledge_items ki ON ki.item_id = uk.item_id
@@ -661,8 +683,8 @@ func (r *SQLiteRepository) LoadReaderKnowledge(ctx context.Context, userID, lang
 	return out, rows.Err()
 }
 
-func (r *SQLiteRepository) LoadReaderSurfaceLevels(ctx context.Context, userID, language string) ([]domain.ReaderSurfaceLevel, error) {
-	rows, err := r.db.QueryContext(ctx,
+func (r *SQLRepository) LoadReaderSurfaceLevels(ctx context.Context, userID, language string) ([]domain.ReaderSurfaceLevel, error) {
+	rows, err := r.query(ctx,
 		`SELECT user_id, language, item_key, surface_key, level, updated_at
 		 FROM reader_surface_levels
 		 WHERE user_id = ? AND language = ?
@@ -687,11 +709,11 @@ func (r *SQLiteRepository) LoadReaderSurfaceLevels(ctx context.Context, userID, 
 	return out, rows.Err()
 }
 
-func (r *SQLiteRepository) UpsertReaderSurfaceLevel(ctx context.Context, userID string, row domain.ReaderSurfaceLevel) error {
+func (r *SQLRepository) UpsertReaderSurfaceLevel(ctx context.Context, userID string, row domain.ReaderSurfaceLevel) error {
 	if row.UpdatedAt == 0 {
 		row.UpdatedAt = float64(time.Now().Unix())
 	}
-	_, err := r.db.ExecContext(ctx,
+	_, err := r.exec(ctx,
 		`INSERT INTO reader_surface_levels(user_id, language, item_key, surface_key, level, updated_at)
 		 VALUES(?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(user_id, language, item_key, surface_key) DO UPDATE SET
@@ -701,16 +723,16 @@ func (r *SQLiteRepository) UpsertReaderSurfaceLevel(ctx context.Context, userID 
 	return err
 }
 
-func (r *SQLiteRepository) UpsertKnowledgePredictions(ctx context.Context, predictions []domain.KnowledgePrediction) error {
+func (r *SQLRepository) UpsertKnowledgePredictions(ctx context.Context, predictions []domain.KnowledgePrediction) error {
 	if len(predictions) == 0 {
 		return nil
 	}
-	tx, err := r.db.BeginTx(ctx, nil)
+	tx, err := r.begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	stmt, err := tx.PrepareContext(ctx,
+	stmt, err := tx.prepare(ctx,
 		`INSERT INTO knowledge_predictions(user_id, item_id, predicted_prob, predictor_version, computed_at)
 		 VALUES(?, ?, ?, ?, ?)
 		 ON CONFLICT(user_id, item_id) DO UPDATE SET
@@ -729,7 +751,7 @@ func (r *SQLiteRepository) UpsertKnowledgePredictions(ctx context.Context, predi
 	return tx.Commit()
 }
 
-func (r *SQLiteRepository) ListKnowledgePredictions(ctx context.Context, userID string, itemIDs []string) ([]domain.KnowledgePrediction, error) {
+func (r *SQLRepository) ListKnowledgePredictions(ctx context.Context, userID string, itemIDs []string) ([]domain.KnowledgePrediction, error) {
 	itemIDs = uniqueStrings(itemIDs)
 	query := `SELECT user_id, item_id, predicted_prob, predictor_version, computed_at
 	          FROM knowledge_predictions WHERE user_id = ?`
@@ -741,7 +763,7 @@ func (r *SQLiteRepository) ListKnowledgePredictions(ctx context.Context, userID 
 		query += ` AND item_id IN (` + sqlitePlaceholders(len(itemIDs)) + `)`
 	}
 	query += ` ORDER BY item_id`
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	rows, err := r.query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -757,7 +779,7 @@ func (r *SQLiteRepository) ListKnowledgePredictions(ctx context.Context, userID 
 	return out, rows.Err()
 }
 
-func (r *SQLiteRepository) DeleteKnowledgePredictions(ctx context.Context, userID string, itemIDs []string) error {
+func (r *SQLRepository) DeleteKnowledgePredictions(ctx context.Context, userID string, itemIDs []string) error {
 	itemIDs = uniqueStrings(itemIDs)
 	if len(itemIDs) == 0 {
 		return nil
@@ -766,7 +788,7 @@ func (r *SQLiteRepository) DeleteKnowledgePredictions(ctx context.Context, userI
 	for _, itemID := range itemIDs {
 		args = append(args, itemID)
 	}
-	_, err := r.db.ExecContext(ctx,
+	_, err := r.exec(ctx,
 		`DELETE FROM knowledge_predictions
 		 WHERE user_id = ? AND item_id IN (`+sqlitePlaceholders(len(itemIDs))+`)`,
 		args...)
@@ -775,14 +797,14 @@ func (r *SQLiteRepository) DeleteKnowledgePredictions(ctx context.Context, userI
 
 // --- llm calls -------------------------------------------------------------
 
-func (r *SQLiteRepository) InsertLLMCall(ctx context.Context, c domain.LLMCall) error {
+func (r *SQLRepository) InsertLLMCall(ctx context.Context, c domain.LLMCall) error {
 	if c.CallID == "" {
 		c.CallID = id.New()
 	}
 	if c.CalledAt == 0 {
 		c.CalledAt = float64(time.Now().Unix())
 	}
-	_, err := r.db.ExecContext(ctx,
+	_, err := r.exec(ctx,
 		`INSERT INTO llm_calls(
 		   call_id, session_id, user_id, kind, prompt_version, model,
 		   input_tokens, output_tokens, latency_ms, status, error_detail,
@@ -795,8 +817,8 @@ func (r *SQLiteRepository) InsertLLMCall(ctx context.Context, c domain.LLMCall) 
 	return err
 }
 
-func (r *SQLiteRepository) ListSessionLLMCalls(ctx context.Context, userID, sessionID string) ([]domain.LLMCall, error) {
-	rows, err := r.db.QueryContext(ctx,
+func (r *SQLRepository) ListSessionLLMCalls(ctx context.Context, userID, sessionID string) ([]domain.LLMCall, error) {
+	rows, err := r.query(ctx,
 		`SELECT call_id, session_id, user_id, kind, prompt_version, model,
 		        input_tokens, output_tokens, latency_ms, status, error_detail,
 		        system_prompt, user_prompt, raw_response, parsed_output, error_payload, called_at
@@ -821,23 +843,23 @@ func (r *SQLiteRepository) ListSessionLLMCalls(ctx context.Context, userID, sess
 
 // --- reader events ---------------------------------------------------------
 
-func (r *SQLiteRepository) InsertReaderEvents(ctx context.Context, events []domain.ReaderEvent) ([]domain.ReaderEvent, error) {
+func (r *SQLRepository) InsertReaderEvents(ctx context.Context, events []domain.ReaderEvent) ([]domain.ReaderEvent, error) {
 	if len(events) == 0 {
 		return nil, nil
 	}
-	tx, err := r.db.BeginTx(ctx, nil)
+	tx, err := r.begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }() // no-op after a successful Commit
-	// INSERT OR IGNORE makes the flush idempotent: a re-sent batch (the reader
+	// ON CONFLICT DO NOTHING makes the flush idempotent: a re-sent batch (the reader
 	// guarantees a flush on unload, which can race a debounced one) skips rows whose
 	// event_id is already stored rather than erroring on the PK. RowsAffected tells
 	// us which rows were genuinely new so the caller derives signals once.
-	stmt, err := tx.PrepareContext(ctx,
-		`INSERT OR IGNORE INTO reader_events(
+	stmt, err := tx.prepare(ctx,
+		`INSERT INTO reader_events(
 		   event_id, user_id, story_id, session_id, event_type, position, value, occurred_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)`)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?) `+r.d.readerEventsConflict())
 	if err != nil {
 		return nil, err
 	}
@@ -866,18 +888,18 @@ func (r *SQLiteRepository) InsertReaderEvents(ctx context.Context, events []doma
 	return inserted, nil
 }
 
-func (r *SQLiteRepository) HasReaderEvents(ctx context.Context, userID, storyID string) (bool, error) {
+func (r *SQLRepository) HasReaderEvents(ctx context.Context, userID, storyID string) (bool, error) {
 	var exists int
-	err := r.db.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM reader_events WHERE user_id = ? AND story_id = ?)`,
+	err := r.queryRow(ctx,
+		`SELECT CASE WHEN EXISTS(SELECT 1 FROM reader_events WHERE user_id = ? AND story_id = ?) THEN 1 ELSE 0 END`,
 		userID, storyID).Scan(&exists)
 	return exists == 1, err
 }
 
 // --- definitions & breakdowns (global shared cache) ------------------------
 
-func (r *SQLiteRepository) ListDefinitions(ctx context.Context, language, itemKey string) ([]domain.Definition, error) {
-	rows, err := r.db.QueryContext(ctx,
+func (r *SQLRepository) ListDefinitions(ctx context.Context, language, itemKey string) ([]domain.Definition, error) {
+	rows, err := r.query(ctx,
 		`SELECT language, item_key, source, gloss, grammatical_note, example, etymology,
 		        COALESCE(canonical_key,''), COALESCE(pronunciation,''), COALESCE(related,''), COALESCE(derived,''), created_at
 		 FROM definitions WHERE language = ? AND item_key = ? ORDER BY source`, language, itemKey)
@@ -901,17 +923,17 @@ func (r *SQLiteRepository) ListDefinitions(ctx context.Context, language, itemKe
 	return out, rows.Err()
 }
 
-func (r *SQLiteRepository) UpsertDefinitions(ctx context.Context, defs []domain.Definition) error {
+func (r *SQLRepository) UpsertDefinitions(ctx context.Context, defs []domain.Definition) error {
 	if len(defs) == 0 {
 		return nil
 	}
 	now := float64(time.Now().Unix())
-	tx, err := r.db.BeginTx(ctx, nil)
+	tx, err := r.begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	stmt, err := tx.PrepareContext(ctx,
+	stmt, err := tx.prepare(ctx,
 		`INSERT INTO definitions(language, item_key, source, gloss, grammatical_note, example, etymology,
 		        canonical_key, pronunciation, related, derived, created_at)
 		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -938,7 +960,7 @@ func (r *SQLiteRepository) UpsertDefinitions(ctx context.Context, defs []domain.
 	return tx.Commit()
 }
 
-func (r *SQLiteRepository) ListUntranslatedNativeDefinitions(ctx context.Context, language string, limit int) ([]domain.Definition, error) {
+func (r *SQLRepository) ListUntranslatedNativeDefinitions(ctx context.Context, language string, limit int) ([]domain.Definition, error) {
 	q := `SELECT language, item_key, source, gloss, COALESCE(grammatical_note,''), COALESCE(example,''), COALESCE(etymology,''), created_at
 	      FROM definitions
 	      WHERE language = ? AND source = ?
@@ -951,7 +973,7 @@ func (r *SQLiteRepository) ListUntranslatedNativeDefinitions(ctx context.Context
 		q += " LIMIT ?"
 		args = append(args, limit)
 	}
-	rows, err := r.db.QueryContext(ctx, q, args...)
+	rows, err := r.query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -967,11 +989,11 @@ func (r *SQLiteRepository) ListUntranslatedNativeDefinitions(ctx context.Context
 	return out, rows.Err()
 }
 
-func (r *SQLiteRepository) UpsertDefinition(ctx context.Context, d domain.Definition) error {
+func (r *SQLRepository) UpsertDefinition(ctx context.Context, d domain.Definition) error {
 	if d.CreatedAt == 0 {
 		d.CreatedAt = float64(time.Now().Unix())
 	}
-	_, err := r.db.ExecContext(ctx,
+	_, err := r.exec(ctx,
 		`INSERT INTO definitions(language, item_key, source, gloss, grammatical_note, example, etymology,
 		        canonical_key, pronunciation, related, derived, created_at)
 		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -987,8 +1009,8 @@ func (r *SQLiteRepository) UpsertDefinition(ctx context.Context, d domain.Defini
 	return err
 }
 
-func (r *SQLiteRepository) UpsertDefinitionImport(ctx context.Context, imp domain.DefinitionImport) error {
-	_, err := r.db.ExecContext(ctx,
+func (r *SQLRepository) UpsertDefinitionImport(ctx context.Context, imp domain.DefinitionImport) error {
+	_, err := r.exec(ctx,
 		`INSERT INTO definition_imports(import_id, language, source, source_path, dataset_version,
 		   started_at, completed_at, status, entries_read, entries_matched, definitions_written, error)
 		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1004,13 +1026,13 @@ func (r *SQLiteRepository) UpsertDefinitionImport(ctx context.Context, imp domai
 	return err
 }
 
-func (r *SQLiteRepository) GetDefinitionImport(ctx context.Context, importID string) (domain.DefinitionImport, error) {
+func (r *SQLRepository) GetDefinitionImport(ctx context.Context, importID string) (domain.DefinitionImport, error) {
 	var (
 		imp                          domain.DefinitionImport
 		datasetVersion, errorMessage sql.NullString
 		completedAt                  sql.NullFloat64
 	)
-	err := r.db.QueryRowContext(ctx,
+	err := r.queryRow(ctx,
 		`SELECT import_id, language, source, source_path, dataset_version, started_at,
 		   completed_at, status, entries_read, entries_matched, definitions_written, error
 		 FROM definition_imports WHERE import_id = ?`, importID).Scan(
@@ -1029,12 +1051,12 @@ func (r *SQLiteRepository) GetDefinitionImport(ctx context.Context, importID str
 	return imp, nil
 }
 
-func (r *SQLiteRepository) GetUserDefinition(ctx context.Context, userID, language, itemKey string) (domain.UserDefinition, error) {
+func (r *SQLRepository) GetUserDefinition(ctx context.Context, userID, language, itemKey string) (domain.UserDefinition, error) {
 	var (
 		d     domain.UserDefinition
 		notes sql.NullString
 	)
-	err := r.db.QueryRowContext(ctx,
+	err := r.queryRow(ctx,
 		`SELECT user_id, language, item_key, gloss, notes, created_at, updated_at
 		 FROM user_definitions WHERE user_id = ? AND language = ? AND item_key = ?`,
 		userID, language, itemKey).Scan(&d.UserID, &d.Language, &d.ItemKey, &d.Gloss, &notes, &d.CreatedAt, &d.UpdatedAt)
@@ -1048,7 +1070,7 @@ func (r *SQLiteRepository) GetUserDefinition(ctx context.Context, userID, langua
 	return d, nil
 }
 
-func (r *SQLiteRepository) UpsertUserDefinition(ctx context.Context, d domain.UserDefinition) (domain.UserDefinition, error) {
+func (r *SQLRepository) UpsertUserDefinition(ctx context.Context, d domain.UserDefinition) (domain.UserDefinition, error) {
 	now := float64(time.Now().Unix())
 	if d.CreatedAt == 0 {
 		d.CreatedAt = now
@@ -1056,7 +1078,7 @@ func (r *SQLiteRepository) UpsertUserDefinition(ctx context.Context, d domain.Us
 	if d.UpdatedAt == 0 {
 		d.UpdatedAt = now
 	}
-	_, err := r.db.ExecContext(ctx,
+	_, err := r.exec(ctx,
 		`INSERT INTO user_definitions(user_id, language, item_key, gloss, notes, created_at, updated_at)
 		 VALUES(?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(user_id, language, item_key) DO UPDATE SET
@@ -1068,19 +1090,19 @@ func (r *SQLiteRepository) UpsertUserDefinition(ctx context.Context, d domain.Us
 	return r.GetUserDefinition(ctx, d.UserID, d.Language, d.ItemKey)
 }
 
-func (r *SQLiteRepository) DeleteUserDefinition(ctx context.Context, userID, language, itemKey string) error {
-	_, err := r.db.ExecContext(ctx,
+func (r *SQLRepository) DeleteUserDefinition(ctx context.Context, userID, language, itemKey string) error {
+	_, err := r.exec(ctx,
 		`DELETE FROM user_definitions WHERE user_id = ? AND language = ? AND item_key = ?`,
 		userID, language, itemKey)
 	return err
 }
 
-func (r *SQLiteRepository) GetBreakdown(ctx context.Context, scope domain.BreakdownScope, language, cacheKey string) (domain.Breakdown, error) {
+func (r *SQLRepository) GetBreakdown(ctx context.Context, scope domain.BreakdownScope, language, cacheKey string) (domain.Breakdown, error) {
 	var (
 		content   sql.NullString
 		createdAt float64
 	)
-	err := r.db.QueryRowContext(ctx,
+	err := r.queryRow(ctx,
 		`SELECT content, created_at FROM breakdowns WHERE scope = ? AND language = ? AND cache_key = ?`,
 		string(scope), language, cacheKey).Scan(&content, &createdAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1096,7 +1118,7 @@ func (r *SQLiteRepository) GetBreakdown(ctx context.Context, scope domain.Breakd
 	return domain.Breakdown{Scope: scope, Language: language, CacheKey: cacheKey, Content: m, CreatedAt: createdAt}, nil
 }
 
-func (r *SQLiteRepository) UpsertBreakdown(ctx context.Context, b domain.Breakdown) error {
+func (r *SQLRepository) UpsertBreakdown(ctx context.Context, b domain.Breakdown) error {
 	if b.CreatedAt == 0 {
 		b.CreatedAt = float64(time.Now().Unix())
 	}
@@ -1104,7 +1126,7 @@ func (r *SQLiteRepository) UpsertBreakdown(ctx context.Context, b domain.Breakdo
 	if err != nil {
 		return err
 	}
-	_, err = r.db.ExecContext(ctx,
+	_, err = r.exec(ctx,
 		`INSERT INTO breakdowns(scope, language, cache_key, content, created_at)
 		 VALUES(?, ?, ?, ?, ?)
 		 ON CONFLICT(scope, language, cache_key) DO UPDATE SET
@@ -1113,13 +1135,13 @@ func (r *SQLiteRepository) UpsertBreakdown(ctx context.Context, b domain.Breakdo
 	return err
 }
 
-func (r *SQLiteRepository) GetSentenceStructure(ctx context.Context, language, structureKey string) (domain.SentenceStructure, error) {
+func (r *SQLRepository) GetSentenceStructure(ctx context.Context, language, structureKey string) (domain.SentenceStructure, error) {
 	var (
 		st                  domain.SentenceStructure
 		graphJSON, keysJSON sql.NullString
 		sourceBreakdownKey  sql.NullString
 	)
-	err := r.db.QueryRowContext(ctx,
+	err := r.queryRow(ctx,
 		`SELECT language, structure_key, template, graph, phrase_keys, source_breakdown_key, created_at, updated_at
 		 FROM sentence_structures WHERE language = ? AND structure_key = ?`,
 		language, structureKey).Scan(
@@ -1141,7 +1163,7 @@ func (r *SQLiteRepository) GetSentenceStructure(ctx context.Context, language, s
 	return st, nil
 }
 
-func (r *SQLiteRepository) UpsertSentenceStructure(ctx context.Context, st domain.SentenceStructure) error {
+func (r *SQLRepository) UpsertSentenceStructure(ctx context.Context, st domain.SentenceStructure) error {
 	if st.CreatedAt == 0 {
 		st.CreatedAt = float64(time.Now().Unix())
 	}
@@ -1156,7 +1178,7 @@ func (r *SQLiteRepository) UpsertSentenceStructure(ctx context.Context, st domai
 	if err != nil {
 		return err
 	}
-	_, err = r.db.ExecContext(ctx,
+	_, err = r.exec(ctx,
 		`INSERT INTO sentence_structures(language, structure_key, template, graph, phrase_keys,
 		   source_breakdown_key, created_at, updated_at)
 		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)
@@ -1168,7 +1190,7 @@ func (r *SQLiteRepository) UpsertSentenceStructure(ctx context.Context, st domai
 	return err
 }
 
-func (r *SQLiteRepository) FindPhrases(ctx context.Context, language string, normalizedTexts []string) ([]domain.CachedPhrase, error) {
+func (r *SQLRepository) FindPhrases(ctx context.Context, language string, normalizedTexts []string) ([]domain.CachedPhrase, error) {
 	if len(normalizedTexts) == 0 {
 		return nil, nil
 	}
@@ -1178,7 +1200,7 @@ func (r *SQLiteRepository) FindPhrases(ctx context.Context, language string, nor
 	for _, text := range normalizedTexts {
 		args = append(args, text)
 	}
-	rows, err := r.db.QueryContext(ctx,
+	rows, err := r.query(ctx,
 		`SELECT language, phrase_key, text, normalized_text, kind, gloss, notes, graph,
 		   metadata, source_breakdown_key, created_at, updated_at
 		 FROM cached_phrases
@@ -1199,7 +1221,7 @@ func (r *SQLiteRepository) FindPhrases(ctx context.Context, language string, nor
 	return out, rows.Err()
 }
 
-func (r *SQLiteRepository) UpsertPhrase(ctx context.Context, p domain.CachedPhrase) error {
+func (r *SQLRepository) UpsertPhrase(ctx context.Context, p domain.CachedPhrase) error {
 	if p.CreatedAt == 0 {
 		p.CreatedAt = float64(time.Now().Unix())
 	}
@@ -1214,7 +1236,7 @@ func (r *SQLiteRepository) UpsertPhrase(ctx context.Context, p domain.CachedPhra
 	if err != nil {
 		return err
 	}
-	_, err = r.db.ExecContext(ctx,
+	_, err = r.exec(ctx,
 		`INSERT INTO cached_phrases(language, phrase_key, text, normalized_text, kind, gloss, notes,
 		   graph, metadata, source_breakdown_key, created_at, updated_at)
 		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
