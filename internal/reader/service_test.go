@@ -6,6 +6,7 @@ import (
 
 	"github.com/dleiferives/tifl/internal/acquire"
 	"github.com/dleiferives/tifl/internal/db"
+	"github.com/dleiferives/tifl/internal/db/dbtest"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/lang"
 	"github.com/dleiferives/tifl/internal/predictor"
@@ -22,10 +23,10 @@ func must(t *testing.T, err error) {
 
 // fixture builds a service over a fake repo with a story "a a b" (the word "a"
 // appears twice, "b" once) owned by one user, and returns everything a test needs.
-func fixture(t *testing.T) (context.Context, *reader.Service, *db.FakeRepository, string, string) {
+func fixture(t *testing.T) (context.Context, *reader.Service, db.Repository, string, string) {
 	t.Helper()
 	ctx := context.Background()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "X", KeyStrategy: "surface", Enabled: true}))
 	user, err := repo.CreateUser(ctx, domain.User{Email: "r@r.com"})
 	must(t, err)
@@ -43,7 +44,7 @@ func fixture(t *testing.T) (context.Context, *reader.Service, *db.FakeRepository
 }
 
 // knowledge fetches the user_knowledge row for a word key (resolving the item).
-func knowledge(t *testing.T, ctx context.Context, repo *db.FakeRepository, userID, key string) domain.UserKnowledge {
+func knowledge(t *testing.T, ctx context.Context, repo db.Repository, userID, key string) domain.UserKnowledge {
 	t.Helper()
 	itemID, err := repo.UpsertKnowledgeItem(ctx, domain.KnowledgeItem{Language: "xx", ItemType: "word", Key: key})
 	must(t, err)
@@ -52,7 +53,7 @@ func knowledge(t *testing.T, ctx context.Context, repo *db.FakeRepository, userI
 	return uk
 }
 
-func surfaceLevel(t *testing.T, ctx context.Context, repo *db.FakeRepository, userID, language, key, surface string) domain.ReaderLevel {
+func surfaceLevel(t *testing.T, ctx context.Context, repo db.Repository, userID, language, key, surface string) domain.ReaderLevel {
 	t.Helper()
 	rows, err := repo.LoadReaderSurfaceLevels(ctx, userID, language)
 	must(t, err)

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/dleiferives/tifl/internal/db"
+	"github.com/dleiferives/tifl/internal/db/dbtest"
 	"github.com/dleiferives/tifl/internal/domain"
 	handler "github.com/dleiferives/tifl/internal/handler"
 	"github.com/dleiferives/tifl/internal/lang"
@@ -39,10 +40,10 @@ type skillXPOut struct {
 
 // newSkillAcceptanceServer returns a server wired with skillFakeLang and a
 // pre-seeded skill row so the XP service can resolve tier/threshold data.
-func newSkillAcceptanceServer(t *testing.T) (*db.FakeRepository, *httptest.Server) {
+func newSkillAcceptanceServer(t *testing.T) (db.Repository, *httptest.Server) {
 	t.Helper()
 	ctx := context.Background()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	if err := repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "Testish", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +67,7 @@ func newSkillAcceptanceServer(t *testing.T) (*db.FakeRepository, *httptest.Serve
 
 // seedSkillMCTask seeds item "it-skill" with key "alpha" and a MC task that
 // targets it, returning the task ID.
-func seedSkillMCTask(t *testing.T, repo *db.FakeRepository) string {
+func seedSkillMCTask(t *testing.T, repo db.Repository) string {
 	t.Helper()
 	seedItem(t, repo, "it-skill", "alpha")
 	content := map[string]any{

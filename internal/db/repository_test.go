@@ -21,7 +21,7 @@ func must(t *testing.T, err error) {
 }
 
 // testRepository is the backend-agnostic parity suite. Every Repository
-// implementation (SQLite, Postgres, fake) must pass it identically, so the same
+// implementation (SQLite, Postgres) must pass it identically, so the same
 // behaviour is guaranteed regardless of which backend a deployment selects.
 func testRepository(t *testing.T, newRepo repoFactory) {
 	run := func(name string, test func(*testing.T, db.Repository)) {
@@ -294,7 +294,7 @@ func testRefreshTokens(t *testing.T, repo db.Repository) {
 // every backend: session creation + status machine, stage checkpoint upsert and
 // resume ordering, story persistence with tokens + glossary (idempotent
 // replace), and task creation with task_targets. The same behaviour must hold
-// for SQLite, Postgres and the in-memory fake.
+// for SQLite and Postgres.
 // testReaderEvents verifies the high-volume reader-signal log: a batch inserts,
 // a re-sent batch is idempotent on event_id (the reader guarantees a flush on
 // unload, which can duplicate a debounced one), and an empty batch is a no-op.

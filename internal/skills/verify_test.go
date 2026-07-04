@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/dleiferives/tifl/internal/db"
+	"github.com/dleiferives/tifl/internal/db/dbtest"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/llm"
 	"github.com/dleiferives/tifl/internal/tasks"
@@ -206,10 +207,10 @@ func mustV(t *testing.T, err error) {
 }
 
 // setupVerifyRepo seeds the minimal state needed by verify tests.
-func setupVerifyRepo(t *testing.T) *db.FakeRepository {
+func setupVerifyRepo(t *testing.T) db.Repository {
 	t.Helper()
 	ctx := context.Background()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	mustV(t, repo.UpsertLanguage(ctx, domain.Language{Code: "el", Name: "Greek", KeyStrategy: "lemma", Enabled: true}))
 	mustV(t, repo.UpsertSkill(ctx, domain.Skill{
 		SkillID: "el-vocab-core", Language: "el", Name: "Core Vocab",

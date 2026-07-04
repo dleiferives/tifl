@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/dleiferives/tifl/internal/db"
+	"github.com/dleiferives/tifl/internal/db/dbtest"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/predictor"
 )
@@ -13,7 +14,7 @@ import (
 // newTestSelector creates a DBSelector backed by an in-memory fake repository.
 func newTestSelector(t *testing.T) (*DBSelector, db.Repository) {
 	t.Helper()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	ctx := context.Background()
 	if err := repo.Migrate(ctx); err != nil {
 		t.Fatal(err)

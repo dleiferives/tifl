@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dleiferives/tifl/internal/db"
+	"github.com/dleiferives/tifl/internal/db/dbtest"
 )
 
 const testSecret = "01234567890123456789012345678901"
@@ -73,7 +73,7 @@ func TestAccessTokenValidation(t *testing.T) {
 
 func TestRefreshRotationReplayAndConcurrentSessions(t *testing.T) {
 	ctx := context.Background()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	service, err := NewService(repo, testSecret)
 	if err != nil {
 		t.Fatal(err)
@@ -117,7 +117,7 @@ func TestRefreshRotationReplayAndConcurrentSessions(t *testing.T) {
 
 func TestRegisterStoresDisplayEmailAndLoginUsesCanonicalEmail(t *testing.T) {
 	ctx := context.Background()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	service, err := NewService(repo, testSecret)
 	if err != nil {
 		t.Fatal(err)
@@ -149,7 +149,7 @@ func TestRegisterStoresDisplayEmailAndLoginUsesCanonicalEmail(t *testing.T) {
 }
 
 func TestLoginIsGenericForUnknownUser(t *testing.T) {
-	service, err := NewService(db.NewFake(), testSecret)
+	service, err := NewService(dbtest.NewRepo(t), testSecret)
 	if err != nil {
 		t.Fatal(err)
 	}

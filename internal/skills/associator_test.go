@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/dleiferives/tifl/internal/db"
+	"github.com/dleiferives/tifl/internal/db/dbtest"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/lang"
 )
@@ -119,10 +120,10 @@ func TestAssociatorRequiresPersistedItemForMatchedAssociations(t *testing.T) {
 	}
 }
 
-func setupAssociatorTest(t *testing.T, defs []lang.SkillDefinition) (*db.FakeRepository, *lang.Registry) {
+func setupAssociatorTest(t *testing.T, defs []lang.SkillDefinition) (db.Repository, *lang.Registry) {
 	t.Helper()
 	ctx := context.Background()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	if err := repo.UpsertLanguage(ctx, domain.Language{Code: "el", Name: "Greek", KeyStrategy: string(lang.KeyLemma), Enabled: true}); err != nil {
 		t.Fatalf("seed language: %v", err)
 	}

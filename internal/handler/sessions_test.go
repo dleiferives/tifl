@@ -14,6 +14,7 @@ import (
 
 	authn "github.com/dleiferives/tifl/internal/auth"
 	"github.com/dleiferives/tifl/internal/db"
+	"github.com/dleiferives/tifl/internal/db/dbtest"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/handler"
 	"github.com/dleiferives/tifl/internal/lang"
@@ -92,10 +93,10 @@ type generationEventPayload struct {
 
 // newServer builds an httptest server over the real handler. withBroker controls
 // whether generation is wired (false exercises the 503 path).
-func newServer(t *testing.T, withBroker bool) (*httptest.Server, *db.FakeRepository) {
+func newServer(t *testing.T, withBroker bool) (*httptest.Server, db.Repository) {
 	t.Helper()
 	ctx := context.Background()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	if err := repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "Testish", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -145,10 +146,10 @@ func newServer(t *testing.T, withBroker bool) (*httptest.Server, *db.FakeReposit
 	return srv, repo
 }
 
-func newLevelRuleServer(t *testing.T) (*httptest.Server, *db.FakeRepository) {
+func newLevelRuleServer(t *testing.T) (*httptest.Server, db.Repository) {
 	t.Helper()
 	ctx := context.Background()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	if err := repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "Testish", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -725,6 +726,9 @@ func TestGetSessionDebugIncludesOwnedLLMCalls(t *testing.T) {
 
 func TestSessionReadAPITenantIsolation(t *testing.T) {
 	srv, repo := newAuthServer(t)
+	if err := repo.UpsertLanguage(context.Background(), domain.Language{Code: "xx", Name: "Testish", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
 	service, err := authn.NewService(repo, authTestSecret)
 	if err != nil {
 		t.Fatal(err)
@@ -1339,6 +1343,9 @@ func TestSessionLifecycleFullFlow(t *testing.T) {
 // cannot be transitioned via the lifecycle endpoints.
 func TestLifecycleEndpointsTenantIsolation(t *testing.T) {
 	srv, repo := newAuthServer(t)
+	if err := repo.UpsertLanguage(context.Background(), domain.Language{Code: "xx", Name: "Testish", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
 	service, err := authn.NewService(repo, authTestSecret)
 	if err != nil {
 		t.Fatal(err)
@@ -1395,6 +1402,9 @@ func TestSessionEventsJWTMissingToken(t *testing.T) {
 // 404 when a valid token for user B is used to access user A's session.
 func TestSessionEventsJWTWrongUser(t *testing.T) {
 	srv, repo := newAuthServer(t)
+	if err := repo.UpsertLanguage(context.Background(), domain.Language{Code: "xx", Name: "Testish", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
 	service, err := authn.NewService(repo, authTestSecret)
 	if err != nil {
 		t.Fatal(err)

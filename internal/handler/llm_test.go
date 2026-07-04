@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/dleiferives/tifl/internal/db"
+	"github.com/dleiferives/tifl/internal/db/dbtest"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/handler"
 	"github.com/dleiferives/tifl/internal/lang"
@@ -27,7 +27,7 @@ func (listingLLM) ListModels(context.Context) ([]llm.ModelInfo, error) {
 
 func TestListLLMModels(t *testing.T) {
 	ctx := context.Background()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	if err := repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "Testish", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}

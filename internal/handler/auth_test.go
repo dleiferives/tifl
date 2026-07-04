@@ -12,6 +12,7 @@ import (
 
 	authn "github.com/dleiferives/tifl/internal/auth"
 	"github.com/dleiferives/tifl/internal/db"
+	"github.com/dleiferives/tifl/internal/db/dbtest"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/handler"
 	"github.com/dleiferives/tifl/internal/lang"
@@ -20,9 +21,9 @@ import (
 
 const authTestSecret = "01234567890123456789012345678901"
 
-func newAuthServer(t *testing.T) (*httptest.Server, *db.FakeRepository) {
+func newAuthServer(t *testing.T) (*httptest.Server, db.Repository) {
 	t.Helper()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	service, err := authn.NewService(repo, authTestSecret)
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +83,7 @@ func postAuthFailureWithHeaders(t *testing.T, client *http.Client, url, email, p
 	}
 }
 
-func registerUserDirectly(t *testing.T, repo *db.FakeRepository, email string) {
+func registerUserDirectly(t *testing.T, repo db.Repository, email string) {
 	t.Helper()
 	service, err := authn.NewService(repo, authTestSecret)
 	if err != nil {
@@ -243,7 +244,7 @@ func TestThrottledLoginRecordsSecurityEvent(t *testing.T) {
 		t.Fatalf("throttled login response = %+v, want %+v", got, want)
 	}
 
-	events := repo.AuthSecurityEvents()
+	events := authSecurityEvents(t, repo)
 	if len(events) != 1 {
 		t.Fatalf("auth security events = %d, want 1: %+v", len(events), events)
 	}
@@ -274,7 +275,7 @@ func TestThrottledRegisterRecordsSecurityEvent(t *testing.T) {
 		t.Fatalf("throttled register response = %+v, want %+v", got, want)
 	}
 
-	events := repo.AuthSecurityEvents()
+	events := authSecurityEvents(t, repo)
 	if len(events) != 1 {
 		t.Fatalf("auth security events = %d, want 1: %+v", len(events), events)
 	}
@@ -371,4 +372,14 @@ func TestJWTModeRejectsAnotherUsersBearer(t *testing.T) {
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("authenticated tenant-scoped miss = %d", resp.StatusCode)
 	}
+}
+
+// authSecurityEvents lists every stored auth security event, newest first.
+func authSecurityEvents(t *testing.T, repo db.Repository) []domain.AuthSecurityEvent {
+	t.Helper()
+	events, err := repo.ListAuthSecurityEvents(context.Background(), domain.ListAuthSecurityEventsOptions{})
+	if err != nil {
+		t.Fatalf("list auth security events: %v", err)
+	}
+	return events
 }

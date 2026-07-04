@@ -6,14 +6,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dleiferives/tifl/internal/db"
+	"github.com/dleiferives/tifl/internal/db/dbtest"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/lang"
 )
 
 func TestImporterStreamsDefinitionsAndFormAliases(t *testing.T) {
 	ctx := context.Background()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
+	if err := repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "Testish", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
 	clock := fakeClock(1000)
 	importer, err := NewImporter(repo, Options{
 		Language:       testLanguage{lemmas: map[string]string{"writes": "write"}},
@@ -79,7 +82,10 @@ func TestImporterStreamsDefinitionsAndFormAliases(t *testing.T) {
 
 func TestImporterRecordsFailedRun(t *testing.T) {
 	ctx := context.Background()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
+	if err := repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "Testish", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
 	importer, err := NewImporter(repo, Options{Language: testLanguage{}, Now: fakeClock(2000)})
 	if err != nil {
 		t.Fatal(err)

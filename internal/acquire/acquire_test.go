@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/dleiferives/tifl/internal/acquire"
-	"github.com/dleiferives/tifl/internal/db"
+	"github.com/dleiferives/tifl/internal/db/dbtest"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/predictor"
 	"github.com/dleiferives/tifl/internal/tasks"
@@ -91,7 +91,7 @@ func TestStageThresholds(t *testing.T) {
 // both — this is what makes the acquired→automatic transition reachable.
 func TestEngineRefreshPersistsConfidenceAndStage(t *testing.T) {
 	ctx := context.Background()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "X", KeyStrategy: "surface", Enabled: true}))
 	user, err := repo.CreateUser(ctx, domain.User{Email: "a@a.com"})
 	must(t, err)
@@ -118,7 +118,7 @@ func TestEngineRefreshPersistsConfidenceAndStage(t *testing.T) {
 
 func TestEngineRefreshRecomputesPredictionCache(t *testing.T) {
 	ctx := context.Background()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "X", KeyStrategy: "surface", Enabled: true}))
 	user, err := repo.CreateUser(ctx, domain.User{Email: "cache@a.com"})
 	must(t, err)
@@ -153,7 +153,7 @@ func TestEngineRefreshRecomputesPredictionCache(t *testing.T) {
 // TestEngineNoRegress confirms the hard path never lowers a stored stage.
 func TestEngineNoRegress(t *testing.T) {
 	ctx := context.Background()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "X", KeyStrategy: "surface", Enabled: true}))
 	user, err := repo.CreateUser(ctx, domain.User{Email: "b@b.com"})
 	must(t, err)
@@ -177,7 +177,7 @@ func TestEngineNoRegress(t *testing.T) {
 // and re-derives the stage — the grading half of #9.
 func TestApplyTaskGrade(t *testing.T) {
 	ctx := context.Background()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "X", KeyStrategy: "surface", Enabled: true}))
 	user, err := repo.CreateUser(ctx, domain.User{Email: "g@g.com"})
 	must(t, err)
@@ -207,7 +207,7 @@ func TestApplyTaskGrade(t *testing.T) {
 
 func TestApplyTaskSignalPartialCredit(t *testing.T) {
 	ctx := context.Background()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "X", KeyStrategy: "surface", Enabled: true}))
 	user, err := repo.CreateUser(ctx, domain.User{Email: "p@g.com"})
 	must(t, err)

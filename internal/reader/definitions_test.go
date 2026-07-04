@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/dleiferives/tifl/internal/db"
+	"github.com/dleiferives/tifl/internal/db/dbtest"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/llm"
 	"github.com/dleiferives/tifl/internal/reader"
@@ -16,10 +17,10 @@ import (
 // defFixture builds a definition service over a fake repo + fake LLM, with a
 // story "a b" owned by one user. The returned client records calls so tests can
 // assert the cache prevents repeat model calls.
-func defFixture(t *testing.T, resp string) (context.Context, *reader.DefinitionService, *db.FakeRepository, *llm.FakeClient, string, string) {
+func defFixture(t *testing.T, resp string) (context.Context, *reader.DefinitionService, db.Repository, *llm.FakeClient, string, string) {
 	t.Helper()
 	ctx := context.Background()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "X", KeyStrategy: "surface", Enabled: true}))
 	user, err := repo.CreateUser(ctx, domain.User{Email: "d@d.com"})
 	must(t, err)
@@ -206,7 +207,7 @@ func TestResolveLiveLLMThenCaches(t *testing.T) {
 
 func TestResolveNoClientIsUnavailable(t *testing.T) {
 	ctx := context.Background()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "X", Enabled: true}))
 	user, err := repo.CreateUser(ctx, domain.User{Email: "n@n.com"})
 	must(t, err)

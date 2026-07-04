@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dleiferives/tifl/internal/db"
+	"github.com/dleiferives/tifl/internal/db/dbtest"
 	"github.com/dleiferives/tifl/internal/gateway"
 	"github.com/dleiferives/tifl/internal/llm"
 )
@@ -49,7 +49,7 @@ func TestLiveOpenCodeEndToEnd(t *testing.T) {
 	defer gw.Close()
 
 	// Real client, recording to the in-memory repo.
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	client := llm.New(gw.URL, llm.WithModel(model), llm.WithRecorder(repo),
 		llm.WithHTTPClient(&http.Client{Timeout: 180 * time.Second}))
 

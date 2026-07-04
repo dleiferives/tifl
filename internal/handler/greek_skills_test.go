@@ -13,7 +13,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/dleiferives/tifl/internal/db"
+	"github.com/dleiferives/tifl/internal/db/dbtest"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/handler"
 	"github.com/dleiferives/tifl/internal/lang"
@@ -27,7 +27,7 @@ import (
 // with tier 0 and the correct categories.
 func TestGreekSkillTreeAcceptance47(t *testing.T) {
 	ctx := context.Background()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 
 	// Simulate server startup: seed language then skills from the real plugin.
 	if err := repo.UpsertLanguage(ctx, domain.Language{

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dleiferives/tifl/internal/db"
+	"github.com/dleiferives/tifl/internal/db/dbtest"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/lang"
 )
@@ -37,7 +37,7 @@ func (importLang) Tokenize(text string) []lang.Token {
 }
 
 func TestImportTextRejectsEmptyText(t *testing.T) {
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	if _, err := ImportText(context.Background(), repo, importLang{}, ImportRequest{
 		UserID: domain.LocalUserID, Language: "xx", Level: "beginner", Text: " \n\t ",
 	}); !errors.Is(err, ErrImportEmptyText) {
@@ -47,7 +47,7 @@ func TestImportTextRejectsEmptyText(t *testing.T) {
 
 func TestImportTextCreatesStoryAndTokens(t *testing.T) {
 	ctx := context.Background()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	if err := repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "Import Testish", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}

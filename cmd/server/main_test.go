@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/dleiferives/tifl/internal/db"
+	"github.com/dleiferives/tifl/internal/db/dbtest"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/lang"
 	greekplugin "github.com/dleiferives/tifl/internal/lang/el"
@@ -31,7 +31,7 @@ func TestHTTPURLIncludesRandomPort(t *testing.T) {
 
 func TestSeedSkillsFromDefinitionsIsIdempotent(t *testing.T) {
 	ctx := context.Background()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	registry := lang.NewRegistry()
 	greek := greekplugin.New()
 	registry.Register(greek)
@@ -67,7 +67,7 @@ func TestSeedSkillsFromDefinitionsIsIdempotent(t *testing.T) {
 
 func TestGreekSkillAssociatorUsesSeededDefinitions(t *testing.T) {
 	ctx := context.Background()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	registry := lang.NewRegistry()
 	registry.Register(greekplugin.New())
 

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/dleiferives/tifl/internal/db"
+	"github.com/dleiferives/tifl/internal/db/dbtest"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/lang"
 )
@@ -111,10 +112,10 @@ func TestConstraintBuilderUntouchedUserFallsBackToLevel(t *testing.T) {
 	}
 }
 
-func setupConstraintBuilder(t *testing.T, defs []lang.SkillDefinition) (*db.FakeRepository, *lang.Registry, string) {
+func setupConstraintBuilder(t *testing.T, defs []lang.SkillDefinition) (db.Repository, *lang.Registry, string) {
 	t.Helper()
 	ctx := context.Background()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	if err := repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "Testish", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}

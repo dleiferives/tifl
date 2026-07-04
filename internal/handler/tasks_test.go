@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/dleiferives/tifl/internal/db"
+	"github.com/dleiferives/tifl/internal/db/dbtest"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/handler"
 	"github.com/dleiferives/tifl/internal/lang"
@@ -18,7 +19,7 @@ import (
 
 // --- helpers ---------------------------------------------------------------
 
-func seedItem(t *testing.T, repo *db.FakeRepository, itemID, key string) {
+func seedItem(t *testing.T, repo db.Repository, itemID, key string) {
 	t.Helper()
 	if _, err := repo.UpsertKnowledgeItem(context.Background(), domain.KnowledgeItem{
 		ItemID: itemID, Language: "xx", ItemType: "word", Key: key,
@@ -27,7 +28,7 @@ func seedItem(t *testing.T, repo *db.FakeRepository, itemID, key string) {
 	}
 }
 
-func seedTask(t *testing.T, repo *db.FakeRepository, taskType string, content map[string]any, targets []string) (sessionID, taskID string) {
+func seedTask(t *testing.T, repo db.Repository, taskType string, content map[string]any, targets []string) (sessionID, taskID string) {
 	t.Helper()
 	ctx := context.Background()
 	sess, err := repo.CreateSession(ctx, domain.Session{UserID: domain.LocalUserID, Language: "xx", Level: "beginner"})
@@ -121,7 +122,7 @@ func TestSubmitRuleGradedMC(t *testing.T) {
 
 func TestSubmitEnsuresSkillAssociationsForTargets(t *testing.T) {
 	ctx := context.Background()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	if err := repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "Testish", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -417,14 +418,14 @@ func TestSubmitProductionScoreOnlyCreditsNoItems(t *testing.T) {
 
 // newGraderServer builds a handler whose LLM client returns a fixed valid grade,
 // for exercising the LLM-graded submit path deterministically.
-func newGraderServer(t *testing.T) (*httptest.Server, *db.FakeRepository) {
+func newGraderServer(t *testing.T) (*httptest.Server, db.Repository) {
 	return newGraderServerWithResponse(t, `{"correct":true,"score":1,"feedback":"good","items_demonstrated":["genabs"]}`)
 }
 
-func newGraderServerWithResponse(t *testing.T, gradeJSON string) (*httptest.Server, *db.FakeRepository) {
+func newGraderServerWithResponse(t *testing.T, gradeJSON string) (*httptest.Server, db.Repository) {
 	t.Helper()
 	ctx := context.Background()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	if err := repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "Testish", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}

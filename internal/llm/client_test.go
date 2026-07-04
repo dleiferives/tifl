@@ -1,8 +1,11 @@
 package llm_test
 
 import (
+	"sync"
+
 	"context"
 	"encoding/json"
+	"github.com/dleiferives/tifl/internal/domain"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/llm"
 )
 
@@ -54,7 +56,7 @@ func TestComplete_Success_ParsesAndLogs(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	repo := db.NewFake()
+	repo := &recorderSpy{}
 	c := llm.New(srv.URL, llm.WithAPIKey("secret"), llm.WithModel("stub-model"), llm.WithRecorder(repo))
 
 	ctx := llm.WithCallMeta(context.Background(), llm.CallMeta{
@@ -120,7 +122,7 @@ func TestComplete_RetriesTransientThenSucceeds(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	repo := db.NewFake()
+	repo := &recorderSpy{}
 	c := llm.New(srv.URL, llm.WithRecorder(repo), llm.WithRetry(3, time.Millisecond))
 	resp, err := c.Complete(context.Background(), "grader", llm.LLMRequest{User: "x"})
 	if err != nil {
@@ -147,7 +149,7 @@ func TestComplete_ModelOverrideFromCallMeta(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	repo := db.NewFake()
+	repo := &recorderSpy{}
 	c := llm.New(srv.URL, llm.WithModel("gateway-default"), llm.WithRecorder(repo))
 	ctx := llm.WithCallMeta(context.Background(), llm.CallMeta{Model: "openai/gpt-4.1-mini"})
 	if _, err := c.Complete(ctx, "story_generator", llm.LLMRequest{User: "x"}); err != nil {
@@ -192,7 +194,7 @@ func TestComplete_PermanentErrorNoRetry(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	repo := db.NewFake()
+	repo := &recorderSpy{}
 	c := llm.New(srv.URL, llm.WithRecorder(repo), llm.WithRetry(3, time.Millisecond))
 	if _, err := c.Complete(context.Background(), "grader", llm.LLMRequest{User: "x"}); err == nil {
 		t.Fatal("expected error on 400")
@@ -220,4 +222,24 @@ func TestFakeClient(t *testing.T) {
 	if len(f.Calls) != 1 || f.Calls[0].Kind != "assessor" || f.Calls[0].Req.User != "hi" {
 		t.Fatalf("call not recorded: %+v", f.Calls)
 	}
+}
+
+// recorderSpy is an in-memory CallRecorder: the client tests assert on the
+// audit rows the client writes without a database round-trip.
+type recorderSpy struct {
+	mu    sync.Mutex
+	calls []domain.LLMCall
+}
+
+func (r *recorderSpy) InsertLLMCall(_ context.Context, c domain.LLMCall) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, c)
+	return nil
+}
+
+func (r *recorderSpy) LLMCalls() []domain.LLMCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]domain.LLMCall(nil), r.calls...)
 }

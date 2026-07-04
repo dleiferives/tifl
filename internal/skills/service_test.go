@@ -138,7 +138,7 @@ func TestXPServiceNoAssociatedSkillsIsNoOp(t *testing.T) {
 	}
 }
 
-func setupXPServiceRepo(t *testing.T, skills []domain.Skill) (*db.FakeRepository, *lang.Registry) {
+func setupXPServiceRepo(t *testing.T, skills []domain.Skill) (db.Repository, *lang.Registry) {
 	t.Helper()
 	defs := make([]lang.SkillDefinition, 0, len(skills))
 	for _, skill := range skills {
@@ -153,7 +153,7 @@ func setupXPServiceRepo(t *testing.T, skills []domain.Skill) (*db.FakeRepository
 	return repo, registry
 }
 
-func seedXPTask(t *testing.T, repo *db.FakeRepository, taskType string, targets []string) domain.Task {
+func seedXPTask(t *testing.T, repo db.Repository, taskType string, targets []string) domain.Task {
 	t.Helper()
 	ctx := context.Background()
 	sess, err := repo.CreateSession(ctx, domain.Session{UserID: domain.LocalUserID, Language: "el", Level: "beginner"})

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/dleiferives/tifl/internal/db"
+	"github.com/dleiferives/tifl/internal/db/dbtest"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/lang"
 	"github.com/dleiferives/tifl/internal/llm"
@@ -141,7 +142,7 @@ func (c *clientControl) calls(client *llm.FakeClient, kind string) int {
 // harness wires a pipeline over a fake repo, a fixed selector and a fake
 // language, seeding a user plus background and target knowledge items.
 type harness struct {
-	repo     *db.FakeRepository
+	repo     db.Repository
 	pipeline *story.Pipeline
 	client   *llm.FakeClient
 	userID   string
@@ -155,7 +156,7 @@ func newHarness(t *testing.T, ctrl *clientControl, taskTypes []string) *harness 
 func newHarnessWithConstraints(t *testing.T, ctrl *clientControl, taskTypes []string, constraints story.SkillConstraintProvider) *harness {
 	t.Helper()
 	ctx := context.Background()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "Testish", Enabled: true}))
 	user, err := repo.CreateUser(ctx, domain.User{Email: "h@h.com"})
 	must(t, err)

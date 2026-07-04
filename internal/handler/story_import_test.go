@@ -15,6 +15,7 @@ import (
 
 	authn "github.com/dleiferives/tifl/internal/auth"
 	"github.com/dleiferives/tifl/internal/db"
+	"github.com/dleiferives/tifl/internal/db/dbtest"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/handler"
 	"github.com/dleiferives/tifl/internal/lang"
@@ -295,10 +296,10 @@ func TestImportStoryTenantIsolation(t *testing.T) {
 	}
 }
 
-func newAuthImportServer(t *testing.T) (*httptest.Server, *db.FakeRepository, *authn.Service) {
+func newAuthImportServer(t *testing.T) (*httptest.Server, db.Repository, *authn.Service) {
 	t.Helper()
 	ctx := context.Background()
-	repo := db.NewFake()
+	repo := dbtest.NewRepo(t)
 	if err := repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "Testish", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
