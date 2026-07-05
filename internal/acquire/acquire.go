@@ -128,26 +128,45 @@ func (c Config) Stage(uk domain.UserKnowledge) domain.AcquisitionStage {
 // service, the task grader); Engine owns only the derivation: predict
 // confidence, then evaluate the stage, then persist.
 type Engine struct {
-	repo  Store
-	algo  *predictor.Algorithmic
-	cfg   Config
-	cache predictor.CacheConfig
-	now   func() float64
+	repo Store
+	algo *predictor.Algorithmic
+	fsrs *predictor.FSRS
+	// fsrsScoring switches confidence_score / cached predictions to the FSRS
+	// retrievability model (#209). FSRS *state* is always maintained on rated
+	// reviews regardless, so flipping the flag later needs no backfill. Set at
+	// startup only (EnableFSRSScoring); not safe to toggle concurrently.
+	fsrsScoring bool
+	cfg         Config
+	cache       predictor.CacheConfig
+	now         func() float64
 }
 
 // NewEngine builds an Engine over the repository, using the algorithmic
 // predictor for confidence_score and cfg for the stage thresholds.
-func NewEngine(repo Store, predCfg predictor.Config, cfg Config) *Engine {
+// Option customizes an Engine at construction.
+type Option func(*Engine)
+
+// WithNow overrides the engine's clock; tests use it to simulate elapsed time.
+func WithNow(now func() float64) Option {
+	return func(e *Engine) { e.now = now }
+}
+
+func NewEngine(repo Store, predCfg predictor.Config, cfg Config, opts ...Option) *Engine {
 	if (cfg == Config{}) {
 		cfg = DefaultConfig()
 	}
-	return &Engine{
+	e := &Engine{
 		repo:  repo,
 		algo:  predictor.NewAlgorithmic(predCfg),
+		fsrs:  predictor.NewFSRS(),
 		cfg:   cfg,
 		cache: predictor.DefaultCacheConfig(),
 		now:   func() float64 { return float64(time.Now().Unix()) },
 	}
+	for _, opt := range opts {
+		opt(e)
+	}
+	return e
 }
 
 // Refresh recomputes confidence_score (predictor) and acquisition_stage
@@ -155,8 +174,39 @@ func NewEngine(repo Store, predCfg predictor.Config, cfg Config) *Engine {
 // only advances — the hard path never regresses a stored stage; the documented
 // regression (e.g. high exposure but poor task performance) is reserved for the
 // LLM assessor, a future hook. Returns the persisted row.
+// EnableFSRSScoring switches scoring to the FSRS memory model. Call during
+// startup wiring only.
+func (e *Engine) EnableFSRSScoring() { e.fsrsScoring = true }
+
+// score picks the active predictor: FSRS retrievability when enabled (with
+// algorithmic fallback for never-rated items inside FSRSScore), else the
+// legacy algorithmic formula.
+func (e *Engine) score(uk domain.UserKnowledge, now float64) predictor.Prediction {
+	if e.fsrsScoring {
+		return predictor.FSRSScore(e.fsrs, e.algo, uk, now)
+	}
+	return e.algo.Score(uk, now)
+}
+
+// ReviewFSRS folds one rated review into the row's FSRS memory state. Callers
+// mutate the row and persist via Refresh, same as the integer counters. The
+// mapping from product signals to ratings lives with the signal sources:
+// task grades and explicit reader ratings are strong evidence; lookups are a
+// weak negative; passive exposure is deliberately not a review (tunable
+// later — see context/knowledge-predictor.md).
+func (e *Engine) ReviewFSRS(uk *domain.UserKnowledge, rating predictor.FSRSRating) {
+	st := e.fsrs.Review(predictor.FSRSState{
+		Difficulty: uk.FSRSDifficulty,
+		Stability:  uk.FSRSStability,
+		LastReview: uk.FSRSLastReview,
+	}, rating, e.now())
+	uk.FSRSDifficulty = st.Difficulty
+	uk.FSRSStability = st.Stability
+	uk.FSRSLastReview = st.LastReview
+}
+
 func (e *Engine) Refresh(ctx context.Context, uk domain.UserKnowledge) (domain.UserKnowledge, error) {
-	prob := e.algo.Score(uk, e.now()).Probability
+	prob := e.score(uk, e.now()).Probability
 	uk.ConfidenceScore = &prob
 
 	next := e.cfg.Stage(uk)
@@ -179,10 +229,13 @@ func (e *Engine) Refresh(ctx context.Context, uk domain.UserKnowledge) (domain.U
 func (e *Engine) recomputePredictionAsync(uk domain.UserKnowledge) {
 	go func() {
 		now := e.now()
-		pred := e.algo.Score(uk, now)
+		pred := e.score(uk, now)
 		version := e.cache.PredictorVersion
 		if version == "" {
 			version = predictor.AlgorithmicVersion
+			if e.fsrsScoring {
+				version = predictor.FSRSVersion
+			}
 		}
 		_ = e.repo.UpsertKnowledgePredictions(context.Background(), []domain.KnowledgePrediction{{
 			UserID:           uk.UserID,
@@ -225,6 +278,9 @@ func (e *Engine) ApplyTaskSignal(ctx context.Context, userID string, signal task
 		uk.TaskTotal++
 		if signal.Demonstrated(itemID) {
 			uk.TaskCorrect++
+			e.ReviewFSRS(&uk, predictor.RatingGood)
+		} else {
+			e.ReviewFSRS(&uk, predictor.RatingAgain)
 		}
 		now := e.now()
 		uk.LastSeen = &now

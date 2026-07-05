@@ -84,6 +84,11 @@ type UserKnowledge struct {
 	LastTargeted     *float64 // last time the selector put it in targets[]
 	ConfidenceScore  *float64 // 0..1, computed by the predictor
 	NextTargetAfter  *float64 // internal SRS-like scheduling; not user-visible
+
+	// FSRS memory state (#209). Zero values = no rated review yet.
+	FSRSDifficulty float64 // 1..10 once initialized
+	FSRSStability  float64 // days; retrievability decays to 0.9 at this age
+	FSRSLastReview float64 // Unix seconds of the last rated review
 }
 
 // KnowledgePrediction is a cached predictor output for one (user, item) pair.

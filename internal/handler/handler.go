@@ -101,6 +101,13 @@ func currentAPIRoutes() []apiRoute {
 
 // WithAuth enables JWT mode. Without it, the handler runs in desktop-local mode
 // and injects domain.LocalUserID into every application API request.
+// WithFSRSScoring switches knowledge scoring to the FSRS memory model
+// (predictor_mode: fsrs). FSRS state is maintained either way; this flips
+// which model computes confidence scores and cached predictions (#209).
+func WithFSRSScoring() Option {
+	return func(h *Handler) { h.acquire.EnableFSRSScoring() }
+}
+
 // WithSkillVerifyQueue routes pending skill-tier verifications through the
 // durable job queue instead of running them synchronously after grading.
 func WithSkillVerifyQueue(q SkillVerifyQueue) Option {

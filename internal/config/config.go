@@ -49,6 +49,7 @@ type Config struct {
 	FrontendDir             string      // compiled SolidJS assets (web/dist)
 	LLMBudgetTokens         int64       // per-user token ceiling per window; 0 = unlimited (#208)
 	LLMBudgetWindowHours    int         // rolling budget window (default 24h)
+	PredictorMode           string      // "legacy" (default) | "fsrs" (#209)
 }
 
 // GatewayConfig is the fully-resolved LLM-gateway configuration.
@@ -78,6 +79,7 @@ type file struct {
 		FrontendDir             string `yaml:"frontend_dir"`
 		LLMBudgetTokens         int64  `yaml:"llm_budget_tokens"`
 		LLMBudgetWindowHours    int    `yaml:"llm_budget_window_hours"`
+		PredictorMode           string `yaml:"predictor_mode"`
 	} `yaml:"server"`
 	Gateway struct {
 		Addr        string `yaml:"addr"`
@@ -116,6 +118,10 @@ func Load(path string) (Config, error) {
 		FrontendDir:             pick("FRONTEND_DIR", s.FrontendDir, "web/dist"),
 		LLMBudgetTokens:         pickInt64("LLM_BUDGET_TOKENS", s.LLMBudgetTokens, 0),
 		LLMBudgetWindowHours:    pickIntDefault("LLM_BUDGET_WINDOW_HOURS", s.LLMBudgetWindowHours, 24),
+		PredictorMode:           pick("PREDICTOR_MODE", s.PredictorMode, "legacy"),
+	}
+	if cfg.PredictorMode != "legacy" && cfg.PredictorMode != "fsrs" {
+		return Config{}, fmt.Errorf("config: unknown predictor_mode %q", cfg.PredictorMode)
 	}
 	if cfg.AuthMode != AuthNone && cfg.AuthMode != AuthJWT {
 		return Config{}, fmt.Errorf("config: unknown auth_mode %q", cfg.AuthMode)

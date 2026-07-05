@@ -157,6 +157,9 @@ func main() {
 
 	mux := http.NewServeMux()
 	var handlerOpts []handler.Option
+	if cfg.PredictorMode == "fsrs" {
+		handlerOpts = append(handlerOpts, handler.WithFSRSScoring())
+	}
 	if jobsClient != nil {
 		handlerOpts = append(handlerOpts, handler.WithSkillVerifyQueue(jobsClient))
 		if broker != nil {

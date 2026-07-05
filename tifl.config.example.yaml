@@ -28,6 +28,9 @@ server:
   # for desktop where the user pays for their own key. (#208)
   # llm_budget_tokens: 500000
   # llm_budget_window_hours: 24
+  # Knowledge predictor: "legacy" (hand-tuned formula, default) or "fsrs"
+  # (FSRS-6 memory model — better scheduling; state accrues under both). (#209)
+  # predictor_mode: fsrs
 
 # The LLM gateway (cmd/gateway). The example targets a local OpenCode server —
 # a credential-free way to run a real model. Start it with:

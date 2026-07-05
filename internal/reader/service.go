@@ -9,6 +9,7 @@ import (
 	"github.com/dleiferives/tifl/internal/acquire"
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
+	"github.com/dleiferives/tifl/internal/predictor"
 	"github.com/dleiferives/tifl/internal/skills"
 )
 
@@ -78,8 +79,29 @@ func (s *Service) SetLevel(ctx context.Context, userID, language, key string, le
 	uk.Level = level
 	ls := s.now()
 	uk.LastSeen = &ls
+	if rating, ok := fsrsRatingForLevel(level); ok {
+		s.engine.ReviewFSRS(&uk, rating)
+	}
 	_, err = s.engine.Refresh(ctx, uk)
 	return err
+}
+
+// fsrsRatingForLevel maps an explicit reader self-rating onto a review
+// rating: the learner asserting knowledge is direct evidence (#209).
+// "ignored" is not a memory statement, so it produces no review.
+func fsrsRatingForLevel(level domain.ReaderLevel) (predictor.FSRSRating, bool) {
+	switch level {
+	case domain.LevelWellKnown:
+		return predictor.RatingEasy, true
+	case domain.Level4, domain.Level5:
+		return predictor.RatingGood, true
+	case domain.Level3:
+		return predictor.RatingHard, true
+	case domain.Level1, domain.Level2:
+		return predictor.RatingAgain, true
+	default:
+		return 0, false
+	}
 }
 
 // SetSurfaceLevel applies the learner's rating to one rendered form of a
@@ -167,6 +189,9 @@ func (s *Service) Ingest(ctx context.Context, userID string, events []domain.Rea
 		switch e.EventType {
 		case domain.ReaderEventLookup:
 			uk.LookupCount++
+			// A lookup is weak "not yet acquired" evidence: the learner saw
+			// the word and needed help (#209).
+			s.engine.ReviewFSRS(uk, predictor.RatingHard)
 		case domain.ReaderEventRate:
 			if e.Value != nil {
 				if lvl, ok := parseEventLevel(*e.Value); ok {

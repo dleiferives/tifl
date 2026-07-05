@@ -102,6 +102,44 @@ These limitations are acceptable for v1. They motivate the ML predictor.
 
 ---
 
+## Implementation 1.5: FSRS Memory Model (#209, shipped behind `predictor_mode: fsrs`)
+
+The FSRS-6 scheduler (open-spaced-repetition; Anki's default) replaces the
+hand-tuned formula with a fitted difficulty/stability/retrievability model.
+Implementation: `internal/predictor/fsrs.go` (pure model, published 21
+population parameters, reference-anchored tests) and `fsrs_score.go` (the
+`user_knowledge` → Prediction adapter).
+
+**State.** Three columns on `user_knowledge` (`fsrs_difficulty`,
+`fsrs_stability`, `fsrs_last_review`, migration 0018). State is maintained on
+every rated review *regardless of the scoring flag*, so enabling FSRS later
+requires no backfill.
+
+**Signal → rating mapping** (the tifl-specific design; each is a tunable):
+
+| Signal | Rating | Rationale |
+|---|---|---|
+| Task grade, item demonstrated | Good | direct successful recall |
+| Task grade, item not demonstrated | Again | direct failed recall |
+| Reader lookup (Space) | Hard | saw the word, needed help — weak negative |
+| Explicit rating `well_known` | Easy | learner asserts mastery |
+| Explicit rating 4–5 | Good | asserted familiarity |
+| Explicit rating 3 | Hard | asserted partial knowledge |
+| Explicit rating 1–2 | Again | asserted non-knowledge |
+| Explicit rating `ignored` | (none) | not a memory statement |
+| Passive exposure (no lookup) | (none) | deliberately conservative; candidate for a fractional-weight review later |
+
+**Scoring.** With `predictor_mode: fsrs`, `confidence_score` and cached
+predictions become FSRS retrievability — P(recall now) from the fitted
+forgetting curve — with the algorithmic formula as the cold-start fallback for
+items that have never had a rated review. Confidence grows with evidence,
+capped at 0.8 (above the algorithmic 0.6 ceiling, below a future fitted-per-
+user model). Prediction rows are versioned `fsrs-v6`.
+
+**Default.** `predictor_mode: legacy` until FSRS selection quality is eyeballed
+on real usage (devseed users are the harness). Flip in `tifl.yaml` or
+`PREDICTOR_MODE=fsrs`.
+
 ## Implementation 2: ML Predictor
 
 Added once sufficient training data exists across multiple users and languages.

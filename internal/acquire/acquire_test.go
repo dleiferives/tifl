@@ -246,3 +246,69 @@ func must(t *testing.T, err error) {
 		t.Fatal(err)
 	}
 }
+
+// TestFSRSIntegration covers the #209 signal mapping end to end: task signals
+// and reader-style reviews update FSRS state through the engine, and the
+// scoring flag switches confidence_score to retrievability.
+func TestFSRSIntegration(t *testing.T) {
+	ctx := context.Background()
+	repo := dbtest.NewRepo(t)
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "X", Enabled: true}))
+	user, err := repo.CreateUser(ctx, domain.User{Email: "fsrs@test"})
+	must(err)
+	itemID, err := repo.UpsertKnowledgeItem(ctx, domain.KnowledgeItem{Language: "xx", ItemType: "word", Key: "fsrsword"})
+	must(err)
+
+	now := 1e9
+	engine := acquire.NewEngine(repo, predictor.DefaultConfig(), acquire.Config{}, acquire.WithNow(func() float64 { return now }))
+
+	// A demonstrated task grade initializes FSRS state (Good).
+	must(engine.ApplyTaskSignal(ctx, user.UserID, tasks.LearningSignal{
+		TargetItemIDs: []string{itemID}, DemonstratedItemIDs: []string{itemID},
+	}))
+	uk, err := repo.GetUserKnowledgeItem(ctx, user.UserID, itemID)
+	must(err)
+	if uk.FSRSLastReview != now || uk.FSRSStability <= 0 {
+		t.Fatalf("task signal did not initialize FSRS state: %+v", uk)
+	}
+	goodStability := uk.FSRSStability
+
+	// A failed grade two days later shrinks stability and raises difficulty.
+	now += 2 * 86400
+	must(engine.ApplyTaskSignal(ctx, user.UserID, tasks.LearningSignal{TargetItemIDs: []string{itemID}}))
+	uk, err = repo.GetUserKnowledgeItem(ctx, user.UserID, itemID)
+	must(err)
+	if uk.FSRSStability >= goodStability {
+		t.Fatalf("failed task must shrink stability: %v -> %v", goodStability, uk.FSRSStability)
+	}
+
+	// Legacy scoring by default: confidence_score is the algorithmic value.
+	legacy := *uk.ConfidenceScore
+
+	// With FSRS scoring enabled, Refresh writes retrievability instead.
+	engine.EnableFSRSScoring()
+	uk2, err := engine.Refresh(ctx, uk)
+	must(err)
+	if uk2.ConfidenceScore == nil {
+		t.Fatal("no confidence score")
+	}
+	st := predictor.FSRSState{Difficulty: uk.FSRSDifficulty, Stability: uk.FSRSStability, LastReview: uk.FSRSLastReview}
+	wantR := predictor.NewFSRS().Retrievability(st, now)
+	if diff := *uk2.ConfidenceScore - wantR; diff > 1e-9 || diff < -1e-9 {
+		t.Fatalf("fsrs score = %v, want retrievability %v (legacy was %v)", *uk2.ConfidenceScore, wantR, legacy)
+	}
+
+	// ReviewFSRS with an explicit Easy rating (reader well_known) grows state.
+	before := uk2.FSRSStability
+	now += 5 * 86400
+	engine.ReviewFSRS(&uk2, predictor.RatingEasy)
+	if uk2.FSRSStability <= before {
+		t.Fatalf("easy review must grow stability: %v -> %v", before, uk2.FSRSStability)
+	}
+}

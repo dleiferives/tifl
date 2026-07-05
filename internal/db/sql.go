@@ -582,8 +582,8 @@ func (r *SQLRepository) UpsertUserKnowledge(ctx context.Context, uk domain.UserK
 		`INSERT INTO user_knowledge(
 		   user_id, item_id, acquisition_stage, level, exposure_count, context_variety,
 		   lookup_count, task_correct, task_total, last_seen, last_targeted,
-		   confidence_score, next_target_after)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		   confidence_score, next_target_after, fsrs_difficulty, fsrs_stability, fsrs_last_review)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(user_id, item_id) DO UPDATE SET
 		   acquisition_stage = excluded.acquisition_stage,
 		   level             = excluded.level,
@@ -595,10 +595,14 @@ func (r *SQLRepository) UpsertUserKnowledge(ctx context.Context, uk domain.UserK
 		   last_seen         = excluded.last_seen,
 		   last_targeted     = excluded.last_targeted,
 		   confidence_score  = excluded.confidence_score,
-		   next_target_after = excluded.next_target_after`,
+		   next_target_after = excluded.next_target_after,
+		   fsrs_difficulty   = excluded.fsrs_difficulty,
+		   fsrs_stability    = excluded.fsrs_stability,
+		   fsrs_last_review  = excluded.fsrs_last_review`,
 		uk.UserID, uk.ItemID, string(uk.AcquisitionStage), nullLevel(uk.Level), uk.ExposureCount, uk.ContextVariety,
 		uk.LookupCount, uk.TaskCorrect, uk.TaskTotal, nullFloat(uk.LastSeen), nullFloat(uk.LastTargeted),
-		nullFloat(uk.ConfidenceScore), nullFloat(uk.NextTargetAfter))
+		nullFloat(uk.ConfidenceScore), nullFloat(uk.NextTargetAfter),
+		uk.FSRSDifficulty, uk.FSRSStability, uk.FSRSLastReview)
 	return err
 }
 
@@ -606,7 +610,8 @@ func (r *SQLRepository) UserKnowledge(ctx context.Context, userID, language stri
 	rows, err := r.query(ctx,
 		`SELECT uk.user_id, uk.item_id, uk.acquisition_stage, uk.level, uk.exposure_count,
 		        uk.context_variety, uk.lookup_count, uk.task_correct, uk.task_total,
-		        uk.last_seen, uk.last_targeted, uk.confidence_score, uk.next_target_after
+		        uk.last_seen, uk.last_targeted, uk.confidence_score, uk.next_target_after,
+		        uk.fsrs_difficulty, uk.fsrs_stability, uk.fsrs_last_review
 		 FROM user_knowledge uk
 		 JOIN knowledge_items ki ON ki.item_id = uk.item_id
 		 WHERE uk.user_id = ? AND ki.language = ?
@@ -626,7 +631,8 @@ func (r *SQLRepository) UserKnowledge(ctx context.Context, userID, language stri
 		)
 		if err := rows.Scan(&uk.UserID, &uk.ItemID, &stage, &level, &uk.ExposureCount,
 			&uk.ContextVariety, &uk.LookupCount, &uk.TaskCorrect, &uk.TaskTotal,
-			&lastSeen, &lastTargeted, &confidence, &nextTarget); err != nil {
+			&lastSeen, &lastTargeted, &confidence, &nextTarget,
+			&uk.FSRSDifficulty, &uk.FSRSStability, &uk.FSRSLastReview); err != nil {
 			return nil, err
 		}
 		uk.AcquisitionStage = domain.AcquisitionStage(stage)
@@ -650,11 +656,11 @@ func (r *SQLRepository) GetUserKnowledgeItem(ctx context.Context, userID, itemID
 	err := r.queryRow(ctx,
 		`SELECT user_id, item_id, acquisition_stage, level, exposure_count, context_variety,
 		        lookup_count, task_correct, task_total, last_seen, last_targeted,
-		        confidence_score, next_target_after
+		        confidence_score, next_target_after, fsrs_difficulty, fsrs_stability, fsrs_last_review
 		 FROM user_knowledge WHERE user_id = ? AND item_id = ?`, userID, itemID).
 		Scan(&uk.UserID, &uk.ItemID, &stage, &level, &uk.ExposureCount, &uk.ContextVariety,
 			&uk.LookupCount, &uk.TaskCorrect, &uk.TaskTotal, &lastSeen, &lastTargeted,
-			&confidence, &nextTarget)
+			&confidence, &nextTarget, &uk.FSRSDifficulty, &uk.FSRSStability, &uk.FSRSLastReview)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.UserKnowledge{}, ErrNotFound
 	}
