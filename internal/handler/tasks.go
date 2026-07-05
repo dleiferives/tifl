@@ -1,10 +1,10 @@
 package handler
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -254,16 +254,22 @@ func (h *Handler) submitTask(w http.ResponseWriter, r *http.Request) {
 		AttemptCount: attemptCount,
 	})
 
-	// Off the critical path: resolve any pending tier verifications that this grade
-	// triggered. Auto-approves when no LLM gateway is configured.
-	if h.skillVerify != nil {
-		for _, change := range skillChanges {
-			if change.PendingVerify {
-				skillID := change.SkillID
-				go func() {
-					_ = h.skillVerify.VerifySkill(context.Background(), userID, skillID)
-				}()
+	// Off the critical path: resolve any pending tier verifications this grade
+	// triggered. With a job queue configured the work is durable (survives
+	// restarts, retries with backoff — #202); without one (tests, minimal
+	// setups) it runs synchronously, which auto-approves fast when no LLM
+	// gateway is configured.
+	for _, change := range skillChanges {
+		if !change.PendingVerify {
+			continue
+		}
+		switch {
+		case h.skillVerifyQueue != nil:
+			if err := h.skillVerifyQueue.EnqueueSkillVerify(r.Context(), userID, change.SkillID); err != nil {
+				log.Printf("skill verify enqueue (user=%s skill=%s): %v", userID, change.SkillID, err)
 			}
+		case h.skillVerify != nil:
+			_ = h.skillVerify.VerifySkill(r.Context(), userID, change.SkillID)
 		}
 	}
 }

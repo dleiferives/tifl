@@ -55,3 +55,9 @@ type Store interface {
 	UpdateUserProfile(ctx context.Context, userID string, patch domain.UserProfilePatch) (domain.UserProfile, error)
 	UpsertUserDefinition(ctx context.Context, d domain.UserDefinition) (domain.UserDefinition, error)
 }
+
+// SkillVerifyQueue is the durable-queue surface the handler needs for
+// deferred skill-tier verification; satisfied by jobs.Client (#202).
+type SkillVerifyQueue interface {
+	EnqueueSkillVerify(ctx context.Context, userID, skillID string) error
+}

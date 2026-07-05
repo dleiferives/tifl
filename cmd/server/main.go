@@ -23,6 +23,7 @@ import (
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/handler"
+	"github.com/dleiferives/tifl/internal/jobs"
 	"github.com/dleiferives/tifl/internal/lang"
 	greekplugin "github.com/dleiferives/tifl/internal/lang/el"
 	"github.com/dleiferives/tifl/internal/llm"
@@ -111,8 +112,28 @@ func main() {
 		log.Println("no llm_base_url configured: session generation endpoints will return 503")
 	}
 
+	// Durable job runner: skill verifications (and future kinds) survive
+	// restarts and retry with backoff instead of running as fire-and-forget
+	// goroutines (#202). Same database as the repository, own pool.
+	var jobsClient jobs.Client
+	if client != nil {
+		workers := jobs.NewWorkers()
+		workers.RegisterSkillVerify(skills.NewVerificationService(repo, client))
+		jc, err := openJobs(ctx, cfg, workers)
+		if err != nil {
+			log.Fatalf("jobs: %v", err)
+		}
+		if err := jc.Start(ctx); err != nil {
+			log.Fatalf("jobs start: %v", err)
+		}
+		jobsClient = jc
+	}
+
 	mux := http.NewServeMux()
 	var handlerOpts []handler.Option
+	if jobsClient != nil {
+		handlerOpts = append(handlerOpts, handler.WithSkillVerifyQueue(jobsClient))
+	}
 	if cfg.AuthMode == config.AuthJWT {
 		authService, err := authn.NewService(repo, cfg.JWTSecret)
 		if err != nil {
@@ -148,6 +169,12 @@ func main() {
 	if err := srv.Shutdown(shutCtx); err != nil {
 		log.Printf("shutdown error: %v", err)
 	}
+	if jobsClient != nil {
+		// Drain in-flight jobs; queued work resumes on next start.
+		if err := jobs.StopWithTimeout(jobsClient, 10*time.Second); err != nil {
+			log.Printf("jobs shutdown: %v", err)
+		}
+	}
 	log.Println("tifl server stopped")
 }
 
@@ -157,6 +184,17 @@ func httpURL(addr net.Addr) string {
 		return "http://" + addr.String()
 	}
 	return "http://" + net.JoinHostPort(host, port)
+}
+
+func openJobs(ctx context.Context, cfg config.Config, workers *jobs.Workers) (jobs.Client, error) {
+	switch cfg.StorageMode {
+	case config.StorageSQLite:
+		return jobs.NewSQLite(ctx, cfg.DBPath, workers, jobs.Config{})
+	case config.StoragePostgres:
+		return jobs.NewPostgres(ctx, cfg.DatabaseURL, workers, jobs.Config{})
+	default:
+		return nil, fmt.Errorf("unknown storage mode %q", cfg.StorageMode)
+	}
 }
 
 func openRepo(ctx context.Context, cfg config.Config) (db.Repository, error) {
