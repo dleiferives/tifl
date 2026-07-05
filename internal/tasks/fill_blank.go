@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"github.com/dleiferives/tifl/internal/domain"
+	"github.com/dleiferives/tifl/internal/llm"
 )
 
 // FillBlank is a cloze task: the learner types the word that belongs in a blank.
@@ -75,4 +76,20 @@ func (FillBlank) Present(content map[string]any) map[string]any {
 
 func (FillBlank) ContentSchema() string {
 	return `{"sentence": "Η Μαρία ___ στο σπίτι.", "acceptable_forms": ["μένει"]}`
+}
+
+// OutputKind routes fill_blank generation through the language DAG's fill
+// task step when the plugin provides one (#206).
+func (FillBlank) OutputKind() llm.OutputKind { return llm.OutputFillTask }
+
+// PrimaryText is the cloze sentence, used for prior-question dedupe.
+func (FillBlank) PrimaryText(content map[string]any) string {
+	s, _ := content["sentence"].(string)
+	return s
+}
+
+// InjectTargets stamps the single exercised item: fill_blank always overrides
+// the model's target_item_id because the model cannot know internal item ids.
+func (FillBlank) InjectTargets(content map[string]any, targetIDs []string) {
+	content["target_item_id"] = targetIDs[0]
 }

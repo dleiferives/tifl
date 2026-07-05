@@ -66,3 +66,9 @@ func (Production) Present(content map[string]any) map[string]any {
 func (Production) ContentSchema() string {
 	return `{"prompt_l1": string, "target_construction_id": string, "target_item_ids": [string]}`
 }
+
+// PrimaryText is the L1 prompt, used for prior-question dedupe (#206).
+func (Production) PrimaryText(content map[string]any) string {
+	p, _ := content["prompt_l1"].(string)
+	return p
+}

@@ -629,7 +629,7 @@ func (p *Pipeline) runTaskType(ctx context.Context, sess domain.Session, lc doma
 		if cp, ok := plugin.(lang.StoryContractProvider); ok {
 			dag := cp.StorySessionDAG()
 			if err := dag.Validate([]llm.OutputKind{llm.OutputStory, llm.OutputMCTask, llm.OutputFillTask}); err == nil {
-				if outputKind := taskTypeOutputKind(spec.TaskTypeID); outputKind != "" {
+				if outputKind := tasks.OutputKindOf(tt); outputKind != "" {
 					if s, ok := dag.StepByOutput(outputKind); ok {
 						taskStep = &s
 					}
@@ -653,7 +653,7 @@ func (p *Pipeline) runTaskType(ctx context.Context, sess domain.Session, lc doma
 			return se
 		}
 		// Deduplicate: if the LLM produced the same question again, retry once.
-		if qt := taskPrimaryText(spec.TaskTypeID, content); qt != "" {
+		if qt := tasks.PrimaryTextOf(tt, content); qt != "" {
 			dup := false
 			for _, prior := range priorQuestions {
 				if prior == qt {
@@ -670,7 +670,7 @@ func (p *Pipeline) runTaskType(ctx context.Context, sess domain.Session, lc doma
 					return se
 				}
 			}
-			if qt2 := taskPrimaryText(spec.TaskTypeID, content); qt2 != "" {
+			if qt2 := tasks.PrimaryTextOf(tt, content); qt2 != "" {
 				priorQuestions = append(priorQuestions, qt2)
 			}
 		}
@@ -700,7 +700,7 @@ func (p *Pipeline) generateValidTaskContent(ctx context.Context, tt tasks.TaskTy
 		if err != nil {
 			return nil, err
 		}
-		injectTargets(content, taskTypeID, lc.Selected.Targets)
+		tasks.InjectTargets(tt, content, itemIDs(lc.Selected.Targets))
 		if err := tasks.ValidateGeneratedContent(tt, content); err != nil {
 			lastErr = err
 			continue
@@ -708,17 +708,6 @@ func (p *Pipeline) generateValidTaskContent(ctx context.Context, tt tasks.TaskTy
 		return content, nil
 	}
 	return nil, lastErr
-}
-
-// taskTypeOutputKind maps a task type ID to its OutputKind for DAG step lookup.
-func taskTypeOutputKind(taskTypeID string) llm.OutputKind {
-	switch taskTypeID {
-	case "comprehension_mc":
-		return llm.OutputMCTask
-	case "fill_blank":
-		return llm.OutputFillTask
-	}
-	return ""
 }
 
 // buildStepInputs assembles a StepInputs from a LearnerCtx and optional
@@ -827,26 +816,6 @@ func (p *Pipeline) generateTaskContent(ctx context.Context, taskTypeID, storyTex
 		}
 		return nil
 	})
-}
-
-// taskPrimaryText extracts the primary question/sentence text from a content
-// map for deduplication purposes. Returns empty string if not applicable.
-func taskPrimaryText(taskTypeID string, content map[string]any) string {
-	switch taskTypeID {
-	case tasks.TypeComprehensionMC:
-		if q, _ := content["question"].(string); q != "" {
-			return q
-		}
-	case tasks.TypeFillBlank:
-		if s, _ := content["sentence"].(string); s != "" {
-			return s
-		}
-	case tasks.TypeProduction:
-		if p, _ := content["prompt_l1"].(string); p != "" {
-			return p
-		}
-	}
-	return ""
 }
 
 func persistGlossary(ctx context.Context, repo db.Repository, storyID string, entries []llm.GlossaryEntry) error {
@@ -958,29 +927,6 @@ func toStoryTokens(storyID string, tokens []lang.Token) []domain.StoryToken {
 	return out
 }
 
-// injectTargets stamps the session's target item ids onto generated task content.
-// The LLM writes the question/sentence but does not know our internal item ids,
-// so the pipeline attributes the targets it asked the builder to exercise. This
-// is what populates task_targets via TaskType.Targets(content). Per-question
-// attribution is a future refinement (task-system Open Questions).
-func injectTargets(content map[string]any, taskTypeID string, targets []domain.KnowledgeItem) {
-	ids := itemIDs(targets)
-	// Always stamp with our internal IDs — LLM-generated values are never valid
-	// item_ids and would cause task_targets FK failures. Clear when empty so no
-	// LLM-provided placeholder leaks through.
-	if len(ids) == 0 {
-		delete(content, "target_item_ids")
-		delete(content, "target_item_id")
-		return
-	}
-	content["target_item_ids"] = ids
-	// fill_blank exercises a single item; always override the LLM's choice
-	// because it doesn't know our internal item_id format.
-	if taskTypeID == tasks.TypeFillBlank {
-		content["target_item_id"] = ids[0]
-	}
-}
-
 func itemIDs(items []domain.KnowledgeItem) []string {
 	if len(items) == 0 {
 		return nil
@@ -995,7 +941,7 @@ func itemIDs(items []domain.KnowledgeItem) []string {
 // toPhraseItems converts the model's phrases into stored phrase items, assigning
 // a stable phrase id and attributing the session's target item ids to each
 // phrase. The per-phrase attribution is coarse for v0 — every phrase is credited
-// with the session targets, mirroring how injectTargets stamps task targets — and
+// with the session targets, mirroring how tasks.InjectTargets stamps task targets — and
 // can be refined to per-phrase attribution later (session-types Open Questions).
 func toPhraseItems(phrases []llm.PhraseResult, targetIDs []string) []domain.PhraseItem {
 	out := make([]domain.PhraseItem, 0, len(phrases))

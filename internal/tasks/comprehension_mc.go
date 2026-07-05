@@ -1,6 +1,9 @@
 package tasks
 
-import "github.com/dleiferives/tifl/internal/domain"
+import (
+	"github.com/dleiferives/tifl/internal/domain"
+	"github.com/dleiferives/tifl/internal/llm"
+)
 
 // ComprehensionMC is a multiple-choice comprehension question over the story. It
 // grades by rule — the response is correct when the selected option index equals
@@ -67,4 +70,14 @@ func (ComprehensionMC) Present(content map[string]any) map[string]any {
 
 func (ComprehensionMC) ContentSchema() string {
 	return `{"question": "...", "options": ["...", "...", "...", "..."], "correct_index": 0}`
+}
+
+// OutputKind routes comprehension_mc generation through the language DAG's MC
+// task step when the plugin provides one (#206).
+func (ComprehensionMC) OutputKind() llm.OutputKind { return llm.OutputMCTask }
+
+// PrimaryText is the question line, used for prior-question dedupe.
+func (ComprehensionMC) PrimaryText(content map[string]any) string {
+	q, _ := content["question"].(string)
+	return q
 }
