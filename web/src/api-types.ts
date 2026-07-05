@@ -677,15 +677,15 @@ export interface components {
             enabled: boolean;
         };
         Credentials: {
-            /** Format: email */
             email: string;
             password: string;
         };
         User: {
             user_id: string;
-            /** Format: email */
             email: string;
+            /** Format: double */
             created_at: number;
+            /** Format: double */
             last_login?: number;
         };
         AuthResponse: {
@@ -813,13 +813,18 @@ export interface components {
             xp_per_tier: number;
             /** @description XP remaining before the next tier threshold; 0 at the max tier. */
             xp_to_next: number;
-            /** @description Progress through the current tier as a 0..1 ratio. */
+            /**
+             * Format: double
+             * @description Progress through the current tier as a 0..1 ratio.
+             */
             progress_ratio: number;
             /** @description True when XP has crossed a tier boundary and AI verification has not completed. */
             pending_verification: boolean;
             /** @description True shortly after a verified tier promotion. */
             recently_promoted: boolean;
+            /** Format: double */
             last_verified_at?: number;
+            /** Format: double */
             updated_at?: number;
         };
         SessionRef: {
@@ -857,9 +862,13 @@ export interface components {
             expression_output?: "phrases" | "story";
             /** @enum {string} */
             status: "pending" | "generating" | "ready" | "reading" | "complete" | "failed";
+            /** Format: double */
             created_at: number;
+            /** Format: double */
             archived_at?: number;
+            /** Format: double */
             reading_started_at?: number;
+            /** Format: double */
             completed_at?: number;
             selected_counts: components["schemas"]["SelectedItemCounts"];
             tasks: components["schemas"]["TaskProgress"];
@@ -883,7 +892,9 @@ export interface components {
             stage: string;
             /** @enum {string} */
             status: "pending" | "in_progress" | "complete" | "failed";
+            /** Format: double */
             started_at?: number;
+            /** Format: double */
             completed_at?: number;
             error_code?: string;
             error_detail?: string;
@@ -917,6 +928,7 @@ export interface components {
             parsed_output?: string;
             /** @description Raw gateway error response body when available. */
             error_payload?: string;
+            /** Format: double */
             called_at: number;
         };
         SessionDebug: {
@@ -1059,7 +1071,10 @@ export interface components {
             position?: number;
             /** @description rate only: "1".."5" | "w" | "i" */
             value?: string;
-            /** @description Unix seconds (client clock) */
+            /**
+             * Format: double
+             * @description Unix seconds (client clock)
+             */
             occurred_at?: number;
         };
         ReaderEventsRequest: {
@@ -1138,7 +1153,10 @@ export interface components {
         /** @description The outcome of grading one task response. */
         Grade: {
             correct: boolean;
-            /** @description 0.0..1.0 */
+            /**
+             * Format: double
+             * @description 0.0..1.0
+             */
             score: number;
             feedback?: string;
             /** @description knowledge item ids the response demonstrated */

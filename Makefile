@@ -78,3 +78,7 @@ eval-smoke: ## run one tiny prompt-eval scenario (needs api_key in tifl.yaml; se
 		--scenarios eval/scenarios/scenarios_beginner.json \
 		--out eval/results/run_smoke.json
 	@echo "smoke output: eval/results/run_smoke.json (gitignored)"
+
+generate-api: ## regenerate Go + TS wire types from spec/openapi.yaml (#213)
+	go generate ./internal/handler/oapigen/
+	cd web && npm run api:types

@@ -1048,7 +1048,7 @@ components:
     Credentials:
       type: object
       properties:
-        email: { type: string, format: email }
+        email: { type: string }
         password:
           type: string
           minLength: 15
@@ -1058,9 +1058,9 @@ components:
       type: object
       properties:
         user_id: { type: string }
-        email: { type: string, format: email }
-        created_at: { type: number }
-        last_login: { type: number }
+        email: { type: string }
+        created_at: { type: number, format: double }
+        last_login: { type: number, format: double }
       required: [user_id, email, created_at]
     AuthResponse:
       type: object
@@ -1238,6 +1238,7 @@ components:
           description: XP remaining before the next tier threshold; 0 at the max tier.
         progress_ratio:
           type: number
+          format: double
           minimum: 0
           maximum: 1
           description: Progress through the current tier as a 0..1 ratio.
@@ -1247,8 +1248,8 @@ components:
         recently_promoted:
           type: boolean
           description: True shortly after a verified tier promotion.
-        last_verified_at: { type: number }
-        updated_at: { type: number }
+        last_verified_at: { type: number, format: double }
+        updated_at: { type: number, format: double }
       required:
         - skill_id
         - name
@@ -1312,10 +1313,10 @@ components:
         status:
           type: string
           enum: [pending, generating, ready, reading, complete, failed]
-        created_at: { type: number }
-        archived_at: { type: number }
-        reading_started_at: { type: number }
-        completed_at: { type: number }
+        created_at: { type: number, format: double }
+        archived_at: { type: number, format: double }
+        reading_started_at: { type: number, format: double }
+        completed_at: { type: number, format: double }
         selected_counts:
           $ref: "#/components/schemas/SelectedItemCounts"
         tasks:
@@ -1359,8 +1360,8 @@ components:
         status:
           type: string
           enum: [pending, in_progress, complete, failed]
-        started_at: { type: number }
-        completed_at: { type: number }
+        started_at: { type: number, format: double }
+        completed_at: { type: number, format: double }
         error_code: { type: string }
         error_detail: { type: string }
         retry_count: { type: integer }
@@ -1412,7 +1413,7 @@ components:
         error_payload:
           type: string
           description: Raw gateway error response body when available.
-        called_at: { type: number }
+        called_at: { type: number, format: double }
       required:
         - call_id
         - kind
@@ -1620,7 +1621,7 @@ components:
           enum: [lookup, rate, navigate, sentence_break]
         position: { type: integer, description: "story token position the event is about" }
         value: { type: string, description: 'rate only: "1".."5" | "w" | "i"' }
-        occurred_at: { type: number, description: "Unix seconds (client clock)" }
+        occurred_at: { type: number, format: double, description: "Unix seconds (client clock)" }
       required: [story_id, event_type]
     ReaderEventsRequest:
       type: object
@@ -1724,7 +1725,7 @@ components:
       description: The outcome of grading one task response.
       properties:
         correct: { type: boolean }
-        score: { type: number, description: "0.0..1.0" }
+        score: { type: number, format: double, description: "0.0..1.0" }
         feedback: { type: string }
         items_demonstrated:
           type: array

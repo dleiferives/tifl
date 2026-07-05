@@ -1,0 +1,9 @@
+# oapi-codegen configuration (#213): types-only generation. The handlers, mux
+# registration, and middleware stay hand-written; only the wire types come
+# from the spec, so spec -> Go -> TS is one `make generate-api`.
+package: oapigen
+output: types.gen.go
+generate:
+  models: true
+output-options:
+  skip-prune: true

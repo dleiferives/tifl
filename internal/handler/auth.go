@@ -14,28 +14,18 @@ import (
 	authn "github.com/dleiferives/tifl/internal/auth"
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
+	"github.com/dleiferives/tifl/internal/handler/oapigen"
 )
 
 const refreshCookieName = "tifl_refresh"
 
-type credentialsRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
-type userDTO struct {
-	UserID    string   `json:"user_id"`
-	Email     string   `json:"email"`
-	CreatedAt float64  `json:"created_at"`
-	LastLogin *float64 `json:"last_login,omitempty"`
-}
-
-type authResponse struct {
-	AccessToken string  `json:"access_token"`
-	TokenType   string  `json:"token_type"`
-	ExpiresIn   int     `json:"expires_in"`
-	User        userDTO `json:"user"`
-}
+// Wire types come from the spec-generated package (#213): the OpenAPI file
+// is the contract for both this server and web/src/api-types.ts.
+type (
+	credentialsRequest = oapigen.Credentials
+	userDTO            = oapigen.User
+	authResponse       = oapigen.AuthResponse
+)
 
 func (h *Handler) registerAPI(mux *http.ServeMux, pattern string, fn http.HandlerFunc) {
 	mux.Handle(pattern, h.requireUser(fn))
@@ -241,7 +231,7 @@ func sessionResponseBody(session authn.Session) authResponse {
 }
 
 func toUserDTO(user domain.User) userDTO {
-	return userDTO{UserID: user.UserID, Email: user.Email, CreatedAt: user.CreatedAt, LastLogin: user.LastLogin}
+	return userDTO{UserId: user.UserID, Email: user.Email, CreatedAt: user.CreatedAt, LastLogin: user.LastLogin}
 }
 
 func writeUnauthorized(w http.ResponseWriter) {
