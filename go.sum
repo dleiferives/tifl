@@ -25,6 +25,8 @@ github.com/kr/pretty v0.3.0 h1:WgNl7dwNpEZ6jJ9k1snq4pZsg7DOEN8hP9Xw0Tsjwk0=
 github.com/kr/pretty v0.3.0/go.mod h1:640gp4NfQd8pI5XOwp5fnNeVWj67G7CFk/SaSQn7NBk=
 github.com/kr/text v0.2.0 h1:5Nx0Ya0ZqY2ygV366QzturHI13Jq95ApcVaJBhpS+AY=
 github.com/kr/text v0.2.0/go.mod h1:eLer722TekiGuMkidMxC/pM04lWEeraHUUmBw8l2grE=
+github.com/lib/pq v1.12.3 h1:tTWxr2YLKwIvK90ZXEw8GP7UFHtcbTtty8zsI+YjrfQ=
+github.com/lib/pq v1.12.3/go.mod h1:/p+8NSbOcwzAEI7wiMXFlgydTwcgTr3OSKMsD2BitpA=
 github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=
 github.com/mattn/go-isatty v0.0.20/go.mod h1:W+V8PltTTMOvKvAeJH7IuucS94S2C6jfK/D7dTCTo3Y=
 github.com/ncruces/go-strftime v1.0.0 h1:HMFp8mLCTPp341M/ZnA4qaf7ZlsbTc+miZjCLOFAw7w=
@@ -37,6 +39,8 @@ github.com/riverqueue/river v0.40.0 h1:4dynKqqU1P22iPmwWDfDj/YZXnuUTZysXXF3wNHek
 github.com/riverqueue/river v0.40.0/go.mod h1:auvB4kHqM97tnshEQxzy2E7aFvJFhl010NB6N29DXXc=
 github.com/riverqueue/river/riverdriver v0.40.0 h1:QjBHHh+kaxgUgK9tPumrfx7W14vhAHLIt+0dK40ikI8=
 github.com/riverqueue/river/riverdriver v0.40.0/go.mod h1:7wEqxsqvtjGk3hBKGKK3IvdnULlPZltpAfkbMr9M2VY=
+github.com/riverqueue/river/riverdriver/riverdatabasesql v0.40.0 h1:EtKlKjaKzkNckyGrFnrpK5mcc7+xnp7Z3IV9XVRf+7E=
+github.com/riverqueue/river/riverdriver/riverdatabasesql v0.40.0/go.mod h1:Si7twoX1cou3msM9G6rYCKelaSHLqTgJ65H/m3Zi8rk=
 github.com/riverqueue/river/riverdriver/riverpgxv5 v0.40.0 h1:WbzXgGukvOqYpsORX4rr03sPZfasjoMckLr4On+Je+4=
 github.com/riverqueue/river/riverdriver/riverpgxv5 v0.40.0/go.mod h1:HtgFIcn/eJ9O3f371S1cSb0ttS7xJMMkkTD/K6gQKQg=
 github.com/riverqueue/river/riverdriver/riversqlite v0.40.0 h1:DE/22nz7BKgQ+0XpPFg/3hoO4mP8Ij+gGcIOS9PusFg=

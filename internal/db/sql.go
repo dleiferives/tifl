@@ -79,6 +79,16 @@ func OpenPostgres(ctx context.Context, dsn string) (*SQLRepository, error) {
 
 func (r *SQLRepository) Close() error { return r.db.Close() }
 
+// SQLDB exposes the underlying pool for subsystems that must share the
+// repository's connections — today only the transactional job inserter
+// (jobs.NewInserter, #215). Do not use it to bypass the Repository contract.
+func (r *SQLRepository) SQLDB() *sql.DB { return r.db }
+
+// SQLTx returns the ambient transaction on the view a Tx callback receives,
+// nil otherwise. It is the bridge that lets a job insert ride the same
+// transaction as the domain writes (#215).
+func (r *SQLRepository) SQLTx() *sql.Tx { return r.tx }
+
 func (r *SQLRepository) Migrate(ctx context.Context) error {
 	return runMigrations(ctx, r.db, r.d, r.d.migrationsDir())
 }

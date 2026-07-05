@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -101,5 +102,74 @@ func TestGenerationEnqueueDedupes(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	if got := runner.count(); got != 2 {
 		t.Fatalf("runs = %d, want 2 (dedupe failed)", got)
+	}
+}
+
+// TestEnqueueGenerationTxAtomic proves the transactional-enqueue contract
+// (#215): a rolled-back transaction leaves no job; a committed one leaves a
+// job the worker then runs. The inserter shares the "repository" pool while
+// the worker client runs on its own pool against the same database file.
+func TestEnqueueGenerationTxAtomic(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "jobs.db")
+	runner := &stubRunner{done: make(chan struct{}, 1)}
+	ws := NewWorkers()
+	ws.RegisterGeneration(runner, nil)
+	// Worker client first: it applies River's schema migrations.
+	c, err := NewSQLite(context.Background(), path, ws, Config{})
+	if err != nil {
+		t.Fatalf("NewSQLite: %v", err)
+	}
+
+	// Simulated repository pool on the same database.
+	repoDB, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repoDB.Close()
+	repoDB.SetMaxOpenConns(1)
+
+	ins, err := NewInserter(repoDB, EngineSQLite)
+	if err != nil {
+		t.Fatalf("NewInserter: %v", err)
+	}
+	ctx := context.Background()
+
+	// Rollback: the enqueue must vanish with the transaction.
+	tx, err := repoDB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ins.EnqueueGenerationTx(ctx, tx, "sess-rollback", "u1"); err != nil {
+		t.Fatalf("EnqueueGenerationTx: %v", err)
+	}
+	_ = tx.Rollback()
+
+	// Commit: the enqueue must survive and run.
+	tx, err = repoDB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ins.EnqueueGenerationTx(ctx, tx, "sess-commit", "u1"); err != nil {
+		t.Fatalf("EnqueueGenerationTx: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = StopWithTimeout(c, 5*time.Second) })
+
+	select {
+	case <-runner.done:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("committed job never ran; runs=%v", runner.runs)
+	}
+	time.Sleep(300 * time.Millisecond)
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.runs) != 1 || runner.runs[0] != "sess-commit" {
+		t.Fatalf("runs = %v, want exactly [sess-commit] (rollback leaked or commit lost)", runner.runs)
 	}
 }

@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"flag"
 	"fmt"
@@ -152,6 +153,19 @@ func main() {
 		handlerOpts = append(handlerOpts, handler.WithSkillVerifyQueue(jobsClient))
 		if broker != nil {
 			handlerOpts = append(handlerOpts, handler.WithGenerationQueue(jobsClient))
+			// Transactional enqueue (#215): the inserter shares the
+			// repository's pool so session row + job commit atomically.
+			if sqlRepo, ok := repo.(interface{ SQLDB() *sql.DB }); ok {
+				engine := jobs.EngineSQLite
+				if cfg.StorageMode == config.StoragePostgres {
+					engine = jobs.EnginePostgres
+				}
+				ins, err := jobs.NewInserter(sqlRepo.SQLDB(), engine)
+				if err != nil {
+					log.Fatalf("jobs inserter: %v", err)
+				}
+				handlerOpts = append(handlerOpts, handler.WithGenerationTxQueue(ins))
+			}
 		}
 	}
 	if cfg.AuthMode == config.AuthJWT {

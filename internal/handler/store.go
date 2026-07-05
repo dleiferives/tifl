@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"database/sql"
 
 	"github.com/dleiferives/tifl/internal/acquire"
 	"github.com/dleiferives/tifl/internal/db"
@@ -66,4 +67,17 @@ type SkillVerifyQueue interface {
 // satisfied by jobs.Client.
 type GenerationQueue interface {
 	EnqueueGeneration(ctx context.Context, sessionID, userID string) error
+}
+
+// GenerationTxQueue enqueues a generation job inside the repository
+// transaction that creates the session, making the pair atomic (#215).
+// Satisfied by jobs.Inserter.
+type GenerationTxQueue interface {
+	EnqueueGenerationTx(ctx context.Context, tx *sql.Tx, sessionID, userID string) error
+}
+
+// sqlTxCarrier is how the transactional view exposes its *sql.Tx to the job
+// inserter; implemented by *db.SQLRepository.
+type sqlTxCarrier interface {
+	SQLTx() *sql.Tx
 }

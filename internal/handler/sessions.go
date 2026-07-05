@@ -295,7 +295,7 @@ func (h *Handler) generateSession(w http.ResponseWriter, r *http.Request) {
 		expressions = nil
 	}
 
-	sess, err := h.repo.CreateSession(r.Context(), domain.Session{
+	newSession := domain.Session{
 		UserID:           h.currentUserID(r),
 		Language:         language,
 		Level:            level,
@@ -303,7 +303,33 @@ func (h *Handler) generateSession(w http.ResponseWriter, r *http.Request) {
 		Topic:            topic,
 		UserExpressions:  expressions,
 		ExpressionOutput: expressionOutput,
-	})
+	}
+
+	// Transactional path (#215): session row and generation job land in one
+	// transaction — a crash cannot leave a pending session with no job.
+	if h.generationTxQueue != nil {
+		var sess domain.Session
+		err := h.repo.Tx(r.Context(), func(txRepo db.Repository) error {
+			var err error
+			sess, err = txRepo.CreateSession(r.Context(), newSession)
+			if err != nil {
+				return err
+			}
+			carrier, ok := txRepo.(sqlTxCarrier)
+			if !ok || carrier.SQLTx() == nil {
+				return errors.New("transactional enqueue unavailable: repository does not expose its transaction")
+			}
+			return h.generationTxQueue.EnqueueGenerationTx(r.Context(), carrier.SQLTx(), sess.SessionID, sess.UserID)
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, sessionResponse{SessionID: sess.SessionID, Status: string(domain.StatusGenerating)})
+		return
+	}
+
+	sess, err := h.repo.CreateSession(r.Context(), newSession)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return

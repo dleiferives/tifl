@@ -20,25 +20,26 @@ import (
 // Handler holds the dependencies the HTTP layer needs and registers routes onto
 // a mux. Handlers stay thin: parse, call a repository/domain function, serialize.
 type Handler struct {
-	repo             Store
-	langs            *lang.Registry
-	broker           *story.Broker                   // nil when generation is not configured (no LLM gateway)
-	reader           *reader.Service                 // reader signal ingest + rating writes (#9/#10)
-	defs             *reader.DefinitionService       // definition resolution + cached breakdowns (#10)
-	taskTypes        *tasks.Registry                 // task-type lookup for grading + presentation
-	grader           *tasks.Grader                   // routes rule vs LLM grading
-	acquire          *acquire.Engine                 // folds grades into user_knowledge signals
-	skillAssoc       *skillassoc.Associator          // lazy item -> skill association materializer (#68)
-	skillXP          *skillassoc.XPService           // task grade -> user_skill_xp + audit logs (#70/#71)
-	skillVerify      *skillassoc.VerificationService // tier verification + auto-approve (#49); sync fallback when no queue
-	skillVerifyQueue SkillVerifyQueue                // durable queue for verifications; nil in tests without jobs
-	generationQueue  GenerationQueue                 // durable queue for generation runs; nil falls back to in-process broker
-	llmEnabled       bool                            // false when no LLM client: LLM-graded tasks return 503
-	models           llm.ModelLister                 // nil when the gateway cannot list upstream models
-	frontendDir      string
-	auth             *authn.Service
-	cookieSecure     bool
-	authLimiter      *authn.Limiter
+	repo              Store
+	langs             *lang.Registry
+	broker            *story.Broker                   // nil when generation is not configured (no LLM gateway)
+	reader            *reader.Service                 // reader signal ingest + rating writes (#9/#10)
+	defs              *reader.DefinitionService       // definition resolution + cached breakdowns (#10)
+	taskTypes         *tasks.Registry                 // task-type lookup for grading + presentation
+	grader            *tasks.Grader                   // routes rule vs LLM grading
+	acquire           *acquire.Engine                 // folds grades into user_knowledge signals
+	skillAssoc        *skillassoc.Associator          // lazy item -> skill association materializer (#68)
+	skillXP           *skillassoc.XPService           // task grade -> user_skill_xp + audit logs (#70/#71)
+	skillVerify       *skillassoc.VerificationService // tier verification + auto-approve (#49); sync fallback when no queue
+	skillVerifyQueue  SkillVerifyQueue                // durable queue for verifications; nil in tests without jobs
+	generationQueue   GenerationQueue                 // durable queue for generation runs; nil falls back to in-process broker
+	generationTxQueue GenerationTxQueue               // transactional enqueue for generate (#215); nil falls back to generationQueue
+	llmEnabled        bool                            // false when no LLM client: LLM-graded tasks return 503
+	models            llm.ModelLister                 // nil when the gateway cannot list upstream models
+	frontendDir       string
+	auth              *authn.Service
+	cookieSecure      bool
+	authLimiter       *authn.Limiter
 }
 
 type Option func(*Handler)
@@ -104,6 +105,13 @@ func currentAPIRoutes() []apiRoute {
 // durable job queue instead of running them synchronously after grading.
 func WithSkillVerifyQueue(q SkillVerifyQueue) Option {
 	return func(h *Handler) { h.skillVerifyQueue = q }
+}
+
+// WithGenerationTxQueue upgrades generate to transactional enqueue: session
+// row and generation job commit or roll back together (#215). Requires
+// WithGenerationQueue for the retry path.
+func WithGenerationTxQueue(q GenerationTxQueue) Option {
+	return func(h *Handler) { h.generationTxQueue = q }
 }
 
 // WithGenerationQueue routes generation through the durable job queue: runs
