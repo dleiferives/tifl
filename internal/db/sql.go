@@ -830,6 +830,15 @@ func (r *SQLRepository) InsertLLMCall(ctx context.Context, c domain.LLMCall) err
 	return err
 }
 
+func (r *SQLRepository) UserLLMTokensSince(ctx context.Context, userID string, since float64) (int64, error) {
+	var total int64
+	err := r.queryRow(ctx,
+		`SELECT COALESCE(SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)), 0)
+		 FROM llm_calls WHERE user_id = ? AND called_at >= ?`,
+		userID, since).Scan(&total)
+	return total, err
+}
+
 func (r *SQLRepository) ListSessionLLMCalls(ctx context.Context, userID, sessionID string) ([]domain.LLMCall, error) {
 	rows, err := r.query(ctx,
 		`SELECT call_id, session_id, user_id, kind, prompt_version, model,

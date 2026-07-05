@@ -47,6 +47,8 @@ type Config struct {
 	JWTSecret               string      // signing key when AuthMode == jwt
 	AllowInsecureAuthCookie bool        // development-only: permit refresh cookie over HTTP
 	FrontendDir             string      // compiled SolidJS assets (web/dist)
+	LLMBudgetTokens         int64       // per-user token ceiling per window; 0 = unlimited (#208)
+	LLMBudgetWindowHours    int         // rolling budget window (default 24h)
 }
 
 // GatewayConfig is the fully-resolved LLM-gateway configuration.
@@ -74,6 +76,8 @@ type file struct {
 		JWTSecret               string `yaml:"jwt_secret"`
 		AllowInsecureAuthCookie bool   `yaml:"allow_insecure_auth_cookie"`
 		FrontendDir             string `yaml:"frontend_dir"`
+		LLMBudgetTokens         int64  `yaml:"llm_budget_tokens"`
+		LLMBudgetWindowHours    int    `yaml:"llm_budget_window_hours"`
 	} `yaml:"server"`
 	Gateway struct {
 		Addr        string `yaml:"addr"`
@@ -110,6 +114,8 @@ func Load(path string) (Config, error) {
 		JWTSecret:               pick("JWT_SECRET", s.JWTSecret, ""),
 		AllowInsecureAuthCookie: allowInsecureCookie,
 		FrontendDir:             pick("FRONTEND_DIR", s.FrontendDir, "web/dist"),
+		LLMBudgetTokens:         pickInt64("LLM_BUDGET_TOKENS", s.LLMBudgetTokens, 0),
+		LLMBudgetWindowHours:    pickIntDefault("LLM_BUDGET_WINDOW_HOURS", s.LLMBudgetWindowHours, 24),
 	}
 	if cfg.AuthMode != AuthNone && cfg.AuthMode != AuthJWT {
 		return Config{}, fmt.Errorf("config: unknown auth_mode %q", cfg.AuthMode)
@@ -165,6 +171,32 @@ func readFile(path string) (file, error) {
 
 // pick resolves one value: environment override, else the file value, else the
 // built-in default.
+// pickInt64 resolves an int64 setting: env var wins, then file, then default.
+func pickInt64(envKey string, fileVal int64, def int64) int64 {
+	if v := os.Getenv(envKey); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return n
+		}
+	}
+	if fileVal != 0 {
+		return fileVal
+	}
+	return def
+}
+
+// pickIntDefault resolves an int setting: env var wins, then file, then default.
+func pickIntDefault(envKey string, fileVal int, def int) int {
+	if v := os.Getenv(envKey); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	if fileVal != 0 {
+		return fileVal
+	}
+	return def
+}
+
 func pick(envKey, fileVal, def string) string {
 	if v, ok := os.LookupEnv(envKey); ok && v != "" {
 		return v

@@ -100,6 +100,14 @@ func main() {
 			llm.WithModel(cfg.LLMModel),
 			llm.WithRecorder(repo),
 		)
+		// Per-user token budgets (#208): enforced from the llm_calls audit log
+		// the client itself writes. Zero (the desktop default) disables.
+		if cfg.LLMBudgetTokens > 0 {
+			client = llm.NewBudgetClient(client, repo, llm.BudgetConfig{
+				WindowHours: cfg.LLMBudgetWindowHours,
+				MaxTokens:   cfg.LLMBudgetTokens,
+			})
+		}
 		pipeline := story.New(story.Deps{
 			Repo:             repo,
 			Selector:         selector.NewDBSelector(repo, predictor.DefaultConfig()),

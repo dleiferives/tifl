@@ -120,6 +120,10 @@ type Repository interface {
 	// outbound model call. Append-only; the call_id is the caller's idempotency key.
 	InsertLLMCall(ctx context.Context, c domain.LLMCall) error
 	ListSessionLLMCalls(ctx context.Context, userID, sessionID string) ([]domain.LLMCall, error)
+	// UserLLMTokensSince sums recorded input+output tokens for a user since the
+	// given Unix time — the spend measure behind per-user budgets (#208). Uses
+	// the (user_id, called_at) index.
+	UserLLMTokensSince(ctx context.Context, userID string, since float64) (int64, error)
 
 	// Reader events — the high-volume behavioural signal log the reader flushes in
 	// batches. InsertReaderEvents is append-only and idempotent on event_id (a

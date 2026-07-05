@@ -23,6 +23,11 @@ server:
   jwt_secret: ""                  # signing key when auth_mode: jwt
   allow_insecure_auth_cookie: false # DEVELOPMENT ONLY: permit refresh cookie over HTTP
   frontend_dir: web/dist          # compiled SolidJS assets               (default web/dist)
+  # Per-user LLM token budget: total input+output tokens a user may spend in
+  # the rolling window before calls return 429. 0 (default) disables — right
+  # for desktop where the user pays for their own key. (#208)
+  # llm_budget_tokens: 500000
+  # llm_budget_window_hours: 24
 
 # The LLM gateway (cmd/gateway). The example targets a local OpenCode server —
 # a credential-free way to run a real model. Start it with:

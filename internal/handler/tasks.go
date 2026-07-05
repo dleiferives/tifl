@@ -10,6 +10,7 @@ import (
 
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
+	"github.com/dleiferives/tifl/internal/llm"
 	"github.com/dleiferives/tifl/internal/skills"
 	"github.com/dleiferives/tifl/internal/tasks"
 )
@@ -194,6 +195,8 @@ func (h *Handler) submitTask(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, tasks.ErrBadContent):
 			// Malformed stored content is a server-side data problem, not a gateway issue.
 			writeError(w, http.StatusInternalServerError, fmt.Errorf("task content is malformed: %w", err))
+		case errors.Is(err, llm.ErrBudgetExceeded):
+			writeError(w, http.StatusTooManyRequests, err)
 		default:
 			// LLM path failure — gateway or model unreachable.
 			writeError(w, http.StatusBadGateway, fmt.Errorf("grading failed: %w", err))

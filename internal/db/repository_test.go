@@ -48,6 +48,7 @@ func testRepository(t *testing.T, newRepo repoFactory) {
 	run("SessionLifecycle", testSessionLifecycle)
 	run("SessionArchiveDelete", testSessionArchiveDelete)
 	run("Tx", testTx)
+	run("LLMTokenSpend", testLLMTokenSpend)
 }
 
 func testAuthSecurityEvents(t *testing.T, repo db.Repository) {
@@ -1590,3 +1591,34 @@ func seedItemForTx(t *testing.T, ctx context.Context, r db.Repository) string {
 	}
 	return itemID
 }
+
+// testLLMTokenSpend verifies the budget window sum: only the user's calls at
+// or after the cutoff count, and null token columns count as zero.
+func testLLMTokenSpend(t *testing.T, repo db.Repository) {
+	ctx := context.Background()
+	in100, out50, in7 := 100, 50, 7
+	calls := []domain.LLMCall{
+		{CallID: "sp-1", UserID: strPtr("u-spend"), Kind: "story_generator", PromptVersion: "v1", Model: "m", Status: "success", CalledAt: 1000, InputTokens: &in100, OutputTokens: &out50},
+		{CallID: "sp-2", UserID: strPtr("u-spend"), Kind: "grader", PromptVersion: "v1", Model: "m", Status: "success", CalledAt: 2000, InputTokens: &in7},
+		{CallID: "sp-3", UserID: strPtr("u-spend"), Kind: "grader", PromptVersion: "v1", Model: "m", Status: "error", CalledAt: 500, InputTokens: &in100},
+		{CallID: "sp-4", UserID: strPtr("u-other"), Kind: "grader", PromptVersion: "v1", Model: "m", Status: "success", CalledAt: 2000, InputTokens: &in100},
+	}
+	for _, c := range calls {
+		if err := repo.InsertLLMCall(ctx, c); err != nil {
+			t.Fatalf("insert %s: %v", c.CallID, err)
+		}
+	}
+	got, err := repo.UserLLMTokensSince(ctx, "u-spend", 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 157 { // 100+50 at t=1000 plus 7 at t=2000; t=500 excluded
+		t.Fatalf("tokens since 1000 = %d, want 157", got)
+	}
+	got, err = repo.UserLLMTokensSince(ctx, "u-nobody", 0)
+	if err != nil || got != 0 {
+		t.Fatalf("unknown user = %d, %v; want 0, nil", got, err)
+	}
+}
+
+func strPtr(s string) *string { return &s }

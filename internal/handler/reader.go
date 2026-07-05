@@ -9,6 +9,7 @@ import (
 
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
+	"github.com/dleiferives/tifl/internal/llm"
 	"github.com/dleiferives/tifl/internal/reader"
 )
 
@@ -261,6 +262,8 @@ func (h *Handler) writeReaderError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, errors.New("story not found"))
 	case errors.Is(err, reader.ErrLLMUnavailable):
 		writeError(w, http.StatusServiceUnavailable, err)
+	case errors.Is(err, llm.ErrBudgetExceeded):
+		writeError(w, http.StatusTooManyRequests, err)
 	default:
 		writeError(w, http.StatusInternalServerError, err)
 	}
