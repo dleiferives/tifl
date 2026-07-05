@@ -70,3 +70,32 @@ jobs:
           cache: true
       - name: test postgres repository
         run: go test ./internal/db
+
+  eval-reminder:
+    name: Prompt change has eval results
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: check prompt changes carry eval results
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          changed="$(git diff --name-only "$BASE_SHA"...HEAD)"
+          prompts_touched=false
+          results_touched=false
+          echo "$changed" | grep -qE '^internal/llm/(builders\.go|testdata/prompts/)' && prompts_touched=true
+          echo "$changed" | grep -qE '^eval/(results|ITER_LOG\.md)' && results_touched=true
+          if [ "$prompts_touched" = true ] && [ "$results_touched" = false ]; then
+            case "$PR_BODY" in
+              *eval:skip*)
+                echo "prompt change with eval:skip — allowed" ;;
+              *)
+                echo "This PR changes prompts (builders.go or golden snapshots) without eval results."
+                echo "Either commit results under eval/results/ + an ITER_LOG.md line, or add 'eval:skip' to the PR body."
+                exit 1 ;;
+            esac
+          fi

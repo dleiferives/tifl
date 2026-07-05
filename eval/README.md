@@ -29,9 +29,9 @@ Changing a prompt therefore means:
 2. Regenerate snapshots: `go test ./internal/llm -run TestPromptGolden -update`.
 3. Run the relevant experiment here (`make eval-smoke` for a sanity pass) and
    commit the curated result JSON under `results/` + a line in `ITER_LOG.md`.
-4. Convention (not CI-enforced): a change touching builders or snapshots
-   should land with results under `eval/results/` and an `ITER_LOG.md` line,
-   unless it's mechanical and doesn't alter prompt semantics.
+4. CI reminds you: a PR touching builders or snapshots without touching
+   `eval/results/` fails the eval-reminder check unless the PR body contains
+   `eval:skip` (for mechanical changes that don't alter prompt semantics).
 
 ## TL;DR — the loop
 
