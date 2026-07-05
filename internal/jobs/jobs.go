@@ -81,6 +81,9 @@ type Client interface {
 	// EnqueueGeneration schedules a generation run, unique per session while
 	// one is pending/running (#204).
 	EnqueueGeneration(ctx context.Context, sessionID, userID string) error
+	// EnqueueReaderSignals schedules acquisition-signal derivation for a
+	// (user, story)'s pending reader events (#210).
+	EnqueueReaderSignals(ctx context.Context, userID, storyID string) error
 	// Start begins working jobs; Stop drains in-flight work until ctx expires.
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error

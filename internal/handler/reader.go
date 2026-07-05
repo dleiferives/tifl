@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 
@@ -184,6 +185,26 @@ func (h *Handler) postReaderEvents(w http.ResponseWriter, r *http.Request) {
 			ev.Value = &e.Value
 		}
 		events = append(events, ev)
+	}
+
+	// With a job queue wired, the flush path is insert + enqueue only —
+	// derivation runs in a worker, keeping unload-time flushes fast (#210).
+	// Without one, derivation stays inline (tests, minimal setups).
+	if h.signalQueue != nil {
+		n, stories, err := h.reader.IngestOnly(r.Context(), userID, events)
+		if err != nil {
+			h.writeReaderError(w, err)
+			return
+		}
+		for storyID := range stories {
+			if err := h.signalQueue.EnqueueReaderSignals(r.Context(), userID, storyID); err != nil {
+				// The events are durably stored; a lost enqueue heals on the
+				// next flush for this story. Log and keep the 202.
+				log.Printf("reader signals enqueue (user=%s story=%s): %v", userID, storyID, err)
+			}
+		}
+		writeJSON(w, http.StatusAccepted, map[string]int{"ingested": n})
+		return
 	}
 
 	n, err := h.reader.Ingest(r.Context(), userID, events)

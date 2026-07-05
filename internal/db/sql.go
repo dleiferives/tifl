@@ -916,6 +916,72 @@ func (r *SQLRepository) InsertReaderEvents(ctx context.Context, events []domain.
 	return inserted, nil
 }
 
+// ListUnprocessedReaderEvents returns the (user, story) events whose signals
+// have not been derived yet, oldest first — the async worker's claim set (#210).
+func (r *SQLRepository) ListUnprocessedReaderEvents(ctx context.Context, userID, storyID string) ([]domain.ReaderEvent, error) {
+	rows, err := r.query(ctx,
+		`SELECT event_id, user_id, story_id, session_id, event_type, position, value, occurred_at, processed_at
+		 FROM reader_events
+		 WHERE user_id = ? AND story_id = ? AND processed_at IS NULL
+		 ORDER BY occurred_at, event_id`, userID, storyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.ReaderEvent
+	for rows.Next() {
+		var (
+			e         domain.ReaderEvent
+			sessionID sql.NullString
+			position  sql.NullInt64
+			value     sql.NullString
+			processed sql.NullFloat64
+			eventType string
+		)
+		if err := rows.Scan(&e.EventID, &e.UserID, &e.StoryID, &sessionID, &eventType,
+			&position, &value, &e.OccurredAt, &processed); err != nil {
+			return nil, err
+		}
+		e.EventType = domain.ReaderEventType(eventType)
+		e.SessionID = stringPtrFromNull(sessionID)
+		if position.Valid {
+			p := int(position.Int64)
+			e.Position = &p
+		}
+		e.Value = stringPtrFromNull(value)
+		e.ProcessedAt = floatPtr(processed)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// MarkReaderEventsProcessed stamps processed_at on the given events. The
+// worker calls it in the same transaction as the derived writes so a crash
+// reprocesses rather than losing signals (derivation is idempotent per event).
+func (r *SQLRepository) MarkReaderEventsProcessed(ctx context.Context, eventIDs []string, at float64) error {
+	if len(eventIDs) == 0 {
+		return nil
+	}
+	for _, id := range eventIDs {
+		if _, err := r.exec(ctx,
+			`UPDATE reader_events SET processed_at = ? WHERE event_id = ?`, at, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// HasProcessedReaderEvents reports whether any (user, story) event has been
+// processed — the once-per-first-read exposure gate under async derivation.
+func (r *SQLRepository) HasProcessedReaderEvents(ctx context.Context, userID, storyID string) (bool, error) {
+	var exists int
+	err := r.queryRow(ctx,
+		`SELECT CASE WHEN EXISTS(
+		   SELECT 1 FROM reader_events WHERE user_id = ? AND story_id = ? AND processed_at IS NOT NULL
+		 ) THEN 1 ELSE 0 END`, userID, storyID).Scan(&exists)
+	return exists == 1, err
+}
+
 func (r *SQLRepository) HasReaderEvents(ctx context.Context, userID, storyID string) (bool, error) {
 	var exists int
 	err := r.queryRow(ctx,

@@ -19,6 +19,9 @@ type Store interface {
 	GetUserKnowledgeItem(ctx context.Context, userID, itemID string) (domain.UserKnowledge, error)
 	HasReaderEvents(ctx context.Context, userID, storyID string) (bool, error)
 	InsertReaderEvents(ctx context.Context, events []domain.ReaderEvent) (inserted []domain.ReaderEvent, err error)
+	ListUnprocessedReaderEvents(ctx context.Context, userID, storyID string) ([]domain.ReaderEvent, error)
+	MarkReaderEventsProcessed(ctx context.Context, eventIDs []string, at float64) error
+	HasProcessedReaderEvents(ctx context.Context, userID, storyID string) (bool, error)
 	UpsertReaderSurfaceLevel(ctx context.Context, userID string, row domain.ReaderSurfaceLevel) error
 	ListDefinitions(ctx context.Context, language, itemKey string) ([]domain.Definition, error)
 	UpsertDefinition(ctx context.Context, d domain.Definition) error

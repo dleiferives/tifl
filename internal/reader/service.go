@@ -125,44 +125,82 @@ func (s *Service) SetSurfaceLevel(ctx context.Context, userID string, row domain
 // Returns how many events were newly stored. The caller's userID is authoritative
 // — the client-supplied user_id on each event is ignored.
 func (s *Service) Ingest(ctx context.Context, userID string, events []domain.ReaderEvent) (int, error) {
-	if len(events) == 0 {
-		return 0, nil
+	inserted, stories, err := s.IngestOnly(ctx, userID, events)
+	if err != nil {
+		return 0, err
 	}
+	for storyID := range stories {
+		if err := s.ProcessPendingEvents(ctx, userID, storyID); err != nil {
+			return 0, err
+		}
+	}
+	return inserted, nil
+}
 
-	// Validate and index the referenced stories (ownership + language + tokens).
-	stories := map[string]*storyCtx{}
+// IngestOnly validates and appends a flushed batch without deriving signals —
+// the fast path behind POST /reader_events when a job queue defers derivation
+// (#210). It returns the newly-inserted count and the touched story ids for
+// the caller to enqueue processing.
+func (s *Service) IngestOnly(ctx context.Context, userID string, events []domain.ReaderEvent) (int, map[string]struct{}, error) {
+	if len(events) == 0 {
+		return 0, nil, nil
+	}
+	stories := map[string]struct{}{}
 	for i := range events {
 		events[i].UserID = userID // never trust the client's user_id
 		sid := events[i].StoryID
 		if sid == "" {
-			return 0, fmt.Errorf("%w: missing story_id", ErrInvalidEvent)
+			return 0, nil, fmt.Errorf("%w: missing story_id", ErrInvalidEvent)
 		}
 		if _, ok := stories[sid]; !ok {
-			sc, err := s.loadStoryCtx(ctx, userID, sid)
-			if err != nil {
-				return 0, err
+			// Ownership/existence check up front so a bad batch 404s at flush
+			// time, not silently in a worker.
+			if _, err := s.loadStoryCtx(ctx, userID, sid); err != nil {
+				return 0, nil, err
 			}
-			stories[sid] = sc
+			stories[sid] = struct{}{}
 		}
 	}
-
 	inserted, err := s.repo.InsertReaderEvents(ctx, events)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
+	}
+	return len(inserted), stories, nil
+}
+
+// ProcessPendingEvents derives acquisition signals from every unprocessed
+// event of one (user, story): exposure/context-variety once per first read,
+// lookup counts and FSRS reviews, and surface-level ratings. Events are
+// marked processed after the derived writes land, so processing is
+// at-least-once: a crash mid-derivation re-runs it on the next flush or
+// retry (the old inline path lost the derivation outright in that case).
+// The rare re-run can double-count a lookup increment — an accepted trade
+// for self-healing; jobs for one user are serialized so runs never overlap.
+// Runs from the reader_signals job worker, or inline as the no-queue
+// fallback (#210).
+func (s *Service) ProcessPendingEvents(ctx context.Context, userID, storyID string) error {
+	pending, err := s.repo.ListUnprocessedReaderEvents(ctx, userID, storyID)
+	if err != nil {
+		return err
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+	sc, err := s.loadStoryCtx(ctx, userID, storyID)
+	if err != nil {
+		return err
 	}
 
 	acc := newAccumulator(s.repo, s.associator, userID, s.now())
 
-	// Exposure + context variety, once per first read of each story.
-	for _, sc := range stories {
-		if !sc.firstRead {
-			continue
-		}
+	// Exposure + context variety, once per first read of the story (gated on
+	// the processed marker, so the async path counts it exactly once too).
+	if sc.firstRead {
 		seen := map[string]bool{}
 		for _, key := range sc.wordKeys {
 			uk, err := acc.get(ctx, sc.language, key)
 			if err != nil {
-				return 0, err
+				return err
 			}
 			uk.ExposureCount++ // every occurrence counts toward exposure
 			if !seen[key] {
@@ -172,9 +210,9 @@ func (s *Service) Ingest(ctx context.Context, userID string, events []domain.Rea
 		}
 	}
 
-	// lookup_count and level from the newly-inserted events.
-	for _, e := range inserted {
-		sc := stories[e.StoryID]
+	eventIDs := make([]string, 0, len(pending))
+	for _, e := range pending {
+		eventIDs = append(eventIDs, e.EventID)
 		if e.Position == nil {
 			continue
 		}
@@ -184,7 +222,7 @@ func (s *Service) Ingest(ctx context.Context, userID string, events []domain.Rea
 		}
 		uk, err := acc.get(ctx, sc.language, key)
 		if err != nil {
-			return 0, err
+			return err
 		}
 		switch e.EventType {
 		case domain.ReaderEventLookup:
@@ -202,7 +240,7 @@ func (s *Service) Ingest(ctx context.Context, userID string, events []domain.Rea
 						Level:      lvl,
 						UpdatedAt:  s.now(),
 					}); err != nil {
-						return 0, err
+						return err
 					}
 				}
 			}
@@ -210,9 +248,9 @@ func (s *Service) Ingest(ctx context.Context, userID string, events []domain.Rea
 	}
 
 	if err := acc.flush(ctx, s.engine); err != nil {
-		return 0, err
+		return err
 	}
-	return len(inserted), nil
+	return s.repo.MarkReaderEventsProcessed(ctx, eventIDs, s.now())
 }
 
 // storyCtx is the per-story data Ingest needs: ownership-checked language, the
@@ -238,7 +276,7 @@ func (s *Service) loadStoryCtx(ctx context.Context, userID, storyID string) (*st
 	if err != nil {
 		return nil, err
 	}
-	has, err := s.repo.HasReaderEvents(ctx, userID, storyID)
+	has, err := s.repo.HasProcessedReaderEvents(ctx, userID, storyID)
 	if err != nil {
 		return nil, err
 	}

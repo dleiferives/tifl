@@ -78,4 +78,7 @@ type ReaderEvent struct {
 	Position   *int            // story_tokens.position the event is about; nil for some events
 	Value      *string         // rate: "1".."5","w","i"; nil otherwise
 	OccurredAt float64         // Unix seconds, client clock
+	// ProcessedAt is set when acquisition signals have been derived from this
+	// event (async worker or synchronous fallback — #210). Nil = pending.
+	ProcessedAt *float64
 }

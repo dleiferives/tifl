@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/dleiferives/tifl/internal/acquire"
 	authn "github.com/dleiferives/tifl/internal/auth"
 	"github.com/dleiferives/tifl/internal/config"
 	"github.com/dleiferives/tifl/internal/db"
@@ -29,6 +30,7 @@ import (
 	greekplugin "github.com/dleiferives/tifl/internal/lang/el"
 	"github.com/dleiferives/tifl/internal/llm"
 	"github.com/dleiferives/tifl/internal/predictor"
+	"github.com/dleiferives/tifl/internal/reader"
 	"github.com/dleiferives/tifl/internal/selector"
 	"github.com/dleiferives/tifl/internal/skills"
 	"github.com/dleiferives/tifl/internal/story"
@@ -121,13 +123,26 @@ func main() {
 		log.Println("no llm_base_url configured: session generation endpoints will return 503")
 	}
 
-	// Durable job runner: skill verifications (and future kinds) survive
-	// restarts and retry with backoff instead of running as fire-and-forget
-	// goroutines (#202). Same database as the repository, own pool.
+	// The reader signal-derivation service the jobs worker drives (#210). The
+	// HTTP handler builds its own equivalent service over the same repository;
+	// both are stateless method bundles, so behavior is identical.
+	acquireEngine := acquire.NewEngine(repo, predictor.DefaultConfig(), acquire.Config{})
+	if cfg.PredictorMode == "fsrs" {
+		acquireEngine.EnableFSRSScoring()
+	}
+	skillAssociator := skills.NewAssociator(repo, langRegistry)
+	readerService := reader.NewService(repo, acquireEngine, reader.WithSkillAssociator(skillAssociator))
+
+	// Durable jobs run regardless of LLM availability: reader-signal
+	// derivation is deterministic work (#210). LLM-dependent kinds register
+	// only when a gateway is configured.
 	var jobsClient jobs.Client
-	if client != nil {
+	{
 		workers := jobs.NewWorkers()
-		workers.RegisterSkillVerify(skills.NewVerificationService(repo, client))
+		workers.RegisterReaderSignals(readerService)
+		if client != nil {
+			workers.RegisterSkillVerify(skills.NewVerificationService(repo, client))
+		}
 		if broker != nil {
 			// Per-user serialization gate: snooze a session's job while
 			// another session of the same user is mid-generation.
@@ -159,6 +174,9 @@ func main() {
 	var handlerOpts []handler.Option
 	if cfg.PredictorMode == "fsrs" {
 		handlerOpts = append(handlerOpts, handler.WithFSRSScoring())
+	}
+	if jobsClient != nil {
+		handlerOpts = append(handlerOpts, handler.WithSignalQueue(jobsClient))
 	}
 	if jobsClient != nil {
 		handlerOpts = append(handlerOpts, handler.WithSkillVerifyQueue(jobsClient))

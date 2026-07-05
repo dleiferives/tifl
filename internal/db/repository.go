@@ -134,6 +134,11 @@ type Repository interface {
 	// once per first read.
 	InsertReaderEvents(ctx context.Context, events []domain.ReaderEvent) (inserted []domain.ReaderEvent, err error)
 	HasReaderEvents(ctx context.Context, userID, storyID string) (bool, error)
+	// Async derivation (#210): worker claim set, processed marker, and the
+	// once-per-first-read exposure gate under deferred processing.
+	ListUnprocessedReaderEvents(ctx context.Context, userID, storyID string) ([]domain.ReaderEvent, error)
+	MarkReaderEventsProcessed(ctx context.Context, eventIDs []string, at float64) error
+	HasProcessedReaderEvents(ctx context.Context, userID, storyID string) (bool, error)
 
 	// Sessions — the study unit the generation pipeline drives. CreateSession
 	// assigns a session_id (when blank), created_at, and a pending status.

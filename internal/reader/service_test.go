@@ -234,3 +234,75 @@ func (l testSkillLanguage) SkillDefinitions() []lang.SkillDefinition {
 	copy(out, l.defs)
 	return out
 }
+
+// TestDeferredProcessingMatchesInline is the #210 characterization: insert-only
+// followed by worker-style ProcessPendingEvents yields the same user_knowledge
+// as the inline Ingest path, and reprocessing is a no-op.
+func TestDeferredProcessingMatchesInline(t *testing.T) {
+	pos0, pos4 := 0, 4
+	lvl := "3"
+	makeBatch := func(storyID string) []domain.ReaderEvent {
+		return []domain.ReaderEvent{
+			{EventID: "d1", StoryID: storyID, EventType: domain.ReaderEventLookup, Position: &pos0},
+			{EventID: "d2", StoryID: storyID, EventType: domain.ReaderEventRate, Position: &pos4, Value: &lvl},
+		}
+	}
+
+	// Inline path.
+	ctxA, svcA, repoA, userA, storyA := fixture(t)
+	_, err := svcA.Ingest(ctxA, userA, makeBatch(storyA))
+	must(t, err)
+	inline := knowledge(t, ctxA, repoA, userA, "a")
+
+	// Deferred path: IngestOnly leaves signals underived, then processing
+	// catches up, then a second processing pass finds nothing pending.
+	ctxB, svcB, repoB, userB, storyB := fixture(t)
+	n, stories, err := svcB.IngestOnly(ctxB, userB, makeBatch(storyB))
+	must(t, err)
+	if n != 2 || len(stories) != 1 {
+		t.Fatalf("IngestOnly = %d events, %d stories", n, len(stories))
+	}
+	if _, err := repoB.GetUserKnowledgeItem(ctxB, userB, ""); err == nil {
+		t.Fatal("sanity: empty item id should not resolve")
+	}
+	pending, err := repoB.ListUnprocessedReaderEvents(ctxB, userB, storyB)
+	must(t, err)
+	if len(pending) != 2 {
+		t.Fatalf("unprocessed = %d, want 2", len(pending))
+	}
+
+	must(t, svcB.ProcessPendingEvents(ctxB, userB, storyB))
+	deferred := knowledge(t, ctxB, repoB, userB, "a")
+
+	if inline.ExposureCount != deferred.ExposureCount ||
+		inline.ContextVariety != deferred.ContextVariety ||
+		inline.LookupCount != deferred.LookupCount ||
+		inline.FSRSStability != deferred.FSRSStability {
+		t.Fatalf("deferred != inline:\n inline  %+v\n deferred %+v", inline, deferred)
+	}
+
+	// All events marked; reprocessing changes nothing (redelivered job no-op).
+	pending, err = repoB.ListUnprocessedReaderEvents(ctxB, userB, storyB)
+	must(t, err)
+	if len(pending) != 0 {
+		t.Fatalf("still unprocessed after processing: %d", len(pending))
+	}
+	must(t, svcB.ProcessPendingEvents(ctxB, userB, storyB))
+	again := knowledge(t, ctxB, repoB, userB, "a")
+	if again.ExposureCount != deferred.ExposureCount || again.LookupCount != deferred.LookupCount {
+		t.Fatalf("reprocessing double-counted: %+v vs %+v", again, deferred)
+	}
+
+	// A second flush for the same story does not re-count exposure (the
+	// first-read gate rides the processed marker).
+	pos2 := 2
+	_, _, err = svcB.IngestOnly(ctxB, userB, []domain.ReaderEvent{
+		{EventID: "d3", StoryID: storyB, EventType: domain.ReaderEventLookup, Position: &pos2},
+	})
+	must(t, err)
+	must(t, svcB.ProcessPendingEvents(ctxB, userB, storyB))
+	after := knowledge(t, ctxB, repoB, userB, "a")
+	if after.ExposureCount != deferred.ExposureCount {
+		t.Fatalf("second flush re-counted exposure: %d -> %d", deferred.ExposureCount, after.ExposureCount)
+	}
+}

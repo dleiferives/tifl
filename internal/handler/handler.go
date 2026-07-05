@@ -34,6 +34,7 @@ type Handler struct {
 	skillVerifyQueue  SkillVerifyQueue                // durable queue for verifications; nil in tests without jobs
 	generationQueue   GenerationQueue                 // durable queue for generation runs; nil falls back to in-process broker
 	generationTxQueue GenerationTxQueue               // transactional enqueue for generate (#215); nil falls back to generationQueue
+	signalQueue       SignalQueue                     // durable queue for reader signal derivation (#210); nil derives inline
 	llmEnabled        bool                            // false when no LLM client: LLM-graded tasks return 503
 	models            llm.ModelLister                 // nil when the gateway cannot list upstream models
 	frontendDir       string
@@ -106,6 +107,12 @@ func currentAPIRoutes() []apiRoute {
 // which model computes confidence scores and cached predictions (#209).
 func WithFSRSScoring() Option {
 	return func(h *Handler) { h.acquire.EnableFSRSScoring() }
+}
+
+// WithSignalQueue defers reader-event signal derivation to the durable job
+// queue: the flush endpoint becomes insert + enqueue (#210).
+func WithSignalQueue(q SignalQueue) Option {
+	return func(h *Handler) { h.signalQueue = q }
 }
 
 // WithSkillVerifyQueue routes pending skill-tier verifications through the

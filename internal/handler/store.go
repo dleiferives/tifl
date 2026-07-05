@@ -81,3 +81,9 @@ type GenerationTxQueue interface {
 type sqlTxCarrier interface {
 	SQLTx() *sql.Tx
 }
+
+// SignalQueue defers reader-event signal derivation to the job queue (#210);
+// satisfied by jobs.Client.
+type SignalQueue interface {
+	EnqueueReaderSignals(ctx context.Context, userID, storyID string) error
+}
