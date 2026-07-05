@@ -201,26 +201,30 @@ func (h *Handler) submitTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Grade and attempt count land in one transaction: a crash between the two
+	// cannot record a grade while losing the attempt increment (or vice versa).
 	now := float64(time.Now().Unix())
-	if err := h.repo.RecordTaskGrade(r.Context(), userID, id, domain.TaskGrade{
-		Response:    req.Response,
-		InputMethod: method,
-		Grade:       gradeToMap(grade),
-		GradedBy:    string(gradedBy),
-		GradedAt:    now,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-
-	// Determine the attempt count: first submission stays at 1, re-submissions increment.
 	attemptCount := task.AttemptCount
-	if isResubmission {
-		attemptCount, err = h.repo.IncrementTaskAttempt(r.Context(), id)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, fmt.Errorf("recording attempt: %w", err))
-			return
+	if err := h.repo.Tx(r.Context(), func(repo db.Repository) error {
+		if err := repo.RecordTaskGrade(r.Context(), userID, id, domain.TaskGrade{
+			Response:    req.Response,
+			InputMethod: method,
+			Grade:       gradeToMap(grade),
+			GradedBy:    string(gradedBy),
+			GradedAt:    now,
+		}); err != nil {
+			return err
 		}
+		// First submission stays at the stored count, re-submissions increment.
+		if isResubmission {
+			var err error
+			attemptCount, err = repo.IncrementTaskAttempt(r.Context(), id)
+			return err
+		}
+		return nil
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("recording grade: %w", err))
+		return
 	}
 
 	// Best-grade-wins: only update acquisition and skill XP signals when the new

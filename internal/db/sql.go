@@ -28,6 +28,9 @@ import (
 type SQLRepository struct {
 	db *sql.DB
 	d  dialect
+	// tx is non-nil only on the transactional view a Tx callback receives;
+	// methods then execute on the transaction instead of the pool.
+	tx *sql.Tx
 }
 
 // compile-time assertion that we satisfy the interface.

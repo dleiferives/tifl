@@ -47,6 +47,7 @@ func testRepository(t *testing.T, newRepo repoFactory) {
 	run("Pipeline", testPipeline)
 	run("SessionLifecycle", testSessionLifecycle)
 	run("SessionArchiveDelete", testSessionArchiveDelete)
+	run("Tx", testTx)
 }
 
 func testAuthSecurityEvents(t *testing.T, repo db.Repository) {
@@ -1519,4 +1520,73 @@ func testSessionArchiveDelete(t *testing.T, repo db.Repository) {
 	if _, err := repo.GetStory(ctx, noEventStory.StoryID); !errors.Is(err, db.ErrNotFound) {
 		t.Fatalf("story without reader events should be deleted, got %v", err)
 	}
+}
+
+// testTx verifies the unit-of-work: commit persists every write, an error
+// rolls back every write, and nesting is rejected.
+func testTx(t *testing.T, repo db.Repository) {
+	ctx := context.Background()
+
+	if err := repo.Tx(ctx, func(r db.Repository) error {
+		if _, err := r.CreateUser(ctx, domain.User{UserID: "tx-user", Email: "tx@example.com"}); err != nil {
+			return err
+		}
+		return r.UpsertLanguage(ctx, domain.Language{Code: "tx", Name: "Txish", Enabled: true})
+	}); err != nil {
+		t.Fatalf("commit tx: %v", err)
+	}
+	if _, err := repo.GetUser(ctx, "tx-user"); err != nil {
+		t.Fatalf("committed user not visible: %v", err)
+	}
+	if _, err := repo.GetLanguage(ctx, "tx"); err != nil {
+		t.Fatalf("committed language not visible: %v", err)
+	}
+
+	boom := errors.New("boom")
+	err := repo.Tx(ctx, func(r db.Repository) error {
+		if _, err := r.CreateUser(ctx, domain.User{UserID: "tx-rollback", Email: "rb@example.com"}); err != nil {
+			return err
+		}
+		// The write must be visible inside the transaction...
+		if _, err := r.GetUser(ctx, "tx-rollback"); err != nil {
+			return err
+		}
+		return boom
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("tx error = %v, want boom", err)
+	}
+	// ...and gone after rollback.
+	if _, err := repo.GetUser(ctx, "tx-rollback"); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("rolled-back user still visible: err=%v", err)
+	}
+
+	// Multi-statement repository methods that open their own internal
+	// transaction must join the ambient one instead of deadlocking.
+	if err := repo.Tx(ctx, func(r db.Repository) error {
+		return r.UpsertKnowledgePredictions(ctx, []domain.KnowledgePrediction{
+			{UserID: "tx-user", ItemID: seedItemForTx(t, ctx, r), PredictedProb: 0.5, PredictorVersion: "v1", ComputedAt: 1.0},
+		})
+	}); err != nil {
+		t.Fatalf("nested-internal-tx method inside Tx: %v", err)
+	}
+
+	// Nesting Tx itself is rejected.
+	err = repo.Tx(ctx, func(r db.Repository) error {
+		return r.Tx(ctx, func(db.Repository) error { return nil })
+	})
+	if err == nil {
+		t.Fatal("nested Tx should error")
+	}
+}
+
+func seedItemForTx(t *testing.T, ctx context.Context, r db.Repository) string {
+	t.Helper()
+	itemID, err := r.UpsertKnowledgeItem(ctx, domain.KnowledgeItem{
+		Language: "tx", ItemType: "word", Key: "txword",
+	})
+	if err != nil {
+		t.Fatalf("seed item: %v", err)
+	}
+	return itemID
 }

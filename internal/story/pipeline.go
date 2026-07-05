@@ -501,23 +501,25 @@ func (p *Pipeline) runStory(ctx context.Context, sess domain.Session, lc domain.
 		return domain.Story{}, se
 	}
 
+	// One transaction for the stage's writes: a crash or race cannot leave an
+	// orphaned story or a session pointing at half-persisted output.
 	cov := coverage
-	story, err := p.deps.Repo.CreateStory(ctx, domain.Story{
-		UserID: sess.UserID, Language: sess.Language, Text: result.Story,
-		Level: sess.Level, Topic: sess.Topic, EstimatedCoverage: &cov, SessionID: &sess.SessionID,
-	})
-	if err != nil {
-		se := fail(ErrCodePersist, err)
-		p.failStage(ctx, sess.SessionID, domain.StageStoryGeneration, se)
-		return domain.Story{}, se
-	}
-	if err := p.persistGlossary(ctx, story.StoryID, result.Glossary); err != nil {
-		se := fail(ErrCodePersist, err)
-		p.failStage(ctx, sess.SessionID, domain.StageStoryGeneration, se)
-		return domain.Story{}, se
-	}
-	if err := p.deps.Repo.SetSessionSelection(ctx, sess.SessionID, story.StoryID,
-		itemIDs(lc.Selected.Targets), itemIDs(lc.Selected.New)); err != nil {
+	var story domain.Story
+	if err := p.deps.Repo.Tx(ctx, func(r db.Repository) error {
+		var err error
+		story, err = r.CreateStory(ctx, domain.Story{
+			UserID: sess.UserID, Language: sess.Language, Text: result.Story,
+			Level: sess.Level, Topic: sess.Topic, EstimatedCoverage: &cov, SessionID: &sess.SessionID,
+		})
+		if err != nil {
+			return err
+		}
+		if err := persistGlossary(ctx, r, story.StoryID, result.Glossary); err != nil {
+			return err
+		}
+		return r.SetSessionSelection(ctx, sess.SessionID, story.StoryID,
+			itemIDs(lc.Selected.Targets), itemIDs(lc.Selected.New))
+	}); err != nil {
 		se := fail(ErrCodePersist, err)
 		p.failStage(ctx, sess.SessionID, domain.StageStoryGeneration, se)
 		return domain.Story{}, se
@@ -559,17 +561,17 @@ func (p *Pipeline) runPhraseSet(ctx context.Context, sess domain.Session, lc dom
 	emit.emit(Event{Stage: stage, TokenRate: rate})
 
 	items := toPhraseItems(res.Phrases, itemIDs(lc.Selected.Targets))
-	if _, err := p.deps.Repo.CreatePhraseSet(ctx, domain.PhraseSet{
-		SessionID: sess.SessionID, UserID: sess.UserID, Language: sess.Language, Items: items,
+	// One transaction: the phrase set and its selection record land together.
+	if err := p.deps.Repo.Tx(ctx, func(r db.Repository) error {
+		if _, err := r.CreatePhraseSet(ctx, domain.PhraseSet{
+			SessionID: sess.SessionID, UserID: sess.UserID, Language: sess.Language, Items: items,
+		}); err != nil {
+			return err
+		}
+		// Record the selection with no story id (phrase sets have no story).
+		return r.SetSessionSelection(ctx, sess.SessionID, "",
+			itemIDs(lc.Selected.Targets), itemIDs(lc.Selected.New))
 	}); err != nil {
-		se := fail(ErrCodePersist, err)
-		p.failStage(ctx, sess.SessionID, stage, se)
-		emit.emit(Event{Stage: stage, Status: string(domain.StageFailed), ErrorCode: se.code})
-		return generatedContent{}, se
-	}
-	// Record the selection with no story id (phrase sets have no story).
-	if err := p.deps.Repo.SetSessionSelection(ctx, sess.SessionID, "",
-		itemIDs(lc.Selected.Targets), itemIDs(lc.Selected.New)); err != nil {
 		se := fail(ErrCodePersist, err)
 		p.failStage(ctx, sess.SessionID, stage, se)
 		emit.emit(Event{Stage: stage, Status: string(domain.StageFailed), ErrorCode: se.code})
@@ -847,7 +849,7 @@ func taskPrimaryText(taskTypeID string, content map[string]any) string {
 	return ""
 }
 
-func (p *Pipeline) persistGlossary(ctx context.Context, storyID string, entries []llm.GlossaryEntry) error {
+func persistGlossary(ctx context.Context, repo db.Repository, storyID string, entries []llm.GlossaryEntry) error {
 	if len(entries) == 0 {
 		return nil
 	}
@@ -858,7 +860,7 @@ func (p *Pipeline) persistGlossary(ctx context.Context, storyID string, entries 
 		}
 		rows = append(rows, domain.StoryGlossaryEntry{StoryID: storyID, ItemKey: e.Key, Gloss: e.Gloss})
 	}
-	return p.deps.Repo.ReplaceStoryGlossary(ctx, storyID, rows)
+	return repo.ReplaceStoryGlossary(ctx, storyID, rows)
 }
 
 // --- stage bookkeeping -----------------------------------------------------

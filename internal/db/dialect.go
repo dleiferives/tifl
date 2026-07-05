@@ -71,23 +71,68 @@ func itoa(n int) string {
 	return itoa(n/10) + string(rune('0'+n%10))
 }
 
+// querier is the subset of *sql.DB and *sql.Tx the repository methods use, so
+// the same method bodies run either directly on the pool or inside a Tx.
+type querier interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	PrepareContext(ctx context.Context, query string) (*sql.Stmt, error)
+}
+
+// h returns the handle repository methods execute on: the transaction when
+// this value is the transactional view handed to a Tx callback, else the pool.
+func (r *SQLRepository) h() querier {
+	if r.tx != nil {
+		return r.tx
+	}
+	return r.db
+}
+
 // exec / query / queryRow are the only paths repository methods use to reach
 // the database; they apply the dialect rewrite in one place.
 func (r *SQLRepository) exec(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	return r.db.ExecContext(ctx, r.d.rebind(query), args...)
+	return r.h().ExecContext(ctx, r.d.rebind(query), args...)
 }
 
 func (r *SQLRepository) query(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	return r.db.QueryContext(ctx, r.d.rebind(query), args...)
+	return r.h().QueryContext(ctx, r.d.rebind(query), args...)
 }
 
 func (r *SQLRepository) queryRow(ctx context.Context, query string, args ...any) *sql.Row {
-	return r.db.QueryRowContext(ctx, r.d.rebind(query), args...)
+	return r.h().QueryRowContext(ctx, r.d.rebind(query), args...)
+}
+
+// Tx runs fn inside one database transaction: fn's Repository executes every
+// call on that transaction, an error rolls back, nil commits. Nesting is not
+// supported and returns an error. fn must not make network calls (LLM calls
+// especially): on SQLite the pool holds a single connection, so a transaction
+// blocks every other repository call until it finishes.
+func (r *SQLRepository) Tx(ctx context.Context, fn func(Repository) error) error {
+	if r.tx != nil {
+		return errNestedTx
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	txRepo := &SQLRepository{db: r.db, d: r.d, tx: tx}
+	if err := fn(txRepo); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
 }
 
 // begin starts a transaction whose exec/query/queryRow apply the same rewrite.
 // dtx embeds *sql.Tx, so Commit/Rollback (and deferred Rollback) work as before.
+// Inside a Tx callback it joins the ambient transaction instead of opening a
+// second one (which would deadlock SQLite's single connection); the joined
+// wrapper's Commit/Rollback are no-ops — the outer Tx owns the outcome.
 func (r *SQLRepository) begin(ctx context.Context) (*dtx, error) {
+	if r.tx != nil {
+		return &dtx{Tx: r.tx, d: r.d, joined: true}, nil
+	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -97,7 +142,22 @@ func (r *SQLRepository) begin(ctx context.Context) (*dtx, error) {
 
 type dtx struct {
 	*sql.Tx
-	d dialect
+	d      dialect
+	joined bool // part of an ambient Tx; Commit/Rollback defer to its owner
+}
+
+func (t *dtx) Commit() error {
+	if t.joined {
+		return nil
+	}
+	return t.Tx.Commit()
+}
+
+func (t *dtx) Rollback() error {
+	if t.joined {
+		return nil
+	}
+	return t.Tx.Rollback()
 }
 
 func (t *dtx) exec(ctx context.Context, query string, args ...any) (sql.Result, error) {

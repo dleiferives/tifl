@@ -82,26 +82,34 @@ func (s *XPService) ApplyTaskSignal(ctx context.Context, userID string, task dom
 		return nil, err
 	}
 
-	for i := range changes {
-		state := changes[i].State
-		state.UserID = userID
-		state.SkillID = changes[i].SkillID
-		state.UpdatedAt = now
-		changes[i].State = state
-		if err := s.repo.UpsertUserSkillXP(ctx, state); err != nil {
-			return nil, err
+	// All XP state rows and their audit log lines commit atomically: a partial
+	// write cannot leave a skill's XP updated without its log entry (or leave
+	// half the affected skills updated).
+	if err := s.repo.Tx(ctx, func(repo db.Repository) error {
+		for i := range changes {
+			state := changes[i].State
+			state.UserID = userID
+			state.SkillID = changes[i].SkillID
+			state.UpdatedAt = now
+			changes[i].State = state
+			if err := repo.UpsertUserSkillXP(ctx, state); err != nil {
+				return err
+			}
+			if err := repo.InsertTaskSkillXPLog(ctx, domain.TaskSkillXPLog{
+				LogID:    id.New(),
+				UserID:   userID,
+				TaskID:   task.TaskID,
+				SkillID:  changes[i].SkillID,
+				XPDelta:  changes[i].XPDelta,
+				XPAfter:  changes[i].XPAfter,
+				LoggedAt: now,
+			}); err != nil {
+				return err
+			}
 		}
-		if err := s.repo.InsertTaskSkillXPLog(ctx, domain.TaskSkillXPLog{
-			LogID:    id.New(),
-			UserID:   userID,
-			TaskID:   task.TaskID,
-			SkillID:  changes[i].SkillID,
-			XPDelta:  changes[i].XPDelta,
-			XPAfter:  changes[i].XPAfter,
-			LoggedAt: now,
-		}); err != nil {
-			return nil, err
-		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	return changes, nil
 }

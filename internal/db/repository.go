@@ -33,12 +33,23 @@ var ErrRefreshTokenReuse = errors.New("db: refresh token reuse detected")
 // repository-required metadata.
 var ErrInvalidAuthSecurityEvent = errors.New("db: invalid auth security event")
 
+// errNestedTx is returned when Tx is called from inside a Tx callback.
+var errNestedTx = errors.New("db: nested Tx is not supported")
+
 // Repository is the storage boundary. The surface grows method-by-method as each
 // subsystem is implemented; both backends satisfy it identically.
 type Repository interface {
 	// Lifecycle.
 	Migrate(ctx context.Context) error
 	Close() error
+
+	// Tx runs fn inside one database transaction. fn receives a Repository
+	// whose methods all execute on that transaction; returning an error rolls
+	// back, nil commits. Nesting is not supported and returns an error. fn
+	// must wrap persistence only — never network or LLM calls: on SQLite the
+	// transaction holds the pool's single connection, so any repository call
+	// made outside fn blocks until it finishes.
+	Tx(ctx context.Context, fn func(Repository) error) error
 
 	// Users.
 	CreateUser(ctx context.Context, u domain.User) (domain.User, error)
