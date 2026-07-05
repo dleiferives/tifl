@@ -786,12 +786,12 @@ type Credentials struct {
 
 // Definition A resolved word definition for the reader popup.
 type Definition struct {
-	Etymology       *string `json:"etymology,omitempty"`
-	Example         *string `json:"example,omitempty"`
-	Gloss           string  `json:"gloss"`
-	GrammaticalNote *string `json:"grammatical_note,omitempty"`
-	Key             string  `json:"key"`
-	Notes           *string `json:"notes,omitempty"`
+	Etymology       string `json:"etymology,omitempty"`
+	Example         string `json:"example,omitempty"`
+	Gloss           string `json:"gloss"`
+	GrammaticalNote string `json:"grammatical_note,omitempty"`
+	Key             string `json:"key"`
+	Notes           string `json:"notes,omitempty"`
 
 	// Source where the definition came from
 	Source DefinitionSource `json:"source"`
@@ -816,13 +816,13 @@ type DefinitionTraceWinningSource string
 
 // DefinitionTraceStep One checked source in the ordered definition lookup chain.
 type DefinitionTraceStep struct {
-	Count     *int                       `json:"count,omitempty"`
-	Key       *string                    `json:"key,omitempty"`
-	Reason    *string                    `json:"reason,omitempty"`
-	Source    *DefinitionTraceStepSource `json:"source,omitempty"`
-	Status    DefinitionTraceStepStatus  `json:"status"`
-	Step      DefinitionTraceStepStep    `json:"step"`
-	TargetKey *string                    `json:"target_key,omitempty"`
+	Count     int                       `json:"count,omitempty"`
+	Key       string                    `json:"key,omitempty"`
+	Reason    string                    `json:"reason,omitempty"`
+	Source    DefinitionTraceStepSource `json:"source,omitempty"`
+	Status    DefinitionTraceStepStatus `json:"status"`
+	Step      DefinitionTraceStepStep   `json:"step"`
+	TargetKey string                    `json:"target_key,omitempty"`
 }
 
 // DefinitionTraceStepSource defines model for DefinitionTraceStep.Source.
@@ -836,10 +836,10 @@ type DefinitionTraceStepStep string
 
 // DictionaryEntry A caller-owned dictionary override for one canonical word key.
 type DictionaryEntry struct {
-	Gloss    string  `json:"gloss"`
-	Key      string  `json:"key"`
-	Language string  `json:"language"`
-	Notes    *string `json:"notes,omitempty"`
+	Gloss    string `json:"gloss"`
+	Key      string `json:"key"`
+	Language string `json:"language"`
+	Notes    string `json:"notes,omitempty"`
 }
 
 // DictionaryEntryRequest defines model for DictionaryEntryRequest.
@@ -847,9 +847,9 @@ type DictionaryEntryRequest struct {
 	Gloss string `json:"gloss"`
 
 	// Key canonical knowledge key
-	Key      string  `json:"key"`
-	Language string  `json:"language"`
-	Notes    *string `json:"notes,omitempty"`
+	Key      string `json:"key"`
+	Language string `json:"language"`
+	Notes    string `json:"notes,omitempty"`
 }
 
 // ErrorResponse defines model for ErrorResponse.
@@ -860,20 +860,20 @@ type ErrorResponse struct {
 // GenerateRequest defines model for GenerateRequest.
 type GenerateRequest struct {
 	// ExpressionOutput expression_guided only
-	ExpressionOutput *GenerateRequestExpressionOutput `json:"expression_output,omitempty"`
+	ExpressionOutput GenerateRequestExpressionOutput `json:"expression_output,omitempty"`
 
 	// Language registered enabled language code, e.g. 'el'; defaults to profile.active_language
-	Language *string `json:"language,omitempty"`
+	Language string `json:"language,omitempty"`
 
 	// Level beginner|elementary|intermediate|upper-intermediate|advanced; defaults to derived verified skill level when available, otherwise profile.level
-	Level       *string                     `json:"level,omitempty"`
-	SessionType *GenerateRequestSessionType `json:"session_type,omitempty"`
+	Level       string                     `json:"level,omitempty"`
+	SessionType GenerateRequestSessionType `json:"session_type,omitempty"`
 
 	// Topic topic_guided only
-	Topic *string `json:"topic,omitempty"`
+	Topic string `json:"topic,omitempty"`
 
 	// UserExpressions expression_guided only
-	UserExpressions *[]string `json:"user_expressions,omitempty"`
+	UserExpressions []string `json:"user_expressions,omitempty"`
 }
 
 // GenerateRequestExpressionOutput expression_guided only
@@ -885,33 +885,33 @@ type GenerateRequestSessionType string
 // GenerationEvent One SSE progress message (the JSON in each data line). Non-terminal events report a pipeline stage status. The terminal `stage: done` event reports the final session status plus enough persisted state for the client to navigate to reader/tasks or show retry/error UI without guessing.
 type GenerationEvent struct {
 	// ContentType present on stage=done; whether the session produced a story (load via /stories/{id}) or a phrase set (load via /sessions/{id}/content)
-	ContentType *GenerationEventContentType `json:"content_type,omitempty"`
+	ContentType GenerationEventContentType `json:"content_type,omitempty"`
 
 	// ErrorCode stable code on failed progress events and failed terminal events; GEN_SCOPE_REJECTED means a topic-guided topic was out of scope for the learner level
-	ErrorCode *string `json:"error_code,omitempty"`
+	ErrorCode string `json:"error_code,omitempty"`
 
 	// ErrorDetail human-readable failure reason on failed terminal events, e.g. why a topic was rejected and an optional simpler rephrasing to try
-	ErrorDetail *string `json:"error_detail,omitempty"`
+	ErrorDetail string `json:"error_detail,omitempty"`
 
 	// FailedStage first failed stage, present on failed terminal events
-	FailedStage *string `json:"failed_stage,omitempty"`
+	FailedStage string `json:"failed_stage,omitempty"`
 
 	// SessionId present on stage=done
-	SessionId *string `json:"session_id,omitempty"`
+	SessionId string `json:"session_id,omitempty"`
 
 	// Stage scope_check|selection|story_generation|phrase_generation|tokenization|task_<type>|done
-	Stage        string        `json:"stage"`
-	StageSummary *StageSummary `json:"stage_summary,omitempty"`
+	Stage        string       `json:"stage"`
+	StageSummary StageSummary `json:"stage_summary,omitempty"`
 
 	// Status stage status for progress events; final session status for stage=done
-	Status *GenerationEventStatus `json:"status,omitempty"`
+	Status GenerationEventStatus `json:"status,omitempty"`
 
 	// StoryId present on stage=done once a story has been persisted
-	StoryId *string       `json:"story_id,omitempty"`
-	Tasks   *TaskProgress `json:"tasks,omitempty"`
+	StoryId string       `json:"story_id,omitempty"`
+	Tasks   TaskProgress `json:"tasks,omitempty"`
 
 	// TokenRate approx upstream tokens/sec
-	TokenRate *int `json:"token_rate,omitempty"`
+	TokenRate int `json:"token_rate,omitempty"`
 }
 
 // GenerationEventContentType present on stage=done; whether the session produced a story (load via /stories/{id}) or a phrase set (load via /sessions/{id}/content)
@@ -922,12 +922,12 @@ type GenerationEventStatus string
 
 // GenerationStageRecord defines model for GenerationStageRecord.
 type GenerationStageRecord struct {
-	CompletedAt *float64                    `json:"completed_at,omitempty"`
-	ErrorCode   *string                     `json:"error_code,omitempty"`
-	ErrorDetail *string                     `json:"error_detail,omitempty"`
+	CompletedAt float64                     `json:"completed_at,omitempty"`
+	ErrorCode   string                      `json:"error_code,omitempty"`
+	ErrorDetail string                      `json:"error_detail,omitempty"`
 	RetryCount  int                         `json:"retry_count"`
 	Stage       string                      `json:"stage"`
-	StartedAt   *float64                    `json:"started_at,omitempty"`
+	StartedAt   float64                     `json:"started_at,omitempty"`
 	Status      GenerationStageRecordStatus `json:"status"`
 }
 
@@ -937,11 +937,11 @@ type GenerationStageRecordStatus string
 // Grade The outcome of grading one task response.
 type Grade struct {
 	Correct  bool          `json:"correct"`
-	Feedback *string       `json:"feedback,omitempty"`
+	Feedback string        `json:"feedback,omitempty"`
 	GradedBy GradeGradedBy `json:"graded_by"`
 
 	// ItemsDemonstrated knowledge item ids the response demonstrated
-	ItemsDemonstrated *[]string `json:"items_demonstrated,omitempty"`
+	ItemsDemonstrated []string `json:"items_demonstrated,omitempty"`
 
 	// Score 0.0..1.0
 	Score float64 `json:"score"`
@@ -953,23 +953,23 @@ type GradeGradedBy string
 // ImportStoryRequest defines model for ImportStoryRequest.
 type ImportStoryRequest struct {
 	// Language registered enabled language code, e.g. 'el'; defaults to profile.active_language
-	Language *string `json:"language,omitempty"`
+	Language string `json:"language,omitempty"`
 
 	// Level beginner|elementary|intermediate|upper-intermediate|advanced; defaults to profile.level
-	Level *string `json:"level,omitempty"`
+	Level string `json:"level,omitempty"`
 
 	// Text raw target-language text to tokenize for the reader
 	Text string `json:"text"`
 
 	// Title optional user-facing label stored as imported-story metadata
-	Title *string `json:"title,omitempty"`
+	Title string `json:"title,omitempty"`
 }
 
 // ImportStoryResponse defines model for ImportStoryResponse.
 type ImportStoryResponse struct {
-	Language string  `json:"language"`
-	StoryId  string  `json:"story_id"`
-	Title    *string `json:"title,omitempty"`
+	Language string `json:"language"`
+	StoryId  string `json:"story_id"`
+	Title    string `json:"title,omitempty"`
 }
 
 // ImportStoryUploadRequest defines model for ImportStoryUploadRequest.
@@ -978,44 +978,44 @@ type ImportStoryUploadRequest struct {
 	File openapi_types.File `json:"file"`
 
 	// Language registered enabled language code, e.g. 'el'; defaults to profile.active_language
-	Language *string `json:"language,omitempty"`
+	Language string `json:"language,omitempty"`
 
 	// Level beginner|elementary|intermediate|upper-intermediate|advanced; defaults to profile.level
-	Level *string `json:"level,omitempty"`
+	Level string `json:"level,omitempty"`
 
 	// Title optional user-facing label stored as imported-story metadata
-	Title *string `json:"title,omitempty"`
+	Title string `json:"title,omitempty"`
 }
 
 // LLMCall One llm_calls audit row scoped to a session and current user.
 type LLMCall struct {
 	CallId      string  `json:"call_id"`
 	CalledAt    float64 `json:"called_at"`
-	ErrorDetail *string `json:"error_detail,omitempty"`
+	ErrorDetail string  `json:"error_detail,omitempty"`
 
 	// ErrorPayload Raw gateway error response body when available.
-	ErrorPayload *string `json:"error_payload,omitempty"`
-	InputTokens  *int    `json:"input_tokens,omitempty"`
-	Kind         string  `json:"kind"`
-	LatencyMs    *int    `json:"latency_ms,omitempty"`
-	Model        string  `json:"model"`
-	OutputTokens *int    `json:"output_tokens,omitempty"`
+	ErrorPayload string `json:"error_payload,omitempty"`
+	InputTokens  int    `json:"input_tokens,omitempty"`
+	Kind         string `json:"kind"`
+	LatencyMs    int    `json:"latency_ms,omitempty"`
+	Model        string `json:"model"`
+	OutputTokens int    `json:"output_tokens,omitempty"`
 
 	// ParsedOutput Assistant content extracted from the provider envelope when available. If no separate parsed payload exists for a call, clients should use raw_response for debugging.
-	ParsedOutput  *string `json:"parsed_output,omitempty"`
-	PromptVersion string  `json:"prompt_version"`
+	ParsedOutput  string `json:"parsed_output,omitempty"`
+	PromptVersion string `json:"prompt_version"`
 
 	// RawResponse Raw gateway response body. On successful calls this is the provider envelope.
-	RawResponse *string       `json:"raw_response,omitempty"`
-	SessionId   *string       `json:"session_id,omitempty"`
+	RawResponse string        `json:"raw_response,omitempty"`
+	SessionId   string        `json:"session_id,omitempty"`
 	Status      LLMCallStatus `json:"status"`
 
 	// SystemPrompt System prompt sent to the LLM gateway when present.
-	SystemPrompt *string `json:"system_prompt,omitempty"`
-	UserId       *string `json:"user_id,omitempty"`
+	SystemPrompt string `json:"system_prompt,omitempty"`
+	UserId       string `json:"user_id,omitempty"`
 
 	// UserPrompt User prompt sent to the LLM gateway.
-	UserPrompt *string `json:"user_prompt,omitempty"`
+	UserPrompt string `json:"user_prompt,omitempty"`
 }
 
 // LLMCallStatus defines model for LLMCall.Status.
@@ -1024,16 +1024,16 @@ type LLMCallStatus string
 // LLMModel defines model for LLMModel.
 type LLMModel struct {
 	// ContextLength Maximum context length when provided by the upstream.
-	ContextLength *int `json:"context_length,omitempty"`
+	ContextLength int `json:"context_length,omitempty"`
 
 	// Description Upstream model description.
-	Description *string `json:"description,omitempty"`
+	Description string `json:"description,omitempty"`
 
 	// Id Provider model id.
 	Id string `json:"id"`
 
 	// Name Display name when provided by the upstream.
-	Name *string `json:"name,omitempty"`
+	Name string `json:"name,omitempty"`
 }
 
 // Language defines model for Language.
@@ -1050,22 +1050,22 @@ type LanguageKeyStrategy string
 // PhraseAnnotation defines model for PhraseAnnotation.
 type PhraseAnnotation struct {
 	// Kind e.g. construction | vocabulary
-	Kind  string  `json:"kind"`
-	Label *string `json:"label,omitempty"`
-	Note  *string `json:"note,omitempty"`
+	Kind  string `json:"kind"`
+	Label string `json:"label,omitempty"`
+	Note  string `json:"note,omitempty"`
 }
 
 // PhraseItem One phrase plus the annotations that explain what it teaches.
 type PhraseItem struct {
-	Annotations *[]PhraseAnnotation `json:"annotations,omitempty"`
+	Annotations []PhraseAnnotation `json:"annotations,omitempty"`
 
 	// Gloss English translation
-	Gloss    *string `json:"gloss,omitempty"`
-	Notes    *string `json:"notes,omitempty"`
-	PhraseId string  `json:"phrase_id"`
+	Gloss    string `json:"gloss,omitempty"`
+	Notes    string `json:"notes,omitempty"`
+	PhraseId string `json:"phrase_id"`
 
 	// TargetItemIds knowledge item ids this phrase practises
-	TargetItemIds *[]string `json:"target_item_ids,omitempty"`
+	TargetItemIds []string `json:"target_item_ids,omitempty"`
 
 	// TargetText the target-language phrase
 	TargetText string `json:"target_text"`
@@ -1106,22 +1106,22 @@ type ProfileLevel string
 // ProfilePatch defines model for ProfilePatch.
 type ProfilePatch struct {
 	// ActiveLanguage must name an enabled language
-	ActiveLanguage *string `json:"active_language,omitempty"`
+	ActiveLanguage string `json:"active_language,omitempty"`
 
 	// Level stored level fallback; clients should not treat this as arbitrary preference state
-	Level *ProfilePatchLevel `json:"level,omitempty"`
+	Level ProfilePatchLevel `json:"level,omitempty"`
 
 	// LlmModel OpenAI/OpenRouter-compatible model id; empty string clears to the gateway default
-	LlmModel *string `json:"llm_model,omitempty"`
+	LlmModel string `json:"llm_model,omitempty"`
 
 	// Preferences shallow-merged; null values delete keys
-	Preferences *map[string]interface{} `json:"preferences,omitempty"`
+	Preferences map[string]interface{} `json:"preferences,omitempty"`
 
 	// Theme letters, numbers, '_' and '-' only
-	Theme *string `json:"theme,omitempty"`
+	Theme string `json:"theme,omitempty"`
 
 	// UiLanguage BCP-47 style UI/gloss language tag
-	UiLanguage *string `json:"ui_language,omitempty"`
+	UiLanguage string `json:"ui_language,omitempty"`
 }
 
 // ProfilePatchLevel stored level fallback; clients should not treat this as arbitrary preference state
@@ -1130,19 +1130,19 @@ type ProfilePatchLevel string
 // ReaderEvent One logged reader interaction.
 type ReaderEvent struct {
 	// EventId client idempotency key; generated if omitted
-	EventId   *string              `json:"event_id,omitempty"`
+	EventId   string               `json:"event_id,omitempty"`
 	EventType ReaderEventEventType `json:"event_type"`
 
 	// OccurredAt Unix seconds (client clock)
-	OccurredAt *float64 `json:"occurred_at,omitempty"`
+	OccurredAt float64 `json:"occurred_at,omitempty"`
 
 	// Position story token position the event is about
-	Position  *int    `json:"position,omitempty"`
-	SessionId *string `json:"session_id,omitempty"`
-	StoryId   string  `json:"story_id"`
+	Position  int    `json:"position,omitempty"`
+	SessionId string `json:"session_id,omitempty"`
+	StoryId   string `json:"story_id"`
 
 	// Value rate only: "1".."5" | "w" | "i"
-	Value *string `json:"value,omitempty"`
+	Value string `json:"value,omitempty"`
 }
 
 // ReaderEventEventType defines model for ReaderEvent.EventType.
@@ -1214,11 +1214,11 @@ type SessionContent struct {
 	ContentType SessionContentContentType `json:"content_type"`
 
 	// PhraseSet The content of an expression-guided phrase session.
-	PhraseSet *PhraseSet `json:"phrase_set,omitempty"`
-	SessionId string     `json:"session_id"`
+	PhraseSet PhraseSet `json:"phrase_set,omitempty"`
+	SessionId string    `json:"session_id"`
 
 	// Story Reference to a story session's story; load it via GET /stories/{id}.
-	Story *StoryContentRef `json:"story,omitempty"`
+	Story StoryContentRef `json:"story,omitempty"`
 }
 
 // SessionContentContentType defines model for SessionContent.ContentType.
@@ -1232,16 +1232,16 @@ type SessionDebug struct {
 
 // SessionDetail defines model for SessionDetail.
 type SessionDetail struct {
-	ArchivedAt  *float64 `json:"archived_at,omitempty"`
-	CompletedAt *float64 `json:"completed_at,omitempty"`
+	ArchivedAt  float64 `json:"archived_at,omitempty"`
+	CompletedAt float64 `json:"completed_at,omitempty"`
 
 	// ContentType what the session's content is — a narrative story or a phrase set. Derived from the session shape (expression-guided + expression_output phrases is a phrase set; everything else is a story). Tells the client whether to load /stories/{id} or the phrase set via /sessions/{id}/content.
-	ContentType      SessionDetailContentType       `json:"content_type"`
-	CreatedAt        float64                        `json:"created_at"`
-	ExpressionOutput *SessionDetailExpressionOutput `json:"expression_output,omitempty"`
-	Language         string                         `json:"language"`
-	Level            string                         `json:"level"`
-	ReadingStartedAt *float64                       `json:"reading_started_at,omitempty"`
+	ContentType      SessionDetailContentType      `json:"content_type"`
+	CreatedAt        float64                       `json:"created_at"`
+	ExpressionOutput SessionDetailExpressionOutput `json:"expression_output,omitempty"`
+	Language         string                        `json:"language"`
+	Level            string                        `json:"level"`
+	ReadingStartedAt float64                       `json:"reading_started_at,omitempty"`
 
 	// SelectedCounts Persisted SelectedItems counts; background items are not currently stored.
 	SelectedCounts SelectedItemCounts       `json:"selected_counts"`
@@ -1252,10 +1252,10 @@ type SessionDetail struct {
 	Status         SessionDetailStatus      `json:"status"`
 
 	// StoryId present once story generation has persisted a story
-	StoryId         *string      `json:"story_id,omitempty"`
+	StoryId         string       `json:"story_id,omitempty"`
 	Tasks           TaskProgress `json:"tasks"`
-	Topic           *string      `json:"topic,omitempty"`
-	UserExpressions *[]string    `json:"user_expressions,omitempty"`
+	Topic           string       `json:"topic,omitempty"`
+	UserExpressions []string     `json:"user_expressions,omitempty"`
 }
 
 // SessionDetailContentType what the session's content is — a narrative story or a phrase set. Derived from the session shape (expression-guided + expression_output phrases is a phrase set; everything else is a story). Tells the client whether to load /stories/{id} or the phrase set via /sessions/{id}/content.
@@ -1280,16 +1280,16 @@ type SessionList struct {
 
 // SessionOverview One home/resume row for the current user.
 type SessionOverview struct {
-	ArchivedAt  *float64 `json:"archived_at,omitempty"`
-	CompletedAt *float64 `json:"completed_at,omitempty"`
+	ArchivedAt  float64 `json:"archived_at,omitempty"`
+	CompletedAt float64 `json:"completed_at,omitempty"`
 
 	// ContentType what the session's content is — a narrative story or a phrase set. Derived from the session shape (expression-guided + expression_output phrases is a phrase set; everything else is a story). Tells the client whether to load /stories/{id} or the phrase set via /sessions/{id}/content.
-	ContentType      SessionOverviewContentType       `json:"content_type"`
-	CreatedAt        float64                          `json:"created_at"`
-	ExpressionOutput *SessionOverviewExpressionOutput `json:"expression_output,omitempty"`
-	Language         string                           `json:"language"`
-	Level            string                           `json:"level"`
-	ReadingStartedAt *float64                         `json:"reading_started_at,omitempty"`
+	ContentType      SessionOverviewContentType      `json:"content_type"`
+	CreatedAt        float64                         `json:"created_at"`
+	ExpressionOutput SessionOverviewExpressionOutput `json:"expression_output,omitempty"`
+	Language         string                          `json:"language"`
+	Level            string                          `json:"level"`
+	ReadingStartedAt float64                         `json:"reading_started_at,omitempty"`
 
 	// SelectedCounts Persisted SelectedItems counts; background items are not currently stored.
 	SelectedCounts SelectedItemCounts         `json:"selected_counts"`
@@ -1298,10 +1298,10 @@ type SessionOverview struct {
 	Status         SessionOverviewStatus      `json:"status"`
 
 	// StoryId present once story generation has persisted a story
-	StoryId         *string      `json:"story_id,omitempty"`
+	StoryId         string       `json:"story_id,omitempty"`
 	Tasks           TaskProgress `json:"tasks"`
-	Topic           *string      `json:"topic,omitempty"`
-	UserExpressions *[]string    `json:"user_expressions,omitempty"`
+	Topic           string       `json:"topic,omitempty"`
+	UserExpressions []string     `json:"user_expressions,omitempty"`
 }
 
 // SessionOverviewContentType what the session's content is — a narrative story or a phrase set. Derived from the session shape (expression-guided + expression_output phrases is a phrase set; everything else is a story). Tells the client whether to load /stories/{id} or the phrase set via /sessions/{id}/content.
@@ -1340,10 +1340,10 @@ type SkillCategory struct {
 
 // SkillProgress defines model for SkillProgress.
 type SkillProgress struct {
-	Category       string   `json:"category"`
-	Description    string   `json:"description"`
-	LastVerifiedAt *float64 `json:"last_verified_at,omitempty"`
-	Name           string   `json:"name"`
+	Category       string  `json:"category"`
+	Description    string  `json:"description"`
+	LastVerifiedAt float64 `json:"last_verified_at,omitempty"`
+	Name           string  `json:"name"`
 
 	// PendingVerification True when XP has crossed a tier boundary and AI verification has not completed.
 	PendingVerification bool `json:"pending_verification"`
@@ -1358,10 +1358,10 @@ type SkillProgress struct {
 	TierCount        int    `json:"tier_count"`
 
 	// TierLabel Display label for the current tier, e.g. Not started, Introduced, Practicing, Acquired.
-	TierLabel string   `json:"tier_label"`
-	UpdatedAt *float64 `json:"updated_at,omitempty"`
-	Xp        int      `json:"xp"`
-	XpPerTier int      `json:"xp_per_tier"`
+	TierLabel string  `json:"tier_label"`
+	UpdatedAt float64 `json:"updated_at,omitempty"`
+	Xp        int     `json:"xp"`
+	XpPerTier int     `json:"xp_per_tier"`
 
 	// XpToNext XP remaining before the next tier threshold; 0 at the max tier.
 	XpToNext int `json:"xp_to_next"`
@@ -1389,13 +1389,13 @@ type SkillXPDelta struct {
 
 // StageSummary defines model for StageSummary.
 type StageSummary struct {
-	ActiveStage *string `json:"active_stage,omitempty"`
-	Complete    int     `json:"complete"`
-	Failed      int     `json:"failed"`
-	FailedStage *string `json:"failed_stage,omitempty"`
-	InProgress  int     `json:"in_progress"`
-	Pending     int     `json:"pending"`
-	Total       int     `json:"total"`
+	ActiveStage string `json:"active_stage,omitempty"`
+	Complete    int    `json:"complete"`
+	Failed      int    `json:"failed"`
+	FailedStage string `json:"failed_stage,omitempty"`
+	InProgress  int    `json:"in_progress"`
+	Pending     int    `json:"pending"`
+	Total       int    `json:"total"`
 }
 
 // StoryContentRef Reference to a story session's story; load it via GET /stories/{id}.
@@ -1422,11 +1422,11 @@ type StoryLoad struct {
 // StoryToken One token of the server-tokenized story; non-word tokens carry no key.
 type StoryToken struct {
 	// FormKey opaque key used to look up this form in surface_knowledge
-	FormKey *string `json:"form_key,omitempty"`
-	IsWord  bool    `json:"is_word"`
+	FormKey string `json:"form_key,omitempty"`
+	IsWord  bool   `json:"is_word"`
 
 	// Key canonical knowledge key; omitted for non-word tokens
-	Key *string `json:"key,omitempty"`
+	Key string `json:"key,omitempty"`
 
 	// Position 0-indexed, stable identifier
 	Position int `json:"position"`
@@ -1435,13 +1435,13 @@ type StoryToken struct {
 	Surface string `json:"surface"`
 
 	// SurfaceKey language-owned exact-form rating key; omitted for non-word tokens
-	SurfaceKey *string `json:"surface_key,omitempty"`
+	SurfaceKey string `json:"surface_key,omitempty"`
 }
 
 // SubmitTaskRequest defines model for SubmitTaskRequest.
 type SubmitTaskRequest struct {
 	// InputMethod property of the response; only "typed" supported today
-	InputMethod *SubmitTaskRequestInputMethod `json:"input_method,omitempty"`
+	InputMethod SubmitTaskRequestInputMethod `json:"input_method,omitempty"`
 
 	// Response type-specific response JSON (e.g. {selected_index}, {answer}, {text})
 	Response map[string]interface{} `json:"response"`
@@ -1467,11 +1467,9 @@ type SubmitTaskResponse struct {
 type Task struct {
 	// Content Present-filtered content — never includes answer keys.
 	Content map[string]interface{} `json:"content"`
-
-	// Grade The outcome of grading one task response.
-	Grade  *Grade `json:"grade,omitempty"`
-	Graded bool   `json:"graded"`
-	TaskId string `json:"task_id"`
+	Grade   *Grade                 `json:"grade,omitempty"`
+	Graded  bool                   `json:"graded"`
+	TaskId  string                 `json:"task_id"`
 
 	// TaskType registered TaskType id
 	TaskType string `json:"task_type"`
@@ -1487,10 +1485,10 @@ type TaskProgress struct {
 
 // User defines model for User.
 type User struct {
-	CreatedAt float64  `json:"created_at"`
-	Email     string   `json:"email"`
-	LastLogin *float64 `json:"last_login,omitempty"`
-	UserId    string   `json:"user_id"`
+	CreatedAt float64 `json:"created_at"`
+	Email     string  `json:"email"`
+	LastLogin float64 `json:"last_login,omitempty"`
+	UserId    string  `json:"user_id"`
 }
 
 // WordKnowledgeRequest defines model for WordKnowledgeRequest.
@@ -1552,15 +1550,15 @@ type GetDictionaryEntryParams struct {
 
 // ListSessionsParams defines parameters for ListSessions.
 type ListSessionsParams struct {
-	Limit    *int  `form:"limit,omitempty" json:"limit,omitempty"`
-	Offset   *int  `form:"offset,omitempty" json:"offset,omitempty"`
-	Archived *bool `form:"archived,omitempty" json:"archived,omitempty"`
+	Limit    int  `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset   int  `form:"offset,omitempty" json:"offset,omitempty"`
+	Archived bool `form:"archived,omitempty" json:"archived,omitempty"`
 }
 
 // ListSkillsParams defines parameters for ListSkills.
 type ListSkillsParams struct {
 	// Language Optional enabled language code; defaults to profile.active_language.
-	Language *string `form:"language,omitempty" json:"language,omitempty"`
+	Language string `form:"language,omitempty" json:"language,omitempty"`
 }
 
 // GetDefinitionParams defines parameters for GetDefinition.

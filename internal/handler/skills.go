@@ -10,38 +10,17 @@ import (
 
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
+	"github.com/dleiferives/tifl/internal/handler/oapigen"
 )
 
 const recentPromotionWindow = 14 * 24 * time.Hour
 
-type skillTreeResponse struct {
-	Language   string             `json:"language"`
-	Categories []skillCategoryDTO `json:"categories"`
-}
-
-type skillCategoryDTO struct {
-	ID     string     `json:"id"`
-	Title  string     `json:"title"`
-	Skills []skillDTO `json:"skills"`
-}
-
-type skillDTO struct {
-	SkillID             string   `json:"skill_id"`
-	Name                string   `json:"name"`
-	Description         string   `json:"description"`
-	Category            string   `json:"category"`
-	Tier                int      `json:"tier"`
-	TierCount           int      `json:"tier_count"`
-	TierLabel           string   `json:"tier_label"`
-	XP                  int      `json:"xp"`
-	XPPerTier           int      `json:"xp_per_tier"`
-	XPToNext            int      `json:"xp_to_next"`
-	ProgressRatio       float64  `json:"progress_ratio"`
-	PendingVerification bool     `json:"pending_verification"`
-	RecentlyPromoted    bool     `json:"recently_promoted"`
-	LastVerifiedAt      *float64 `json:"last_verified_at,omitempty"`
-	UpdatedAt           *float64 `json:"updated_at,omitempty"`
-}
+// Wire types are spec-generated (#213).
+type (
+	skillTreeResponse = oapigen.SkillTree
+	skillCategoryDTO  = oapigen.SkillCategory
+	skillDTO          = oapigen.SkillProgress
+)
 
 func (h *Handler) listSkills(w http.ResponseWriter, r *http.Request) {
 	userID := h.currentUserID(r)
@@ -83,7 +62,7 @@ func buildSkillTreeResponse(language string, rows []domain.SkillProgress, now ti
 		if _, ok := categoryIndex[row.Category]; !ok {
 			categoryIndex[row.Category] = len(resp.Categories)
 			resp.Categories = append(resp.Categories, skillCategoryDTO{
-				ID:    categoryID(row.Category),
+				Id:    categoryID(row.Category),
 				Title: row.Category,
 			})
 		}
@@ -108,23 +87,28 @@ func toSkillDTO(row domain.SkillProgress, now time.Time) skillDTO {
 	}
 	progress = math.Round(progress*1000) / 1000
 
-	return skillDTO{
-		SkillID:             row.SkillID,
+	dto := skillDTO{
+		SkillId:             row.SkillID,
 		Name:                row.Name,
 		Description:         row.Description,
 		Category:            row.Category,
 		Tier:                tier,
 		TierCount:           tierCount,
 		TierLabel:           tierLabel(tier, tierCount),
-		XP:                  row.XP,
-		XPPerTier:           xpPerTier,
-		XPToNext:            xpToNext,
+		Xp:                  row.XP,
+		XpPerTier:           xpPerTier,
+		XpToNext:            xpToNext,
 		ProgressRatio:       progress,
 		PendingVerification: row.PendingVerify,
 		RecentlyPromoted:    recentlyPromoted(row, now),
-		LastVerifiedAt:      row.LastVerifiedAt,
-		UpdatedAt:           row.UpdatedAt,
 	}
+	if row.LastVerifiedAt != nil {
+		dto.LastVerifiedAt = *row.LastVerifiedAt
+	}
+	if row.UpdatedAt != nil {
+		dto.UpdatedAt = *row.UpdatedAt
+	}
+	return dto
 }
 
 func recentlyPromoted(row domain.SkillProgress, now time.Time) bool {

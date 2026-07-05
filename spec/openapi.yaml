@@ -1746,7 +1746,9 @@ components:
           additionalProperties: true
           description: Present-filtered content — never includes answer keys.
         graded: { type: boolean }
-        grade: { $ref: "#/components/schemas/Grade" }
+        grade:
+          allOf: [{ $ref: "#/components/schemas/Grade" }]
+          x-go-type-skip-optional-pointer: false
       required: [task_id, task_type, content, graded]
     SessionTasks:
       type: object

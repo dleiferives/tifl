@@ -13,6 +13,7 @@ import (
 
 	"github.com/dleiferives/tifl/internal/document"
 	"github.com/dleiferives/tifl/internal/domain"
+	"github.com/dleiferives/tifl/internal/handler/oapigen"
 	"github.com/dleiferives/tifl/internal/story"
 )
 
@@ -24,18 +25,11 @@ const (
 
 var storyImportExtractors = document.DefaultRegistry()
 
-type importStoryRequest struct {
-	Language string `json:"language"`
-	Level    string `json:"level"`
-	Title    string `json:"title"`
-	Text     string `json:"text"`
-}
-
-type importStoryResponse struct {
-	StoryID  string `json:"story_id"`
-	Language string `json:"language"`
-	Title    string `json:"title,omitempty"`
-}
+// Wire types are spec-generated (#213).
+type (
+	importStoryRequest  = oapigen.ImportStoryRequest
+	importStoryResponse = oapigen.ImportStoryResponse
+)
 
 func (h *Handler) importStory(w http.ResponseWriter, r *http.Request) {
 	req, err := decodeImportStoryRequest(w, r)
@@ -94,7 +88,7 @@ func (h *Handler) importStory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, importStoryResponse{
-		StoryID:  imported.StoryID,
+		StoryId:  imported.StoryID,
 		Language: imported.Language,
 		Title:    strings.TrimSpace(req.Title),
 	})

@@ -7,3 +7,6 @@ generate:
   models: true
 output-options:
   skip-prune: true
+  # Optional fields as values with omitempty (not pointers) — matches the
+  # hand-written DTO convention, so migrated families are pure type aliases.
+  prefer-skip-optional-pointer: true

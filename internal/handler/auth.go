@@ -231,7 +231,11 @@ func sessionResponseBody(session authn.Session) authResponse {
 }
 
 func toUserDTO(user domain.User) userDTO {
-	return userDTO{UserId: user.UserID, Email: user.Email, CreatedAt: user.CreatedAt, LastLogin: user.LastLogin}
+	dto := userDTO{UserId: user.UserID, Email: user.Email, CreatedAt: user.CreatedAt}
+	if user.LastLogin != nil {
+		dto.LastLogin = *user.LastLogin
+	}
+	return dto
 }
 
 func writeUnauthorized(w http.ResponseWriter) {

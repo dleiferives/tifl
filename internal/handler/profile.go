@@ -10,19 +10,13 @@ import (
 
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
+	"github.com/dleiferives/tifl/internal/handler/oapigen"
 )
 
 const maxProfilePatchBytes = 64 << 10
 
-type profileDTO struct {
-	UserID         string         `json:"user_id"`
-	ActiveLanguage string         `json:"active_language"`
-	Level          string         `json:"level"`
-	UILanguage     string         `json:"ui_language"`
-	Theme          string         `json:"theme"`
-	LLMModel       string         `json:"llm_model"`
-	Preferences    map[string]any `json:"preferences"`
-}
+// profileDTO is the spec-generated wire type (#213).
+type profileDTO = oapigen.Profile
 
 func (h *Handler) getProfile(w http.ResponseWriter, r *http.Request) {
 	profile, err := h.currentProfile(r)
@@ -217,12 +211,12 @@ func toProfileDTO(profile domain.UserProfile) profileDTO {
 		prefs = map[string]any{}
 	}
 	return profileDTO{
-		UserID:         profile.UserID,
+		UserId:         profile.UserID,
 		ActiveLanguage: profile.ActiveLanguage,
-		Level:          profile.Level,
-		UILanguage:     profile.UILanguage,
+		Level:          oapigen.ProfileLevel(profile.Level),
+		UiLanguage:     profile.UILanguage,
 		Theme:          profile.Theme,
-		LLMModel:       profile.LLMModel,
+		LlmModel:       profile.LLMModel,
 		Preferences:    prefs,
 	}
 }

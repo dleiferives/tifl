@@ -10,6 +10,7 @@ import (
 
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
+	"github.com/dleiferives/tifl/internal/handler/oapigen"
 	"github.com/dleiferives/tifl/internal/llm"
 	"github.com/dleiferives/tifl/internal/skills"
 	"github.com/dleiferives/tifl/internal/tasks"
@@ -25,50 +26,15 @@ import (
 // correct_index / acceptable_forms never reach the browser. The raw content stays
 // server-side, where grading reads it.
 
-type gradeDTO struct {
-	Correct           bool     `json:"correct"`
-	Score             float64  `json:"score"`
-	Feedback          string   `json:"feedback,omitempty"`
-	ItemsDemonstrated []string `json:"items_demonstrated,omitempty"`
-	GradedBy          string   `json:"graded_by"`
-}
-
-type taskDTO struct {
-	TaskID   string         `json:"task_id"`
-	TaskType string         `json:"task_type"`
-	Content  map[string]any `json:"content"` // presented (answer-free) view
-	Graded   bool           `json:"graded"`
-	Grade    *gradeDTO      `json:"grade,omitempty"`
-}
-
-type sessionTasksResponse struct {
-	SessionID string    `json:"session_id"`
-	Total     int       `json:"total"`
-	Completed int       `json:"completed"`
-	Tasks     []taskDTO `json:"tasks"`
-}
-
-type submitRequest struct {
-	Response    map[string]any `json:"response"`
-	InputMethod string         `json:"input_method"`
-}
-
-type submitResponse struct {
-	TaskID       string       `json:"task_id"`
-	Grade        gradeDTO     `json:"grade"`
-	SkillXP      []skillXPDTO `json:"skill_xp"`
-	AttemptCount int          `json:"attempt_count"`
-}
-
-type skillXPDTO struct {
-	SkillID       string `json:"skill_id"`
-	XPDelta       int    `json:"xp_delta"`
-	XPBefore      int    `json:"xp_before"`
-	XPAfter       int    `json:"xp_after"`
-	TierBefore    int    `json:"tier_before"`
-	TierAfter     int    `json:"tier_after"`
-	PendingVerify bool   `json:"pending_verify"`
-}
+// Wire types are spec-generated (#213).
+type (
+	gradeDTO             = oapigen.Grade
+	taskDTO              = oapigen.Task
+	sessionTasksResponse = oapigen.SessionTasks
+	submitRequest        = oapigen.SubmitTaskRequest
+	submitResponse       = oapigen.SubmitTaskResponse
+	skillXPDTO           = oapigen.SkillXPDelta
+)
 
 // getSessionTasks returns every task for a session in presentation form, plus a
 // completed/total progress count. The session is tenant-scoped; another user's
@@ -93,7 +59,7 @@ func (h *Handler) getSessionTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := sessionTasksResponse{SessionID: id, Total: len(ts), Tasks: make([]taskDTO, 0, len(ts))}
+	out := sessionTasksResponse{SessionId: id, Total: len(ts), Tasks: make([]taskDTO, 0, len(ts))}
 	for _, t := range ts {
 		dto := h.presentTask(t)
 		if dto.Graded {
@@ -211,7 +177,7 @@ func (h *Handler) submitTask(w http.ResponseWriter, r *http.Request) {
 	if err := h.repo.Tx(r.Context(), func(repo db.Repository) error {
 		if err := repo.RecordTaskGrade(r.Context(), userID, id, domain.TaskGrade{
 			Response:    req.Response,
-			InputMethod: method,
+			InputMethod: string(method),
 			Grade:       gradeToMap(grade),
 			GradedBy:    string(gradedBy),
 			GradedAt:    now,
@@ -251,9 +217,10 @@ func (h *Handler) submitTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, submitResponse{
-		TaskID:       id,
-		Grade:        gradeDTO{grade.Correct, grade.Score, grade.Feedback, grade.ItemsDemonstrated, string(gradedBy)},
-		SkillXP:      skillXPDTOs(skillChanges),
+		TaskId: id,
+		Grade: gradeDTO{Correct: grade.Correct, Score: grade.Score, Feedback: grade.Feedback,
+			ItemsDemonstrated: grade.ItemsDemonstrated, GradedBy: oapigen.GradeGradedBy(gradedBy)},
+		SkillXp:      skillXPDTOs(skillChanges),
 		AttemptCount: attemptCount,
 	})
 
@@ -306,7 +273,7 @@ func (h *Handler) fillLLMGradeContext(r *http.Request, gr *tasks.GradeRequest, t
 // type's Present view, and the grade is surfaced only once the task is graded. An
 // unregistered type yields empty content rather than risk leaking raw content.
 func (h *Handler) presentTask(t domain.Task) taskDTO {
-	dto := taskDTO{TaskID: t.TaskID, TaskType: t.TaskType, Content: map[string]any{}}
+	dto := taskDTO{TaskId: t.TaskID, TaskType: t.TaskType, Content: map[string]any{}}
 	if tt, ok := h.taskTypes.Get(t.TaskType); ok {
 		dto.Content = tt.Present(t.Content)
 	}
@@ -347,7 +314,7 @@ func gradeDTOFromMap(m map[string]any, gradedBy string) *gradeDTO {
 	if m == nil {
 		return nil
 	}
-	dto := &gradeDTO{GradedBy: gradedBy}
+	dto := &gradeDTO{GradedBy: oapigen.GradeGradedBy(gradedBy)}
 	dto.Correct, _ = m["correct"].(bool)
 	dto.Score, _ = m["score"].(float64)
 	dto.Feedback, _ = m["feedback"].(string)
@@ -368,10 +335,10 @@ func skillXPDTOs(changes []skills.XPChange) []skillXPDTO {
 	out := make([]skillXPDTO, 0, len(changes))
 	for _, change := range changes {
 		out = append(out, skillXPDTO{
-			SkillID:       change.SkillID,
-			XPDelta:       change.XPDelta,
-			XPBefore:      change.XPBefore,
-			XPAfter:       change.XPAfter,
+			SkillId:       change.SkillID,
+			XpDelta:       change.XPDelta,
+			XpBefore:      change.XPBefore,
+			XpAfter:       change.XPAfter,
 			TierBefore:    change.TierBefore,
 			TierAfter:     change.TierAfter,
 			PendingVerify: change.PendingVerify,

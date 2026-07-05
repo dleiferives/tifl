@@ -8,6 +8,8 @@ import (
 	"github.com/dleiferives/tifl/internal/llm"
 )
 
+// llmModelsResponse is the spec-generated wire type (#213); llm.ModelInfo
+// marshals field-compatibly with oapigen.LLMModel, so the list maps directly.
 type llmModelsResponse struct {
 	Models []llm.ModelInfo `json:"models"`
 }
