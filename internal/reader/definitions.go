@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -513,15 +514,20 @@ func (s *DefinitionService) matchPhrases(ctx context.Context, language string, t
 }
 
 func (s *DefinitionService) persistSentenceAnalysis(ctx context.Context, language, breakdownKey, structureKey, template string, tokens []domain.StoryToken, content map[string]any) error {
-	graph, ok, err := syntaxGraphFromContent(content)
+	// Decode once at this boundary (#205): everything below works on the
+	// typed value, not on defensive map lookups.
+	bd, err := decodeSentenceBreakdown(content)
 	if err != nil {
 		return err
 	}
-	if !ok {
+	graph := domain.SyntaxGraph{}
+	if bd.SyntaxGraph != nil {
+		graph = *bd.SyntaxGraph
+	} else {
 		graph = fallbackSyntaxGraph(tokens)
 	}
 	now := s.now()
-	phrases := phrasesFromBreakdown(language, breakdownKey, content, graph, now)
+	phrases := phrasesFromBreakdown(language, breakdownKey, bd, graph, now)
 	phraseKeys := make([]string, 0, len(phrases))
 	for _, p := range phrases {
 		phraseKeys = append(phraseKeys, p.PhraseKey)
@@ -536,34 +542,42 @@ func (s *DefinitionService) persistSentenceAnalysis(ctx context.Context, languag
 	})
 }
 
+// sentenceBreakdownContent is the typed shape of the model's sentence
+// breakdown, decoded exactly once at the response boundary (#205). Unknown
+// fields (translation, words, grammar, model chatter) are tolerated and kept
+// only in the opaque cached blob; everything the code consumes is typed here.
+type sentenceBreakdownContent struct {
+	SyntaxGraph *domain.SyntaxGraph `json:"syntax_graph"`
+	Phrases     []breakdownPhrase   `json:"phrases"`
+}
+
+// decodeSentenceBreakdown converts the raw response map into the typed view.
+// A malformed syntax_graph or phrases list is an error at this boundary, not a
+// silently-dropped value three consumers later.
+func decodeSentenceBreakdown(content map[string]any) (sentenceBreakdownContent, error) {
+	b, err := json.Marshal(content)
+	if err != nil {
+		return sentenceBreakdownContent{}, err
+	}
+	var out sentenceBreakdownContent
+	if err := json.Unmarshal(b, &out); err != nil {
+		return sentenceBreakdownContent{}, fmt.Errorf("sentence breakdown: %w", err)
+	}
+	return out, nil
+}
+
 func validateSentenceBreakdown(content map[string]any) error {
 	if len(content) == 0 {
 		return errors.New("empty breakdown")
 	}
-	graph, ok, err := syntaxGraphFromContent(content)
+	bd, err := decodeSentenceBreakdown(content)
 	if err != nil {
 		return err
 	}
-	if !ok || len(graph.Nodes) == 0 {
+	if bd.SyntaxGraph == nil || len(bd.SyntaxGraph.Nodes) == 0 {
 		return errors.New("sentence breakdown missing syntax_graph nodes")
 	}
 	return nil
-}
-
-func syntaxGraphFromContent(content map[string]any) (domain.SyntaxGraph, bool, error) {
-	raw, ok := content["syntax_graph"]
-	if !ok || raw == nil {
-		return domain.SyntaxGraph{}, false, nil
-	}
-	b, err := json.Marshal(raw)
-	if err != nil {
-		return domain.SyntaxGraph{}, false, err
-	}
-	var graph domain.SyntaxGraph
-	if err := json.Unmarshal(b, &graph); err != nil {
-		return domain.SyntaxGraph{}, false, err
-	}
-	return graph, true, nil
 }
 
 type breakdownPhrase struct {
@@ -574,10 +588,10 @@ type breakdownPhrase struct {
 	Notes  string `json:"notes"`
 }
 
-func phrasesFromBreakdown(language, breakdownKey string, content map[string]any, graph domain.SyntaxGraph, now float64) []domain.CachedPhrase {
+func phrasesFromBreakdown(language, breakdownKey string, bd sentenceBreakdownContent, graph domain.SyntaxGraph, now float64) []domain.CachedPhrase {
 	seen := make(map[string]bool)
 	var out []domain.CachedPhrase
-	for _, p := range phraseListFromContent(content) {
+	for _, p := range bd.Phrases {
 		text := strings.TrimSpace(p.Text)
 		if text == "" {
 			continue
@@ -605,22 +619,6 @@ func phrasesFromBreakdown(language, breakdownKey string, content map[string]any,
 		})
 	}
 	return out
-}
-
-func phraseListFromContent(content map[string]any) []breakdownPhrase {
-	raw, ok := content["phrases"]
-	if !ok || raw == nil {
-		return nil
-	}
-	b, err := json.Marshal(raw)
-	if err != nil {
-		return nil
-	}
-	var phrases []breakdownPhrase
-	if err := json.Unmarshal(b, &phrases); err != nil {
-		return nil
-	}
-	return phrases
 }
 
 func appendPhrase(out []domain.CachedPhrase, seen map[string]bool, p domain.CachedPhrase) []domain.CachedPhrase {
