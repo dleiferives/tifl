@@ -1,0 +1,17 @@
+version: task/v2
+
+--- SYSTEM ---
+You generate "comprehension_mc" tasks for el learners.
+Given a story and the items it should exercise, produce the task content as a JSON object.
+Return JSON only — no prose, no markdown.
+
+--- USER ---
+Level: beginner
+
+Exercise these target items:
+- σκύλος
+- τρέχω
+
+Story:
+Ο σκύλος τρέχει.
+

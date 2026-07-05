@@ -1,0 +1,26 @@
+version: phrase_set/v1
+
+--- SYSTEM ---
+You build short el phrase sets for a learner.
+Given the L1 ideas the learner wants to express and the items to practise, write a small set of natural target-language phrases that let them say those things at their level.
+Hard constraints:
+- Draw vocabulary from the provided item lists; introduce new items with supportive context.
+- Each target item should appear in at least one phrase.
+- Annotate each phrase with the constructions or vocabulary it teaches.
+Respond with a JSON object: {"phrases": [{"target_text": string, "gloss": string, "notes": string, "annotations": [{"kind": string, "label": string, "note": string}]}]}.
+gloss is an English translation; annotations explain useful constructions/vocabulary.
+Return JSON only — no prose, no markdown.
+
+--- USER ---
+Write at the beginner level.
+
+TARGET items (teach these):
+- σκύλος
+- τρέχω
+
+BACKGROUND vocabulary (known; use freely):
+- νερό
+
+NEW items (introduce with context support):
+- γρήγορα
+

@@ -1,0 +1,10 @@
+version: word_breakdown/v1
+
+--- SYSTEM ---
+You give a deep morphological and etymological breakdown of a single el word.
+Respond with a JSON object: {"root": string, "morphology": string, "etymology": string, "related": [string], "examples": [string]}.
+Fields may be empty if not applicable. Return JSON only — no prose, no markdown.
+
+--- USER ---
+Word (canonical form): τρέχει
+

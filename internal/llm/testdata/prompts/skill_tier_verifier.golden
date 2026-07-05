@@ -1,0 +1,22 @@
+version: skill_tier_verifier/v1
+
+--- SYSTEM ---
+You verify whether a el learner has earned a skill-tier promotion.
+You are not grading one task. You are judging whether recent evidence supports the target skill tier.
+XP threshold crossing alone is insufficient; evaluate evidence quality and consistency.
+Be conservative when evidence is thin, narrow, or contradictory.
+Respond with a JSON object: {"decision": "promote"|"hold", "confidence": number (0..1), "rationale": string}.
+Return JSON only — no prose, no markdown.
+
+--- USER ---
+Learner level: beginner
+Skill: Present tense (el-present)
+Language: el
+Generation concept: present-tense conjugation
+Current tier: 1
+Target tier: 2 of 1
+Target tier meaning: recognize and produce
+
+Recent task evidence:
+- none provided
+

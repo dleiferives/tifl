@@ -7,10 +7,10 @@ combination, prints each result as it lands, and saves everything (including the
 system/user text used) to JSON so variants can be compared and refined.
 
 Usage:
-    python scripts/prompt_lab.py
-    python scripts/prompt_lab.py --prompts scripts/prompts/story_A.json,scripts/prompts/story_B.json
-    python scripts/prompt_lab.py --scenarios scripts/prompts/scenarios_story.json --out runs/story_v1.json
-    python scripts/prompt_lab.py --models google/gemma-4-31b-it:free
+    python eval/harness/prompt_lab.py
+    python eval/harness/prompt_lab.py --prompts eval/prompts/story_A.json,eval/prompts/story_B.json
+    python eval/harness/prompt_lab.py --scenarios eval/scenarios_story.json --out runs/story_v1.json
+    python eval/harness/prompt_lab.py --models google/gemma-4-31b-it:free
 
 A prompt variant file is JSON: {name, stage, description, system, user_template}.
 user_template is .format()-ed with: {level_note} {length} {topic} {targets} {background} {new}.
@@ -36,8 +36,8 @@ DEFAULT_MODELS = [
     "openai/gpt-oss-20b:free",
 ]
 
-DEFAULT_PROMPTS = "scripts/prompts/story_A.json,scripts/prompts/story_B.json"
-DEFAULT_SCENARIOS = "scripts/prompts/scenarios_story.json"
+DEFAULT_PROMPTS = "eval/prompts/story_A.json,eval/prompts/story_B.json"
+DEFAULT_SCENARIOS = "eval/scenarios_story.json"
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +193,7 @@ def main():
     parser.add_argument("--prompts", default=DEFAULT_PROMPTS, help="comma-separated prompt variant JSON files")
     parser.add_argument("--scenarios", default=DEFAULT_SCENARIOS)
     parser.add_argument("--models", default="", help="comma-separated model list (default: the proven 3)")
-    parser.add_argument("--out", default="scripts/prompt_lab_results.json")
+    parser.add_argument("--out", default="eval/prompt_lab_results.json")
     args = parser.parse_args()
 
     api_key = read_api_key(args.config)

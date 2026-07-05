@@ -7,16 +7,16 @@ Two layers:
   1. Deterministic metrics — only rock-solid, unambiguous ground truth:
      contamination (non-Greek chars), required-vocab present, required-phrase
      present, paragraph count, markdown leak.
-  2. Smart grader — Claude Sonnet via the `claude` CLI, using scripts/prompts/grader.md.
+  2. Smart grader — Claude Sonnet via the `claude` CLI, using eval/prompts/grader.md.
      This is our PERSONAL offline grader. It is deliberately NOT on OpenRouter:
      a judge that ever ships inside the pipeline belongs on the OpenRouter gateway
      (add it as an LLM step in prompt_dag.py), not here.
 
 Usage:
-    python scripts/score.py --results scripts/iter0.json \
-        --scenarios scripts/prompts/scenarios_richvocab.json \
-        --levels-file scripts/prompts/skill_profiles.json \
-        --grader-model sonnet --out scripts/score_iter0.json
+    python eval/harness/score.py --results eval/iter0.json \
+        --scenarios eval/scenarios_richvocab.json \
+        --levels-file eval/prompts/skill_profiles.json \
+        --grader-model sonnet --out eval/score_iter0.json
 Pass --no-grade for deterministic metrics only (instant, free).
 """
 
@@ -94,7 +94,7 @@ def main():
     ap = argparse.ArgumentParser(description="DEV-time prompt evaluation (deterministic + Claude grader)")
     ap.add_argument("--results", required=True)
     ap.add_argument("--scenarios", required=True)
-    ap.add_argument("--levels-file", default="scripts/prompts/levels.json")
+    ap.add_argument("--levels-file", default="eval/prompts/levels.json")
     ap.add_argument("--grader-model", default="sonnet")
     ap.add_argument("--no-grade", action="store_true", help="deterministic metrics only")
     ap.add_argument("--concurrency", type=int, default=3, help="parallel claude CLI calls")

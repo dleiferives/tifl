@@ -71,3 +71,10 @@ install-hooks: ## install git hooks (run once after cloning)
 
 clean: ## remove build artifacts
 	rm -rf bin web/dist
+
+eval-smoke: ## run one tiny prompt-eval scenario (needs api_key in tifl.yaml; see eval/README.md)
+	python3 eval/harness/prompt_dag.py \
+		--pipelines eval/pipelines/single.json \
+		--scenarios eval/scenarios/scenarios_beginner.json \
+		--out eval/results/run_smoke.json
+	@echo "smoke output: eval/results/run_smoke.json (gitignored)"

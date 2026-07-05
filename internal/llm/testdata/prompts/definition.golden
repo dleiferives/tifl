@@ -1,0 +1,11 @@
+version: definition/v1
+
+--- SYSTEM ---
+You define single el words for a language learner, concisely and accurately.
+Respond with a JSON object: {"gloss": string, "grammatical_note": string, "example": string, "etymology": string}.
+gloss is a short definition in English; the other fields may be empty if not applicable.
+Return JSON only — no prose, no markdown.
+
+--- USER ---
+Define the word with canonical form: σκύλος
+

@@ -5,10 +5,10 @@ extracts the mc_task / fill_task / prod_task steps, and grades each with the
 Claude CLI (task_grader.md). Outputs per-task scores + aggregate.
 
 Usage:
-    python scripts/task_score.py --results scripts/tasks_v0.json \\
-        --scenarios scripts/prompts/scenarios_richvocab.json \\
-        --levels-file scripts/prompts/skill_profiles.json \\
-        --grader-model haiku --out scripts/score_tasks_v0.json
+    python eval/harness/task_score.py --results eval/tasks_v0.json \\
+        --scenarios eval/scenarios_richvocab.json \\
+        --levels-file eval/prompts/skill_profiles.json \\
+        --grader-model haiku --out eval/score_tasks_v0.json
 """
 
 import argparse, json, re, subprocess, threading
@@ -72,7 +72,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--results", required=True)
     ap.add_argument("--scenarios", required=True)
-    ap.add_argument("--levels-file", default="scripts/prompts/skill_profiles.json")
+    ap.add_argument("--levels-file", default="eval/prompts/skill_profiles.json")
     ap.add_argument("--grader-model", default="haiku")
     ap.add_argument("--no-grade", action="store_true")
     ap.add_argument("--concurrency", type=int, default=3)

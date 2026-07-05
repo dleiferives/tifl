@@ -3,7 +3,7 @@
 Benchmark free OpenRouter models for Modern Greek prose generation.
 
 Usage:
-    python scripts/greek_bench.py [--config tifl.yaml] [--out results.json] [--models a,b,c]
+    python eval/harness/greek_bench.py [--config tifl.yaml] [--out results.json] [--models a,b,c]
 
 Sends two prompts (beginner + advanced Greek story) to every model in parallel,
 prints results to stdout, and saves JSON for later review.
@@ -219,7 +219,7 @@ def print_result(model: str, prompt_label: str, result: dict):
 def main():
     parser = argparse.ArgumentParser(description="Benchmark OpenRouter models for Greek prose")
     parser.add_argument("--config", default="tifl.yaml", help="tifl config file")
-    parser.add_argument("--out", default="scripts/greek_bench_results.json", help="JSON output path")
+    parser.add_argument("--out", default="eval/greek_bench_results.json", help="JSON output path")
     parser.add_argument("--models", default="", help="Comma-separated model list (default: all)")
     args = parser.parse_args()
 

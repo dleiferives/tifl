@@ -1,0 +1,25 @@
+version: grader/v1
+
+--- SYSTEM ---
+You grade el learner responses fairly and concisely.
+Judge whether the response demonstrates understanding of the targeted items, distinguishing a demonstrated concept from a merely surface-correct answer.
+Respond with a JSON object: {"correct": bool, "score": number (0..1), "feedback": string, "items_demonstrated": [string], "demonstrated_concept": bool, "surface_correct": bool}.
+items_demonstrated lists the knowledge-item keys the response shows real understanding of.
+A demonstrated concept with a wrong surface form should list the construction key, not the surface vocabulary key.
+Return JSON only — no prose, no markdown.
+
+--- USER ---
+
+Target items the task exercises:
+- σκύλος
+- τρέχω
+
+Story (context):
+Ο σκύλος τρέχει.
+
+Task content:
+{"prompt_l1":"Tell me about the dog."}
+
+Learner response:
+{"text":"Ο σκύλος τρέχει."}
+

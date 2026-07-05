@@ -10,11 +10,11 @@ combination, streams progress, and saves every step's prompt + output to JSON so
 pipelines can be compared on their FINAL output (and inspected step by step).
 
 Usage:
-    python scripts/prompt_dag.py \
-        --pipelines scripts/prompts/pipelines/single.json,scripts/prompts/pipelines/compose3.json \
-        --scenarios scripts/prompts/scenarios_beginner.json \
+    python eval/harness/prompt_dag.py \
+        --pipelines eval/pipelines/single.json,eval/pipelines/compose3.json \
+        --scenarios eval/scenarios_beginner.json \
         --models google/gemma-4-31b-it:free,openai/gpt-oss-120b:free \
-        --out scripts/dag_results.json
+        --out eval/dag_results.json
 
 Pipeline JSON:
     {
@@ -380,11 +380,11 @@ def main():
     ap = argparse.ArgumentParser(description="Run and compare multi-step prompt pipelines")
     ap.add_argument("--config", default="tifl.yaml")
     ap.add_argument("--pipelines", required=True, help="comma-separated pipeline JSON files")
-    ap.add_argument("--scenarios", default="scripts/prompts/scenarios_beginner.json")
-    ap.add_argument("--levels-file", default="scripts/prompts/levels.json")
+    ap.add_argument("--scenarios", default="eval/scenarios_beginner.json")
+    ap.add_argument("--levels-file", default="eval/prompts/levels.json")
     ap.add_argument("--levels", default="A2", help="comma-separated level ids to run (default A2; e.g. A1,A2,B1)")
     ap.add_argument("--models", default="", help="comma-separated models (default: gemma + gpt-oss-120b)")
-    ap.add_argument("--out", default="scripts/dag_results.json")
+    ap.add_argument("--out", default="eval/dag_results.json")
     args = ap.parse_args()
 
     api_key = read_api_key(args.config)

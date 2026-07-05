@@ -22,4 +22,8 @@ coverage.txt
 .DS_Store
 *.swp
 /scripts/__pycache__
+/eval/**/__pycache__
 /greek_bench_out.txt
+# Eval runs: raw generation output is large and rerunnable; only curated
+# result JSONs under eval/results/ are committed deliberately.
+/eval/results/run*.json

@@ -1,10 +1,37 @@
-# tifl prompt-engineering harness
+# tifl prompt evaluation (`eval/`)
 
 Dev tooling for designing, running, and **objectively scoring** the LLM prompts
-behind story generation. Everything here is offline experimentation — none of it
-ships. The goal is to nail down prompts/pipelines here, then port the winners into
-the real `internal/llm/builders.go` `StoryBuilder` (which already accepts the same
-shape: target/background/new items + `SkillConstraints` + guidance).
+behind story generation (#212). Nothing here ships; winners are ported into
+`internal/llm/builders.go`, whose rendered output is pinned by golden snapshots.
+
+Layout:
+
+- `harness/` — the Python runners (stdlib-only, Python 3.10+; credentials come
+  from `api_key:` in `tifl.yaml` or `--config`)
+- `scenarios/` — learner scenarios the runners iterate over
+- `pipelines/` — prompt-DAG definitions (single, compose*, bigpool*, gates)
+- `prompts/` — prompt variants and grading rubrics used by the runners
+- `results/` — committed, curated experiment results; raw `run*.json` output
+  is gitignored
+- `ITER_LOG.md` — the experiment journal; append a line per experiment
+
+## How a prompt change flows (the drift gate)
+
+Production prompts live in `internal/llm/builders.go`. Their rendered output
+(per builder, against a fixed learner context) is snapshotted under
+`internal/llm/testdata/prompts/*.golden` by `TestPromptGolden` — the snapshots
+are the reviewable prompt pack, and `Version()` strings stamp every
+`llm_calls` row so production usage is attributable to a prompt version.
+
+Changing a prompt therefore means:
+
+1. Edit the builder; bump its `Version()`.
+2. Regenerate snapshots: `go test ./internal/llm -run TestPromptGolden -update`.
+3. Run the relevant experiment here (`make eval-smoke` for a sanity pass) and
+   commit the curated result JSON under `results/` + a line in `ITER_LOG.md`.
+4. CI reminds you: a PR touching builders or snapshots without touching
+   `eval/results/` fails the eval-reminder check unless the PR body contains
+   `eval:skip` (for mechanical changes that don't alter prompt semantics).
 
 ## TL;DR — the loop
 
@@ -14,22 +41,22 @@ edit a pipeline/prompt  →  generate  →  score  →  keep or revert  →  rep
 
 ```bash
 # 1. generate stories for a pipeline × scenarios × skill profiles × models
-python scripts/prompt_dag.py \
-  --pipelines scripts/prompts/pipelines/bigpool_skills.json \
-  --scenarios scripts/prompts/scenarios_richvocab.json \
-  --levels-file scripts/prompts/skill_profiles.json --levels early,developing,fluent \
+python eval/harness/prompt_dag.py \
+  --pipelines eval/pipelines/bigpool_skills.json \
+  --scenarios eval/scenarios_richvocab.json \
+  --levels-file eval/prompts/skill_profiles.json --levels early,developing,fluent \
   --models google/gemma-4-31b-it:free \
-  --out scripts/run.json
+  --out eval/results/run.json
 
 # 2. score them (deterministic metrics + Claude grader)
-python scripts/score.py \
-  --results scripts/run.json \
-  --scenarios scripts/prompts/scenarios_richvocab.json \
-  --levels-file scripts/prompts/skill_profiles.json \
-  --grader-model haiku --out scripts/score_run.json
+python eval/harness/score.py \
+  --results eval/results/run.json \
+  --scenarios eval/scenarios_richvocab.json \
+  --levels-file eval/prompts/skill_profiles.json \
+  --grader-model haiku --out eval/results/score_run.json
 ```
 
-Decisions get logged in `scripts/prompts/ITER_LOG.md`.
+Decisions get logged in `eval/prompts/ITER_LOG.md`.
 
 ## The two tools
 
