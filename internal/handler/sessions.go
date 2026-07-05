@@ -309,8 +309,7 @@ func (h *Handler) generateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.broker.StartGenerate(sess.SessionID)
-	writeJSON(w, http.StatusAccepted, sessionResponse{SessionID: sess.SessionID, Status: string(domain.StatusGenerating)})
+	h.startGeneration(w, r, sess.SessionID, sess.UserID, func() { h.broker.StartGenerate(sess.SessionID) })
 }
 
 func (h *Handler) deriveLevel(ctx context.Context, userID, languageCode string) (string, bool, error) {
@@ -408,8 +407,23 @@ func (h *Handler) retrySession(w http.ResponseWriter, r *http.Request) {
 		h.writeSessionLookupError(w, err)
 		return
 	}
-	h.broker.StartRetry(id)
-	writeJSON(w, http.StatusAccepted, sessionResponse{SessionID: id, Status: string(domain.StatusGenerating)})
+	h.startGeneration(w, r, id, sess.UserID, func() { h.broker.StartRetry(id) })
+}
+
+// startGeneration hands the run to the durable queue when one is configured
+// (crash-safe, deduped per session, globally capped — #204), else to the
+// in-process broker. The response is identical either way: generation is
+// asynchronous and progress arrives over the SSE stream.
+func (h *Handler) startGeneration(w http.ResponseWriter, r *http.Request, sessionID, userID string, fallback func()) {
+	if h.generationQueue != nil {
+		if err := h.generationQueue.EnqueueGeneration(r.Context(), sessionID, userID); err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Errorf("queueing generation: %w", err))
+			return
+		}
+	} else {
+		fallback()
+	}
+	writeJSON(w, http.StatusAccepted, sessionResponse{SessionID: sessionID, Status: string(domain.StatusGenerating)})
 }
 
 func parseSessionListOptions(r *http.Request) (domain.ListSessionsOptions, error) {

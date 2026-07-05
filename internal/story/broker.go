@@ -1,6 +1,8 @@
 package story
 
 import (
+	"github.com/dleiferives/tifl/internal/domain"
+
 	"context"
 	"sync"
 )
@@ -90,28 +92,77 @@ func (b *Broker) StartRetry(sessionID string) bool {
 }
 
 func (b *Broker) start(sessionID string, run func(context.Context, emitter)) bool {
+	// A run outlives the request that started it, so it uses a background
+	// context rather than the HTTP request's.
+	return b.runAsync(context.Background(), sessionID, run)
+}
+
+func (b *Broker) runAsync(ctx context.Context, sessionID string, run func(context.Context, emitter)) bool {
+	if !b.claim(sessionID) {
+		return false
+	}
+	go func() {
+		defer b.release(sessionID)
+		b.runLocked(ctx, sessionID, run)
+	}()
+	return true
+}
+
+// RunGeneration executes a generation synchronously for the job worker (#204):
+// it publishes progress to same-process SSE subscribers exactly like the async
+// path, blocks until the run finishes, and returns the pipeline error so the
+// queue can retry with backoff. A session whose status is failed resumes via
+// Retry (completed stage checkpoints are not re-paid); a terminal ready or
+// complete session is a no-op, which makes redelivered jobs harmless.
+func (b *Broker) RunGeneration(ctx context.Context, sessionID string) error {
+	sess, err := b.pipeline.deps.Repo.GetSession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	switch sess.Status {
+	case domain.StatusReady, domain.StatusComplete:
+		return nil
+	}
+	if !b.claim(sessionID) {
+		return nil // already running in this process; the other run owns it
+	}
+	defer b.release(sessionID)
+
+	var runErr error
+	if sess.Status == domain.StatusFailed {
+		b.runLocked(ctx, sessionID, func(ctx context.Context, emit emitter) {
+			runErr = b.pipeline.Retry(ctx, sessionID, emit)
+		})
+	} else {
+		b.runLocked(ctx, sessionID, func(ctx context.Context, emit emitter) {
+			runErr = b.pipeline.Generate(ctx, sessionID, emit)
+		})
+	}
+	return runErr
+}
+
+func (b *Broker) claim(sessionID string) bool {
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	if b.active[sessionID] {
-		b.mu.Unlock()
 		return false
 	}
 	b.active[sessionID] = true
-	b.mu.Unlock()
-
-	go func() {
-		// A run outlives the request that started it, so it uses a background
-		// context rather than the HTTP request's.
-		ctx := context.Background()
-		run(ctx, func(ev Event) { b.publish(sessionID, ev) })
-
-		final := b.finalStatus(ctx, sessionID)
-		b.publish(sessionID, Event{Stage: DoneStage, Status: final})
-
-		b.mu.Lock()
-		b.active[sessionID] = false
-		b.mu.Unlock()
-	}()
 	return true
+}
+
+func (b *Broker) release(sessionID string) {
+	b.mu.Lock()
+	b.active[sessionID] = false
+	b.mu.Unlock()
+}
+
+// runLocked executes the run and publishes the terminal done event. The caller
+// must hold the session claim.
+func (b *Broker) runLocked(ctx context.Context, sessionID string, run func(context.Context, emitter)) {
+	run(ctx, func(ev Event) { b.publish(sessionID, ev) })
+	final := b.finalStatus(ctx, sessionID)
+	b.publish(sessionID, Event{Stage: DoneStage, Status: final})
 }
 
 func (b *Broker) finalStatus(ctx context.Context, sessionID string) string {

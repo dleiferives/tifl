@@ -119,6 +119,23 @@ func main() {
 	if client != nil {
 		workers := jobs.NewWorkers()
 		workers.RegisterSkillVerify(skills.NewVerificationService(repo, client))
+		if broker != nil {
+			// Per-user serialization gate: snooze a session's job while
+			// another session of the same user is mid-generation.
+			gate := func(ctx context.Context, userID, sessionID string) (bool, error) {
+				overviews, err := repo.ListSessions(ctx, userID, domain.ListSessionsOptions{Limit: 20})
+				if err != nil {
+					return false, err
+				}
+				for _, o := range overviews {
+					if o.Session.SessionID != sessionID && o.Session.Status == domain.StatusGenerating {
+						return true, nil
+					}
+				}
+				return false, nil
+			}
+			workers.RegisterGeneration(broker, gate)
+		}
 		jc, err := openJobs(ctx, cfg, workers)
 		if err != nil {
 			log.Fatalf("jobs: %v", err)
@@ -133,6 +150,9 @@ func main() {
 	var handlerOpts []handler.Option
 	if jobsClient != nil {
 		handlerOpts = append(handlerOpts, handler.WithSkillVerifyQueue(jobsClient))
+		if broker != nil {
+			handlerOpts = append(handlerOpts, handler.WithGenerationQueue(jobsClient))
+		}
 	}
 	if cfg.AuthMode == config.AuthJWT {
 		authService, err := authn.NewService(repo, cfg.JWTSecret)

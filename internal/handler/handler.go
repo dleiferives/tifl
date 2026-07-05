@@ -32,6 +32,7 @@ type Handler struct {
 	skillXP          *skillassoc.XPService           // task grade -> user_skill_xp + audit logs (#70/#71)
 	skillVerify      *skillassoc.VerificationService // tier verification + auto-approve (#49); sync fallback when no queue
 	skillVerifyQueue SkillVerifyQueue                // durable queue for verifications; nil in tests without jobs
+	generationQueue  GenerationQueue                 // durable queue for generation runs; nil falls back to in-process broker
 	llmEnabled       bool                            // false when no LLM client: LLM-graded tasks return 503
 	models           llm.ModelLister                 // nil when the gateway cannot list upstream models
 	frontendDir      string
@@ -103,6 +104,14 @@ func currentAPIRoutes() []apiRoute {
 // durable job queue instead of running them synchronously after grading.
 func WithSkillVerifyQueue(q SkillVerifyQueue) Option {
 	return func(h *Handler) { h.skillVerifyQueue = q }
+}
+
+// WithGenerationQueue routes generation through the durable job queue: runs
+// survive restarts, retry with backoff, dedupe per session, and are bounded by
+// the generation queue's worker cap (#204). Without it the in-process broker
+// runs generation directly (tests, minimal setups).
+func WithGenerationQueue(q GenerationQueue) Option {
+	return func(h *Handler) { h.generationQueue = q }
 }
 
 func WithAuth(service *authn.Service, secureCookie bool) Option {

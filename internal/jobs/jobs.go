@@ -41,11 +41,17 @@ const QueueDefault = river.QueueDefault
 type Config struct {
 	// MaxWorkers caps concurrent jobs on the default queue.
 	MaxWorkers int
+	// GenerationWorkers caps concurrent generation runs — the global bound on
+	// parallel LLM generation spend (#204).
+	GenerationWorkers int
 }
 
 func (c Config) withDefaults() Config {
 	if c.MaxWorkers <= 0 {
 		c.MaxWorkers = 4
+	}
+	if c.GenerationWorkers <= 0 {
+		c.GenerationWorkers = 2
 	}
 	return c
 }
@@ -72,6 +78,9 @@ type Client interface {
 	// (user, skill) while one is pending/running, so a burst of grades does
 	// not multiply verifications.
 	EnqueueSkillVerify(ctx context.Context, userID, skillID string) error
+	// EnqueueGeneration schedules a generation run, unique per session while
+	// one is pending/running (#204).
+	EnqueueGeneration(ctx context.Context, sessionID, userID string) error
 	// Start begins working jobs; Stop drains in-flight work until ctx expires.
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error
@@ -125,7 +134,10 @@ func (c *client[TTx]) Stop(ctx context.Context) error  { return c.rc.Stop(ctx) }
 func newRiverConfig(ws *Workers, cfg Config) *river.Config {
 	cfg = cfg.withDefaults()
 	return &river.Config{
-		Queues:  map[string]river.QueueConfig{QueueDefault: {MaxWorkers: cfg.MaxWorkers}},
+		Queues: map[string]river.QueueConfig{
+			QueueDefault:    {MaxWorkers: cfg.MaxWorkers},
+			QueueGeneration: {MaxWorkers: cfg.GenerationWorkers},
+		},
 		Workers: ws.w,
 		// Stuck jobs from a crashed worker are rescued by River's maintenance
 		// services with default timings.

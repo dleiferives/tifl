@@ -61,3 +61,9 @@ type Store interface {
 type SkillVerifyQueue interface {
 	EnqueueSkillVerify(ctx context.Context, userID, skillID string) error
 }
+
+// GenerationQueue is the durable-queue surface for session generation (#204);
+// satisfied by jobs.Client.
+type GenerationQueue interface {
+	EnqueueGeneration(ctx context.Context, sessionID, userID string) error
+}
