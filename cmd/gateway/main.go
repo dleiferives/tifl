@@ -51,6 +51,11 @@ func main() {
 		Addr:              cfg.Addr,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
+		// Bound how long a client may trickle a request body (slowloris) and
+		// how long idle keep-alive connections are held. WriteTimeout stays 0
+		// deliberately: LLM responses can stream for minutes (#214).
+		ReadTimeout: 60 * time.Second,
+		IdleTimeout: 120 * time.Second,
 	}
 	ln, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
