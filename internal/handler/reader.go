@@ -10,6 +10,7 @@ import (
 
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
+	"github.com/dleiferives/tifl/internal/handler/oapigen"
 	"github.com/dleiferives/tifl/internal/llm"
 	"github.com/dleiferives/tifl/internal/reader"
 )
@@ -18,39 +19,14 @@ import (
 // that language in a single call, then runs entirely client-side, flushing
 // behavioural signals back in batches. See context/reader-mode.md.
 
-type storyTokenDTO struct {
-	Position   int    `json:"position"`
-	Surface    string `json:"surface"`
-	Key        string `json:"key,omitempty"`         // canonical knowledge key; omitted for non-word tokens
-	SurfaceKey string `json:"surface_key,omitempty"` // per-form rating key; omitted for non-word tokens
-	FormKey    string `json:"form_key,omitempty"`    // opaque key for surface_knowledge lookup
-	IsWord     bool   `json:"is_word"`
-}
-
-type readerKnowledgeDTO struct {
-	Level       string `json:"level"` // "" = unseen; "1".."5" | "well_known" | "ignored"
-	LookupCount int    `json:"lookup_count"`
-}
-
-type sentenceSpanDTO struct {
-	Index         int    `json:"index"`
-	StartPosition int    `json:"start_position"`
-	EndPosition   int    `json:"end_position"` // half-open: one past the last token position
-	Text          string `json:"text"`
-}
-
-type storyLoadResponse struct {
-	StoryID          string                        `json:"story_id"`
-	Language         string                        `json:"language"`
-	Tokens           []storyTokenDTO               `json:"tokens"`
-	Sentences        []sentenceSpanDTO             `json:"sentences"`
-	Knowledge        map[string]readerKnowledgeDTO `json:"knowledge"`
-	SurfaceKnowledge map[string]readerLevelDTO     `json:"surface_knowledge"`
-}
-
-type readerLevelDTO struct {
-	Level string `json:"level"` // "" = unseen; "1".."5" | "well_known" | "ignored"
-}
+// Wire types are spec-generated (#213).
+type (
+	storyTokenDTO      = oapigen.StoryToken
+	readerKnowledgeDTO = oapigen.ReaderKnowledge
+	sentenceSpanDTO    = oapigen.SentenceSpan
+	storyLoadResponse  = oapigen.StoryLoad
+	readerLevelDTO     = oapigen.ReaderSurfaceKnowledge
+)
 
 // getStory returns the tokenized story plus the reader's per-item knowledge map
 // (key → {level, lookup_count}) for the story's language, in one response — the
@@ -88,7 +64,7 @@ func (h *Handler) getStory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := storyLoadResponse{
-		StoryID:          story.StoryID,
+		StoryId:          story.StoryID,
 		Language:         story.Language,
 		Tokens:           make([]storyTokenDTO, len(tokens)),
 		Sentences:        make([]sentenceSpanDTO, 0),
@@ -109,10 +85,10 @@ func (h *Handler) getStory(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	for _, k := range knowledge {
-		resp.Knowledge[k.ItemKey] = readerKnowledgeDTO{Level: string(k.Level), LookupCount: k.LookupCount}
+		resp.Knowledge[k.ItemKey] = readerKnowledgeDTO{Level: oapigen.ReaderKnowledgeLevel(k.Level), LookupCount: k.LookupCount}
 	}
 	for _, s := range surfaceLevels {
-		resp.SurfaceKnowledge[readerFormKey(s.ItemKey, s.SurfaceKey)] = readerLevelDTO{Level: string(s.Level)}
+		resp.SurfaceKnowledge[readerFormKey(s.ItemKey, s.SurfaceKey)] = readerLevelDTO{Level: oapigen.ReaderSurfaceKnowledgeLevel(s.Level)}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -144,19 +120,10 @@ func (h *Handler) writeStoryLookupError(w http.ResponseWriter, err error) {
 
 // --- write paths -----------------------------------------------------------
 
-type readerEventDTO struct {
-	EventID    string  `json:"event_id"`
-	StoryID    string  `json:"story_id"`
-	SessionID  string  `json:"session_id"`
-	EventType  string  `json:"event_type"`
-	Position   *int    `json:"position"`
-	Value      string  `json:"value"`
-	OccurredAt float64 `json:"occurred_at"`
-}
-
-type readerEventsRequest struct {
-	Events []readerEventDTO `json:"events"`
-}
+// Wire types are spec-generated (#213). ReaderEvent.position keeps its
+// pointer via the spec's x-go-type-skip-optional-pointer: an absent position
+// must not decode to token 0.
+type readerEventsRequest = oapigen.ReaderEventsRequest
 
 // postReaderEvents ingests a flushed batch of reader events: it appends them to
 // the durable log (idempotent on event_id) and derives knowledge signals from the
@@ -172,14 +139,14 @@ func (h *Handler) postReaderEvents(w http.ResponseWriter, r *http.Request) {
 	events := make([]domain.ReaderEvent, 0, len(req.Events))
 	for _, e := range req.Events {
 		ev := domain.ReaderEvent{
-			EventID:    e.EventID,
-			StoryID:    e.StoryID,
+			EventID:    e.EventId,
+			StoryID:    e.StoryId,
 			EventType:  domain.ReaderEventType(e.EventType),
 			Position:   e.Position,
 			OccurredAt: e.OccurredAt,
 		}
-		if e.SessionID != "" {
-			ev.SessionID = &e.SessionID
+		if e.SessionId != "" {
+			ev.SessionID = &e.SessionId
 		}
 		if e.Value != "" {
 			ev.Value = &e.Value
@@ -215,17 +182,10 @@ func (h *Handler) postReaderEvents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]int{"ingested": n})
 }
 
-type wordKnowledgeRequest struct {
-	Language string `json:"language"`
-	Level    string `json:"level"`
-}
-
-type readerSurfaceKnowledgeRequest struct {
-	Language   string `json:"language"`
-	ItemKey    string `json:"item_key"`
-	SurfaceKey string `json:"surface_key"`
-	Level      string `json:"level"`
-}
+type (
+	wordKnowledgeRequest          = oapigen.WordKnowledgeRequest
+	readerSurfaceKnowledgeRequest = oapigen.ReaderSurfaceKnowledgeRequest
+)
 
 // putReaderSurfaceKnowledge applies the learner's optimistic rating for one
 // rendered form of a canonical word. The exact form controls reader colour; the
@@ -292,33 +252,12 @@ func (h *Handler) writeReaderError(w http.ResponseWriter, err error) {
 
 // --- definition & breakdown popups -----------------------------------------
 
-type definitionDTO struct {
-	Key             string             `json:"key"`
-	Source          string             `json:"source"`
-	Gloss           string             `json:"gloss"`
-	GrammaticalNote string             `json:"grammatical_note,omitempty"`
-	Example         string             `json:"example,omitempty"`
-	Etymology       string             `json:"etymology,omitempty"`
-	Notes           string             `json:"notes,omitempty"`
-	Trace           definitionTraceDTO `json:"trace"`
-}
+type (
+	definitionDTO      = oapigen.Definition
+	definitionTraceDTO = oapigen.DefinitionTrace
+)
 
-type definitionTraceDTO struct {
-	QueryKey      string                   `json:"query_key"`
-	ResolvedKey   string                   `json:"resolved_key"`
-	WinningSource string                   `json:"winning_source"`
-	Steps         []definitionTraceStepDTO `json:"steps"`
-}
-
-type definitionTraceStepDTO struct {
-	Step      string `json:"step"`
-	Status    string `json:"status"`
-	Source    string `json:"source,omitempty"`
-	Key       string `json:"key,omitempty"`
-	TargetKey string `json:"target_key,omitempty"`
-	Count     int    `json:"count,omitempty"`
-	Reason    string `json:"reason,omitempty"`
-}
+type definitionTraceStepDTO = oapigen.DefinitionTraceStep
 
 // getDefinition resolves a word's definition for the reader popup, walking
 // user dictionary → glossary → item metadata → shared cache → live (Wiktionary,
@@ -337,7 +276,7 @@ func (h *Handler) getDefinition(w http.ResponseWriter, r *http.Request) {
 	}
 	d := res.Definition
 	writeJSON(w, http.StatusOK, definitionDTO{
-		Key: d.ItemKey, Source: d.Source, Gloss: d.Gloss,
+		Key: d.ItemKey, Source: oapigen.DefinitionSource(d.Source), Gloss: d.Gloss,
 		GrammaticalNote: d.GrammaticalNote, Example: d.Example, Etymology: d.Etymology, Notes: d.Notes,
 		Trace: definitionTraceFromReader(res.Trace),
 	})
@@ -347,29 +286,22 @@ func definitionTraceFromReader(trace reader.DefinitionTrace) definitionTraceDTO 
 	steps := make([]definitionTraceStepDTO, 0, len(trace.Steps))
 	for _, step := range trace.Steps {
 		steps = append(steps, definitionTraceStepDTO{
-			Step: step.Step, Status: step.Status, Source: step.Source, Key: step.Key,
-			TargetKey: step.TargetKey, Count: step.Count, Reason: step.Reason,
+			Step:   oapigen.DefinitionTraceStepStep(step.Step),
+			Status: oapigen.DefinitionTraceStepStatus(step.Status),
+			Source: oapigen.DefinitionTraceStepSource(step.Source),
+			Key:    step.Key, TargetKey: step.TargetKey, Count: step.Count, Reason: step.Reason,
 		})
 	}
 	return definitionTraceDTO{
 		QueryKey: trace.QueryKey, ResolvedKey: trace.ResolvedKey,
-		WinningSource: trace.WinningSource, Steps: steps,
+		WinningSource: oapigen.DefinitionTraceWinningSource(trace.WinningSource), Steps: steps,
 	}
 }
 
-type dictionaryEntryDTO struct {
-	Language string `json:"language"`
-	Key      string `json:"key"`
-	Gloss    string `json:"gloss"`
-	Notes    string `json:"notes,omitempty"`
-}
-
-type dictionaryEntryRequest struct {
-	Language string `json:"language"`
-	Key      string `json:"key"`
-	Gloss    string `json:"gloss"`
-	Notes    string `json:"notes"`
-}
+type (
+	dictionaryEntryDTO     = oapigen.DictionaryEntry
+	dictionaryEntryRequest = oapigen.DictionaryEntryRequest
+)
 
 func (h *Handler) getDictionaryEntry(w http.ResponseWriter, r *http.Request) {
 	language, key, ok := dictionaryQuery(w, r)

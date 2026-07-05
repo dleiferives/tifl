@@ -14,6 +14,7 @@ import (
 	authn "github.com/dleiferives/tifl/internal/auth"
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
+	"github.com/dleiferives/tifl/internal/handler/oapigen"
 	"github.com/dleiferives/tifl/internal/lang"
 	skillcalc "github.com/dleiferives/tifl/internal/skills"
 	"github.com/dleiferives/tifl/internal/story"
@@ -28,121 +29,46 @@ func (h *Handler) currentUserID(r *http.Request) string {
 	return userID
 }
 
-type generateRequest struct {
-	Language         string   `json:"language"`
-	Level            string   `json:"level"`
-	SessionType      string   `json:"session_type"`
-	Topic            string   `json:"topic"`
-	UserExpressions  []string `json:"user_expressions"`
-	ExpressionOutput string   `json:"expression_output"`
+// Wire types are spec-generated (#213). SessionDetail is flattened in the
+// spec (allOf), so the detail mapper fills overview fields explicitly rather
+// than embedding. GenerationEvent.tasks/stage_summary keep Go pointers via
+// x-go-type-skip-optional-pointer so progress events omit them entirely.
+type (
+	generateRequest     = oapigen.GenerateRequest
+	sessionResponse     = oapigen.SessionRef
+	selectedCountsDTO   = oapigen.SelectedItemCounts
+	taskProgressDTO     = oapigen.TaskProgress
+	stageSummaryDTO     = oapigen.StageSummary
+	generationStageDTO  = oapigen.GenerationStageRecord
+	generationEventDTO  = oapigen.GenerationEvent
+	sessionOverviewDTO  = oapigen.SessionOverview
+	sessionDetailDTO    = oapigen.SessionDetail
+	llmCallDTO          = oapigen.LLMCall
+	sessionDebugDTO     = oapigen.SessionDebug
+	sessionListResponse = oapigen.SessionList
+)
+
+// deref helpers: the domain uses pointer-optionals, the wire types value +
+// omitempty (equivalent bytes: nil and zero both omit).
+func derefF(p *float64) float64 {
+	if p != nil {
+		return *p
+	}
+	return 0
 }
 
-type sessionResponse struct {
-	SessionID string `json:"session_id"`
-	Status    string `json:"status"`
+func derefS(p *string) string {
+	if p != nil {
+		return *p
+	}
+	return ""
 }
 
-type selectedCountsDTO struct {
-	Targets int `json:"targets"`
-	New     int `json:"new"`
-}
-
-type taskProgressDTO struct {
-	Total     int `json:"total"`
-	Completed int `json:"completed"`
-	Pending   int `json:"pending"`
-}
-
-type stageSummaryDTO struct {
-	Total       int     `json:"total"`
-	Pending     int     `json:"pending"`
-	InProgress  int     `json:"in_progress"`
-	Complete    int     `json:"complete"`
-	Failed      int     `json:"failed"`
-	ActiveStage *string `json:"active_stage,omitempty"`
-	FailedStage *string `json:"failed_stage,omitempty"`
-}
-
-type generationStageDTO struct {
-	Stage       string   `json:"stage"`
-	Status      string   `json:"status"`
-	StartedAt   *float64 `json:"started_at,omitempty"`
-	CompletedAt *float64 `json:"completed_at,omitempty"`
-	ErrorCode   *string  `json:"error_code,omitempty"`
-	ErrorDetail *string  `json:"error_detail,omitempty"`
-	RetryCount  int      `json:"retry_count"`
-}
-
-type generationEventDTO struct {
-	Stage          string           `json:"stage"`
-	Status         string           `json:"status,omitempty"`
-	SessionID      string           `json:"session_id,omitempty"`
-	ContentType    string           `json:"content_type,omitempty"`
-	StoryID        *string          `json:"story_id,omitempty"`
-	TokenRate      int              `json:"token_rate,omitempty"`
-	ErrorCode      string           `json:"error_code,omitempty"`
-	ErrorDetail    string           `json:"error_detail,omitempty"`
-	FailedStage    *string          `json:"failed_stage,omitempty"`
-	Tasks          *taskProgressDTO `json:"tasks,omitempty"`
-	StageSummary   *stageSummaryDTO `json:"stage_summary,omitempty"`
-	SuggestedTopic string           `json:"suggested_topic,omitempty"`
-}
-
-type sessionOverviewDTO struct {
-	SessionID        string            `json:"session_id"`
-	StoryID          *string           `json:"story_id,omitempty"`
-	Language         string            `json:"language"`
-	Level            string            `json:"level"`
-	SessionType      string            `json:"session_type"`
-	ContentType      string            `json:"content_type"`
-	Topic            string            `json:"topic,omitempty"`
-	UserExpressions  []string          `json:"user_expressions,omitempty"`
-	ExpressionOutput string            `json:"expression_output,omitempty"`
-	Status           string            `json:"status"`
-	CreatedAt        float64           `json:"created_at"`
-	ArchivedAt       *float64          `json:"archived_at,omitempty"`
-	ReadingStartedAt *float64          `json:"reading_started_at,omitempty"`
-	CompletedAt      *float64          `json:"completed_at,omitempty"`
-	SelectedCounts   selectedCountsDTO `json:"selected_counts"`
-	Tasks            taskProgressDTO   `json:"tasks"`
-}
-
-type sessionDetailDTO struct {
-	sessionOverviewDTO
-	StageSummary stageSummaryDTO      `json:"stage_summary"`
-	Stages       []generationStageDTO `json:"stages"`
-}
-
-type llmCallDTO struct {
-	CallID        string  `json:"call_id"`
-	SessionID     *string `json:"session_id,omitempty"`
-	UserID        *string `json:"user_id,omitempty"`
-	Kind          string  `json:"kind"`
-	PromptVersion string  `json:"prompt_version"`
-	Model         string  `json:"model"`
-	InputTokens   *int    `json:"input_tokens,omitempty"`
-	OutputTokens  *int    `json:"output_tokens,omitempty"`
-	LatencyMs     *int    `json:"latency_ms,omitempty"`
-	Status        string  `json:"status"`
-	ErrorDetail   *string `json:"error_detail,omitempty"`
-	SystemPrompt  *string `json:"system_prompt,omitempty"`
-	UserPrompt    *string `json:"user_prompt,omitempty"`
-	RawResponse   *string `json:"raw_response,omitempty"`
-	ParsedOutput  *string `json:"parsed_output,omitempty"`
-	ErrorPayload  *string `json:"error_payload,omitempty"`
-	CalledAt      float64 `json:"called_at"`
-}
-
-type sessionDebugDTO struct {
-	Session  sessionDetailDTO `json:"session"`
-	LLMCalls []llmCallDTO     `json:"llm_calls"`
-}
-
-type sessionListResponse struct {
-	Sessions []sessionOverviewDTO `json:"sessions"`
-	Limit    int                  `json:"limit"`
-	Offset   int                  `json:"offset"`
-	HasMore  bool                 `json:"has_more"`
+func derefI(p *int) int {
+	if p != nil {
+		return *p
+	}
+	return 0
 }
 
 const (
@@ -205,7 +131,7 @@ func (h *Handler) getSessionDebug(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, sessionDebugDTO{
 		Session:  toSessionDetailDTO(detail),
-		LLMCalls: toLLMCallDTOs(calls),
+		LlmCalls: toLLMCallDTOs(calls),
 	})
 }
 
@@ -260,7 +186,7 @@ func (h *Handler) generateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionType, err := parseSessionType(req.SessionType)
+	sessionType, err := parseSessionType(string(req.SessionType))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -274,7 +200,7 @@ func (h *Handler) generateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	expressions := trimmedNonEmpty(req.UserExpressions)
-	expressionOutput := strings.TrimSpace(req.ExpressionOutput)
+	expressionOutput := strings.TrimSpace(string(req.ExpressionOutput))
 	if sessionType == domain.SessionExpressionGuided {
 		if len(expressions) == 0 {
 			writeError(w, http.StatusBadRequest, errors.New("user_expressions is required for expression-guided sessions"))
@@ -325,7 +251,7 @@ func (h *Handler) generateSession(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-		writeJSON(w, http.StatusAccepted, sessionResponse{SessionID: sess.SessionID, Status: string(domain.StatusGenerating)})
+		writeJSON(w, http.StatusAccepted, sessionResponse{SessionId: sess.SessionID, Status: string(domain.StatusGenerating)})
 		return
 	}
 
@@ -449,7 +375,7 @@ func (h *Handler) startGeneration(w http.ResponseWriter, r *http.Request, sessio
 	} else {
 		fallback()
 	}
-	writeJSON(w, http.StatusAccepted, sessionResponse{SessionID: sessionID, Status: string(domain.StatusGenerating)})
+	writeJSON(w, http.StatusAccepted, sessionResponse{SessionId: sessionID, Status: string(domain.StatusGenerating)})
 }
 
 func parseSessionListOptions(r *http.Request) (domain.ListSessionsOptions, error) {
@@ -498,20 +424,20 @@ func parseQueryBool(r *http.Request, name string, def bool) (bool, error) {
 func toSessionOverviewDTO(overview domain.SessionOverview) sessionOverviewDTO {
 	s := overview.Session
 	return sessionOverviewDTO{
-		SessionID:        s.SessionID,
-		StoryID:          s.StoryID,
+		SessionId:        s.SessionID,
+		StoryId:          derefS(s.StoryID),
 		Language:         s.Language,
 		Level:            s.Level,
-		SessionType:      string(s.SessionType),
-		ContentType:      string(s.ContentType()),
+		SessionType:      oapigen.SessionOverviewSessionType(s.SessionType),
+		ContentType:      oapigen.SessionOverviewContentType(s.ContentType()),
 		Topic:            s.Topic,
 		UserExpressions:  s.UserExpressions,
-		ExpressionOutput: s.ExpressionOutput,
-		Status:           string(s.Status),
+		ExpressionOutput: oapigen.SessionOverviewExpressionOutput(s.ExpressionOutput),
+		Status:           oapigen.SessionOverviewStatus(s.Status),
 		CreatedAt:        s.CreatedAt,
-		ArchivedAt:       s.ArchivedAt,
-		ReadingStartedAt: s.ReadingStartedAt,
-		CompletedAt:      s.CompletedAt,
+		ArchivedAt:       derefF(s.ArchivedAt),
+		ReadingStartedAt: derefF(s.ReadingStartedAt),
+		CompletedAt:      derefF(s.CompletedAt),
 		SelectedCounts: selectedCountsDTO{
 			Targets: overview.SelectedCounts.Targets,
 			New:     overview.SelectedCounts.New,
@@ -538,18 +464,34 @@ func toSessionDetailDTO(detail domain.SessionDetail) sessionDetailDTO {
 	for _, st := range ordered {
 		stages = append(stages, generationStageDTO{
 			Stage:       st.Stage,
-			Status:      string(st.Status),
-			StartedAt:   st.StartedAt,
-			CompletedAt: st.CompletedAt,
-			ErrorCode:   st.ErrorCode,
-			ErrorDetail: st.ErrorDetail,
+			Status:      oapigen.GenerationStageRecordStatus(st.Status),
+			StartedAt:   derefF(st.StartedAt),
+			CompletedAt: derefF(st.CompletedAt),
+			ErrorCode:   derefS(st.ErrorCode),
+			ErrorDetail: derefS(st.ErrorDetail),
 			RetryCount:  st.RetryCount,
 		})
 	}
+	ov := toSessionOverviewDTO(detail.SessionOverview)
 	return sessionDetailDTO{
-		sessionOverviewDTO: toSessionOverviewDTO(detail.SessionOverview),
-		StageSummary:       summarizeStages(ordered),
-		Stages:             stages,
+		SessionId:        ov.SessionId,
+		StoryId:          ov.StoryId,
+		Language:         ov.Language,
+		Level:            ov.Level,
+		SessionType:      oapigen.SessionDetailSessionType(ov.SessionType),
+		ContentType:      oapigen.SessionDetailContentType(ov.ContentType),
+		Topic:            ov.Topic,
+		UserExpressions:  ov.UserExpressions,
+		ExpressionOutput: oapigen.SessionDetailExpressionOutput(ov.ExpressionOutput),
+		Status:           oapigen.SessionDetailStatus(ov.Status),
+		CreatedAt:        ov.CreatedAt,
+		ArchivedAt:       ov.ArchivedAt,
+		ReadingStartedAt: ov.ReadingStartedAt,
+		CompletedAt:      ov.CompletedAt,
+		SelectedCounts:   ov.SelectedCounts,
+		Tasks:            ov.Tasks,
+		StageSummary:     summarizeStages(ordered),
+		Stages:           stages,
 	}
 }
 
@@ -557,22 +499,22 @@ func toLLMCallDTOs(calls []domain.LLMCall) []llmCallDTO {
 	out := make([]llmCallDTO, 0, len(calls))
 	for _, c := range calls {
 		out = append(out, llmCallDTO{
-			CallID:        c.CallID,
-			SessionID:     c.SessionID,
-			UserID:        c.UserID,
+			CallId:        c.CallID,
+			SessionId:     derefS(c.SessionID),
+			UserId:        derefS(c.UserID),
 			Kind:          c.Kind,
 			PromptVersion: c.PromptVersion,
 			Model:         c.Model,
-			InputTokens:   c.InputTokens,
-			OutputTokens:  c.OutputTokens,
-			LatencyMs:     c.LatencyMs,
-			Status:        c.Status,
-			ErrorDetail:   c.ErrorDetail,
-			SystemPrompt:  c.SystemPrompt,
-			UserPrompt:    c.UserPrompt,
-			RawResponse:   c.RawResponse,
-			ParsedOutput:  c.ParsedOutput,
-			ErrorPayload:  c.ErrorPayload,
+			InputTokens:   derefI(c.InputTokens),
+			OutputTokens:  derefI(c.OutputTokens),
+			LatencyMs:     derefI(c.LatencyMs),
+			Status:        oapigen.LLMCallStatus(c.Status),
+			ErrorDetail:   derefS(c.ErrorDetail),
+			SystemPrompt:  derefS(c.SystemPrompt),
+			UserPrompt:    derefS(c.UserPrompt),
+			RawResponse:   derefS(c.RawResponse),
+			ParsedOutput:  derefS(c.ParsedOutput),
+			ErrorPayload:  derefS(c.ErrorPayload),
 			CalledAt:      c.CalledAt,
 		})
 	}
@@ -588,17 +530,15 @@ func summarizeStages(stages []domain.GenerationStage) stageSummaryDTO {
 			out.Pending++
 		case domain.StageInProgress:
 			out.InProgress++
-			if out.ActiveStage == nil {
-				stage := st.Stage
-				out.ActiveStage = &stage
+			if out.ActiveStage == "" {
+				out.ActiveStage = st.Stage
 			}
 		case domain.StageComplete:
 			out.Complete++
 		case domain.StageFailed:
 			out.Failed++
-			if out.FailedStage == nil {
-				stage := st.Stage
-				out.FailedStage = &stage
+			if out.FailedStage == "" {
+				out.FailedStage = st.Stage
 			}
 		}
 	}
@@ -765,7 +705,7 @@ func stageStatusRank(s domain.StageStatus) int {
 func progressGenerationEvent(ev story.Event) generationEventDTO {
 	return generationEventDTO{
 		Stage:          ev.Stage,
-		Status:         ev.Status,
+		Status:         oapigen.GenerationEventStatus(ev.Status),
 		TokenRate:      ev.TokenRate,
 		ErrorCode:      ev.ErrorCode,
 		SuggestedTopic: ev.SuggestedTopic,
@@ -775,34 +715,30 @@ func progressGenerationEvent(ev story.Event) generationEventDTO {
 func (h *Handler) terminalGenerationEvent(r *http.Request, sessionID, fallbackStatus string) generationEventDTO {
 	out := generationEventDTO{
 		Stage:     story.DoneStage,
-		Status:    fallbackStatus,
-		SessionID: sessionID,
+		Status:    oapigen.GenerationEventStatus(fallbackStatus),
+		SessionId: sessionID,
 	}
 	detail, err := h.repo.GetSessionDetail(r.Context(), h.currentUserID(r), sessionID)
 	if err != nil {
 		return out
 	}
 	dto := toSessionDetailDTO(detail)
-	out.Status = dto.Status
-	out.ContentType = dto.ContentType
-	out.StoryID = dto.StoryID
+	out.Status = oapigen.GenerationEventStatus(dto.Status)
+	out.ContentType = oapigen.GenerationEventContentType(dto.ContentType)
+	out.StoryId = dto.StoryId
 	out.Tasks = &dto.Tasks
 	out.StageSummary = &dto.StageSummary
-	if dto.Status != string(domain.StatusFailed) {
+	if dto.Status != oapigen.SessionDetailStatus(domain.StatusFailed) {
 		return out
 	}
 	out.FailedStage = dto.StageSummary.FailedStage
-	if out.FailedStage != nil {
+	if out.FailedStage != "" {
 		for _, st := range dto.Stages {
-			if st.Stage == *out.FailedStage {
-				if st.ErrorCode != nil {
-					out.ErrorCode = *st.ErrorCode
-				}
+			if st.Stage == out.FailedStage {
+				out.ErrorCode = st.ErrorCode
 				// The human-readable reason (e.g. why a topic was out of scope) so
 				// the client can show it without a second fetch.
-				if st.ErrorDetail != nil {
-					out.ErrorDetail = *st.ErrorDetail
-				}
+				out.ErrorDetail = st.ErrorDetail
 				break
 			}
 		}
@@ -863,38 +799,15 @@ func trimmedNonEmpty(in []string) []string {
 // a story reference or the phrase set — discriminated by content_type, so a
 // client has a single place to ask "what is in this session" regardless of type.
 
-type phraseAnnotationDTO struct {
-	Kind  string `json:"kind"`
-	Label string `json:"label,omitempty"`
-	Note  string `json:"note,omitempty"`
-}
-
-type phraseItemDTO struct {
-	PhraseID      string                `json:"phrase_id"`
-	TargetText    string                `json:"target_text"`
-	Gloss         string                `json:"gloss,omitempty"`
-	Notes         string                `json:"notes,omitempty"`
-	TargetItemIDs []string              `json:"target_item_ids,omitempty"`
-	Annotations   []phraseAnnotationDTO `json:"annotations,omitempty"`
-}
-
-type phraseSetDTO struct {
-	SessionID string          `json:"session_id"`
-	Language  string          `json:"language"`
-	Items     []phraseItemDTO `json:"items"`
-}
-
-type storyContentDTO struct {
-	StoryID  string `json:"story_id"`
-	Language string `json:"language"`
-}
-
-type sessionContentDTO struct {
-	SessionID   string           `json:"session_id"`
-	ContentType string           `json:"content_type"`
-	Story       *storyContentDTO `json:"story,omitempty"`
-	PhraseSet   *phraseSetDTO    `json:"phrase_set,omitempty"`
-}
+// Wire types are spec-generated (#213); story/phrase_set keep Go pointers so
+// absence omits the key.
+type (
+	phraseAnnotationDTO = oapigen.PhraseAnnotation
+	phraseItemDTO       = oapigen.PhraseItem
+	phraseSetDTO        = oapigen.PhraseSet
+	storyContentDTO     = oapigen.StoryContentRef
+	sessionContentDTO   = oapigen.SessionContent
+)
 
 // getSessionContent returns a session's content discriminated by content_type:
 // for a story, a reference the client loads through /stories/{id}; for a phrase
@@ -911,7 +824,7 @@ func (h *Handler) getSessionContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := sessionContentDTO{SessionID: sess.SessionID, ContentType: string(sess.ContentType())}
+	out := sessionContentDTO{SessionId: sess.SessionID, ContentType: oapigen.SessionContentContentType(sess.ContentType())}
 	if sess.ContentType() == domain.ContentPhraseSet {
 		ps, err := h.repo.GetPhraseSet(r.Context(), sess.SessionID)
 		if err != nil {
@@ -928,7 +841,7 @@ func (h *Handler) getSessionContent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, errors.New("session has no story yet"))
 		return
 	}
-	out.Story = &storyContentDTO{StoryID: *sess.StoryID, Language: sess.Language}
+	out.Story = &storyContentDTO{StoryId: *sess.StoryID, Language: sess.Language}
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -940,15 +853,15 @@ func toPhraseSetDTO(ps domain.PhraseSet) *phraseSetDTO {
 			anns = append(anns, phraseAnnotationDTO{Kind: a.Kind, Label: a.Label, Note: a.Note})
 		}
 		items = append(items, phraseItemDTO{
-			PhraseID:      it.PhraseID,
+			PhraseId:      it.PhraseID,
 			TargetText:    it.TargetText,
 			Gloss:         it.Gloss,
 			Notes:         it.Notes,
-			TargetItemIDs: it.TargetItemIDs,
+			TargetItemIds: it.TargetItemIDs,
 			Annotations:   anns,
 		})
 	}
-	return &phraseSetDTO{SessionID: ps.SessionID, Language: ps.Language, Items: items}
+	return &phraseSetDTO{SessionId: ps.SessionID, Language: ps.Language, Items: items}
 }
 
 func parseSessionType(t string) (domain.SessionType, error) {

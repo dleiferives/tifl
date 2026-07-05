@@ -1442,9 +1442,11 @@ components:
           type: string
           enum: [story, phrase_set]
         story:
-          $ref: "#/components/schemas/StoryContentRef"
+          allOf: [{ $ref: "#/components/schemas/StoryContentRef" }]
+          x-go-type-skip-optional-pointer: false
         phrase_set:
-          $ref: "#/components/schemas/PhraseSet"
+          allOf: [{ $ref: "#/components/schemas/PhraseSet" }]
+          x-go-type-skip-optional-pointer: false
       required: [session_id, content_type]
     StoryContentRef:
       type: object
@@ -1532,9 +1534,14 @@ components:
           type: string
           description: "first failed stage, present on failed terminal events"
         tasks:
-          $ref: "#/components/schemas/TaskProgress"
+          allOf: [{ $ref: "#/components/schemas/TaskProgress" }]
+          x-go-type-skip-optional-pointer: false
         stage_summary:
-          $ref: "#/components/schemas/StageSummary"
+          allOf: [{ $ref: "#/components/schemas/StageSummary" }]
+          x-go-type-skip-optional-pointer: false
+        suggested_topic:
+          type: string
+          description: on GEN_SCOPE_REJECTED events, a simpler in-scope rephrasing of the rejected topic the client can offer as a retry
       required: [stage]
     StoryToken:
       type: object
@@ -1619,7 +1626,10 @@ components:
         event_type:
           type: string
           enum: [lookup, rate, navigate, sentence_break]
-        position: { type: integer, description: "story token position the event is about" }
+        position:
+          type: integer
+          description: "story token position the event is about"
+          x-go-type-skip-optional-pointer: false
         value: { type: string, description: 'rate only: "1".."5" | "w" | "i"' }
         occurred_at: { type: number, format: double, description: "Unix seconds (client clock)" }
       required: [story_id, event_type]

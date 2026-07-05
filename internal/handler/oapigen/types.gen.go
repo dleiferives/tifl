@@ -900,15 +900,18 @@ type GenerationEvent struct {
 	SessionId string `json:"session_id,omitempty"`
 
 	// Stage scope_check|selection|story_generation|phrase_generation|tokenization|task_<type>|done
-	Stage        string       `json:"stage"`
-	StageSummary StageSummary `json:"stage_summary,omitempty"`
+	Stage        string        `json:"stage"`
+	StageSummary *StageSummary `json:"stage_summary,omitempty"`
 
 	// Status stage status for progress events; final session status for stage=done
 	Status GenerationEventStatus `json:"status,omitempty"`
 
 	// StoryId present on stage=done once a story has been persisted
-	StoryId string       `json:"story_id,omitempty"`
-	Tasks   TaskProgress `json:"tasks,omitempty"`
+	StoryId string `json:"story_id,omitempty"`
+
+	// SuggestedTopic on GEN_SCOPE_REJECTED events, a simpler in-scope rephrasing of the rejected topic the client can offer as a retry
+	SuggestedTopic string        `json:"suggested_topic,omitempty"`
+	Tasks          *TaskProgress `json:"tasks,omitempty"`
 
 	// TokenRate approx upstream tokens/sec
 	TokenRate int `json:"token_rate,omitempty"`
@@ -1137,7 +1140,7 @@ type ReaderEvent struct {
 	OccurredAt float64 `json:"occurred_at,omitempty"`
 
 	// Position story token position the event is about
-	Position  int    `json:"position,omitempty"`
+	Position  *int   `json:"position,omitempty"`
 	SessionId string `json:"session_id,omitempty"`
 	StoryId   string `json:"story_id"`
 
@@ -1212,13 +1215,9 @@ type SentenceSpan struct {
 // SessionContent A session's content, discriminated by content_type. Exactly one of story or phrase_set is present.
 type SessionContent struct {
 	ContentType SessionContentContentType `json:"content_type"`
-
-	// PhraseSet The content of an expression-guided phrase session.
-	PhraseSet PhraseSet `json:"phrase_set,omitempty"`
-	SessionId string    `json:"session_id"`
-
-	// Story Reference to a story session's story; load it via GET /stories/{id}.
-	Story StoryContentRef `json:"story,omitempty"`
+	PhraseSet   *PhraseSet                `json:"phrase_set,omitempty"`
+	SessionId   string                    `json:"session_id"`
+	Story       *StoryContentRef          `json:"story,omitempty"`
 }
 
 // SessionContentContentType defines model for SessionContent.ContentType.

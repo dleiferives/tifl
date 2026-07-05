@@ -1000,6 +1000,8 @@ export interface components {
             failed_stage?: string;
             tasks?: components["schemas"]["TaskProgress"];
             stage_summary?: components["schemas"]["StageSummary"];
+            /** @description on GEN_SCOPE_REJECTED events, a simpler in-scope rephrasing of the rejected topic the client can offer as a retry */
+            suggested_topic?: string;
         };
         /** @description One token of the server-tokenized story; non-word tokens carry no key. */
         StoryToken: {
