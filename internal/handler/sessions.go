@@ -607,46 +607,67 @@ func (h *Handler) sessionEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 
-	// Replay persisted stage state first.
-	if stages, err := h.repo.ListStages(r.Context(), id); err == nil {
+	// The stages table is the source of truth for this stream (#203): replay
+	// it on connect, then tail it. The in-process broker is only a latency
+	// optimization — progress must arrive even when generation runs in a
+	// different process (job worker, second replica), so a slow poll of the
+	// same rows backs everything. Events carry an `id:` of "<stage>:<status>";
+	// a reconnect replays the full persisted history, which the client applies
+	// idempotently, then tails live state.
+	sent := make(map[string]domain.StageStatus)
+	emitStages := func(ctx context.Context) {
+		stages, err := h.repo.ListStages(ctx, id)
+		if err != nil {
+			return
+		}
 		for _, st := range stages {
+			if prev, ok := sent[st.Stage]; ok && stageStatusRank(st.Status) <= stageStatusRank(prev) {
+				continue
+			}
+			sent[st.Stage] = st.Status
 			ev := story.Event{Stage: st.Stage, Status: string(st.Status)}
 			if st.ErrorCode != nil {
 				ev.ErrorCode = *st.ErrorCode
 			}
-			writeSSE(w, ev)
+			writeSSEID(w, st.Stage+":"+string(st.Status), progressGenerationEvent(ev))
 		}
 		flusher.Flush()
 	}
-
-	// If generation already finished before this client connected, the live
-	// "done" event was already published to nobody — emit it from the persisted
-	// status and close, rather than blocking on a stream that will never tick.
-	if sess, err := h.repo.GetSession(r.Context(), id); err == nil && isTerminal(sess.Status) {
+	// terminalIfDone emits the final event and reports whether the stream is over.
+	terminalIfDone := func(ctx context.Context) bool {
+		sess, err := h.repo.GetSession(ctx, id)
+		if err != nil || !isTerminal(sess.Status) {
+			return false
+		}
+		emitStages(ctx) // don't lose final stage transitions racing the status flip
 		writeSSE(w, h.terminalGenerationEvent(r, id, string(sess.Status)))
 		flusher.Flush()
+		return true
+	}
+
+	emitStages(r.Context())
+	if terminalIfDone(r.Context()) {
 		return
 	}
 
-	// If generation is not wired we can only show the replayed state.
-	if h.broker == nil {
-		return
-	}
-
-	ch, unsubscribe := h.broker.Subscribe(id)
-	defer unsubscribe()
-
-	// Re-check after subscribing: the run sets the terminal status before it
-	// publishes "done", so if it finished in the gap between the check above and
-	// Subscribe, we emit the terminal event here instead of blocking forever.
-	if sess, err := h.repo.GetSession(r.Context(), id); err == nil && isTerminal(sess.Status) {
-		writeSSE(w, h.terminalGenerationEvent(r, id, string(sess.Status)))
-		flusher.Flush()
-		return
+	// Broker subscription (same-process low latency). Optional: without it the
+	// poll below still completes the stream, just on poll cadence.
+	var ch <-chan story.Event
+	if h.broker != nil {
+		bch, unsubscribe := h.broker.Subscribe(id)
+		defer unsubscribe()
+		ch = bch
+		// Re-check after subscribing: the run sets the terminal status before
+		// it publishes "done", so a finish in the gap must not block forever.
+		if terminalIfDone(r.Context()) {
+			return
+		}
 	}
 
 	keepalive := time.NewTicker(15 * time.Second)
 	defer keepalive.Stop()
+	poll := time.NewTicker(2 * time.Second)
+	defer poll.Stop()
 
 	for {
 		select {
@@ -655,6 +676,11 @@ func (h *Handler) sessionEvents(w http.ResponseWriter, r *http.Request) {
 		case <-keepalive.C:
 			fmt.Fprint(w, ": keepalive\n\n")
 			flusher.Flush()
+		case <-poll.C:
+			emitStages(r.Context())
+			if terminalIfDone(r.Context()) {
+				return
+			}
 		case ev, open := <-ch:
 			if !open {
 				return
@@ -664,9 +690,35 @@ func (h *Handler) sessionEvents(w http.ResponseWriter, r *http.Request) {
 				flusher.Flush()
 				return
 			}
-			writeSSE(w, progressGenerationEvent(ev))
+			// Token-rate ticks are ephemeral cosmetics: forward without an id
+			// and without marking state. Stage transitions go through the sent
+			// map so broker and poll paths never double-emit.
+			if ev.Status == "" {
+				writeSSE(w, progressGenerationEvent(ev))
+				flusher.Flush()
+				continue
+			}
+			st := domain.StageStatus(ev.Status)
+			if prev, ok := sent[ev.Stage]; ok && stageStatusRank(st) <= stageStatusRank(prev) {
+				continue
+			}
+			sent[ev.Stage] = st
+			writeSSEID(w, ev.Stage+":"+ev.Status, progressGenerationEvent(ev))
 			flusher.Flush()
 		}
+	}
+}
+
+// stageStatusRank orders a stage's lifecycle so replay/poll/broker paths agree
+// on what counts as progress: pending < in_progress < terminal.
+func stageStatusRank(s domain.StageStatus) int {
+	switch s {
+	case domain.StageInProgress:
+		return 1
+	case domain.StageComplete, domain.StageFailed:
+		return 2
+	default:
+		return 0
 	}
 }
 
@@ -716,6 +768,16 @@ func (h *Handler) terminalGenerationEvent(r *http.Request, sessionID, fallbackSt
 		}
 	}
 	return out
+}
+
+// writeSSEID writes an event with an SSE id field ("<stage>:<status>") so
+// clients and proxies can track the last-delivered stage transition.
+func writeSSEID(w http.ResponseWriter, id string, ev any) {
+	b, err := json.Marshal(ev)
+	if err != nil {
+		return
+	}
+	fmt.Fprintf(w, "id: %s\ndata: %s\n\n", id, b)
 }
 
 func writeSSE(w http.ResponseWriter, ev any) {

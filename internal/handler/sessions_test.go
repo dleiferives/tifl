@@ -1496,3 +1496,88 @@ func readDoneEvent(t *testing.T, r io.Reader) generationEventPayload {
 	t.Fatal("SSE stream ended without done event")
 	return generationEventPayload{}
 }
+
+// TestSessionEventsFromDBWithoutBroker simulates generation running in another
+// process (#203): no broker is wired, stage rows and the terminal status land
+// in the database only, and the SSE stream must still deliver every stage
+// transition (with id fields) and the terminal event, then close.
+func TestSessionEventsFromDBWithoutBroker(t *testing.T) {
+	srv, repo := newServer(t, false)
+	ctx := context.Background()
+	sess, err := repo.CreateSession(ctx, domain.Session{
+		UserID: domain.LocalUserID, Language: "xx", Level: "beginner",
+		Status: domain.StatusGenerating, CreatedAt: 1700,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpsertStage(ctx, domain.GenerationStage{
+		SessionID: sess.SessionID, Stage: "story_generation", Status: domain.StageInProgress,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/sessions/"+sess.SessionID+"/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("content-type = %q", ct)
+	}
+
+	// Another "process" finishes the stage and the session while we stream.
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		_ = repo.UpsertStage(ctx, domain.GenerationStage{
+			SessionID: sess.SessionID, Stage: "story_generation", Status: domain.StageComplete,
+		})
+		_ = repo.UpdateSessionStatus(ctx, sess.SessionID, domain.StatusReady)
+	}()
+
+	type sseEvent struct {
+		id   string
+		data string
+	}
+	var events []sseEvent
+	scanner := bufio.NewScanner(resp.Body)
+	var cur sseEvent
+	deadline := time.AfterFunc(20*time.Second, func() { resp.Body.Close() })
+	defer deadline.Stop()
+	for scanner.Scan() {
+		line := scanner.Text()
+		switch {
+		case strings.HasPrefix(line, "id: "):
+			cur.id = strings.TrimPrefix(line, "id: ")
+		case strings.HasPrefix(line, "data: "):
+			cur.data = strings.TrimPrefix(line, "data: ")
+		case line == "":
+			if cur.data != "" {
+				events = append(events, cur)
+			}
+			cur = sseEvent{}
+		}
+	}
+
+	var sawInProgress, sawComplete, sawDone bool
+	for _, ev := range events {
+		if ev.id == "story_generation:in_progress" {
+			sawInProgress = true
+		}
+		if ev.id == "story_generation:complete" {
+			sawComplete = true
+		}
+		if strings.Contains(ev.data, `"done"`) && strings.Contains(ev.data, `"ready"`) {
+			sawDone = true
+		}
+	}
+	if !sawInProgress || !sawComplete || !sawDone {
+		t.Fatalf("missing transitions: in_progress=%v complete=%v done=%v events=%+v",
+			sawInProgress, sawComplete, sawDone, events)
+	}
+	// The stream must have closed on its own (terminal), not via the deadline.
+	if !deadline.Stop() {
+		t.Fatal("stream did not close after terminal status")
+	}
+}
