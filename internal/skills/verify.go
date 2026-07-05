@@ -19,13 +19,13 @@ const maxVerificationEvidence = 10
 // auto-approves all pending rows — the deterministic XP system is fully usable
 // without a gateway, and verification becomes a safeguard added in cloud mode.
 type VerificationService struct {
-	repo   db.Repository
+	repo   Store
 	client llm.Client // nil → auto-approve
 }
 
 // NewVerificationService builds a tier-verification runner. Passing a nil client
 // enables the auto-approve path so the system works locally without a gateway.
-func NewVerificationService(repo db.Repository, client llm.Client) *VerificationService {
+func NewVerificationService(repo Store, client llm.Client) *VerificationService {
 	return &VerificationService{repo: repo, client: client}
 }
 

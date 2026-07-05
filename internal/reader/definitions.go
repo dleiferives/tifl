@@ -36,7 +36,7 @@ type WiktionarySource interface {
 // then LLM); live results are written to the global shared cache so the next
 // learner gets them free. See context/reader-mode.md and issues #10/#40/#41.
 type DefinitionService struct {
-	repo   db.Repository
+	repo   Store
 	client llm.Client       // nil when no gateway is configured
 	wik    WiktionarySource // nil = no Wiktionary source wired yet (#41)
 	langs  *lang.Registry   // nil = canonical-key plugin fallback disabled
@@ -124,7 +124,7 @@ const (
 // NewDefinitionService builds the service. client may be nil (live LLM paths then
 // return ErrLLMUnavailable); wik may be nil (Wiktionary hop is skipped);
 // langs may be nil (canonical key plugin extraction disabled).
-func NewDefinitionService(repo db.Repository, client llm.Client, wik WiktionarySource, langs *lang.Registry) *DefinitionService {
+func NewDefinitionService(repo Store, client llm.Client, wik WiktionarySource, langs *lang.Registry) *DefinitionService {
 	return &DefinitionService{repo: repo, client: client, wik: wik, langs: langs, now: func() float64 { return float64(time.Now().Unix()) }}
 }
 

@@ -30,7 +30,7 @@ var (
 // the acquisition engine so confidence_score and acquisition_stage stay current.
 // See context/reader-mode.md ("Signal Collection") and issues #9/#10.
 type Service struct {
-	repo       db.Repository
+	repo       Store
 	engine     *acquire.Engine
 	associator *skills.Associator
 	now        func() float64
@@ -49,7 +49,7 @@ func WithSkillAssociator(associator *skills.Associator) Option {
 }
 
 // NewService builds a reader Service over the repository and acquisition engine.
-func NewService(repo db.Repository, engine *acquire.Engine, opts ...Option) *Service {
+func NewService(repo Store, engine *acquire.Engine, opts ...Option) *Service {
 	s := &Service{repo: repo, engine: engine, now: func() float64 { return float64(time.Now().Unix()) }}
 	for _, opt := range opts {
 		opt(s)

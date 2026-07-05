@@ -6,7 +6,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/predictor"
 )
@@ -15,7 +14,7 @@ import (
 // algorithmic knowledge predictor. It implements the full three-bucket model
 // described in context/selection-layer.md.
 type DBSelector struct {
-	repo  db.Repository
+	repo  Store
 	algo  *predictor.Algorithmic
 	cache predictor.CacheConfig
 	rng   *rand.Rand
@@ -23,7 +22,7 @@ type DBSelector struct {
 
 // NewDBSelector creates a selector using the given repository and predictor
 // config. Each instance has its own RNG seeded from the current time.
-func NewDBSelector(repo db.Repository, cfg predictor.Config) *DBSelector {
+func NewDBSelector(repo Store, cfg predictor.Config) *DBSelector {
 	return &DBSelector{
 		repo:  repo,
 		algo:  predictor.NewAlgorithmic(cfg),

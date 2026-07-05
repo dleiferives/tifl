@@ -4,7 +4,6 @@ import (
 	"context"
 	"sort"
 
-	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/lang"
 )
@@ -12,13 +11,13 @@ import (
 // ConstraintBuilder translates verified user_skill_xp tiers into the concrete
 // story-generation constraints consumed by the LLM prompt builder.
 type ConstraintBuilder struct {
-	repo  db.Repository
+	repo  Store
 	langs *lang.Registry
 }
 
 // NewConstraintBuilder returns a builder over persisted skill XP and the
 // language-owned skill definition catalogue.
-func NewConstraintBuilder(repo db.Repository, langs *lang.Registry) *ConstraintBuilder {
+func NewConstraintBuilder(repo Store, langs *lang.Registry) *ConstraintBuilder {
 	return &ConstraintBuilder{repo: repo, langs: langs}
 }
 

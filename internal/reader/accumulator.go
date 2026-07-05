@@ -16,7 +16,7 @@ import (
 // keys to knowledge-item ids, creating the item if it does not yet exist (most
 // reader words are not selection targets and so have no row until now).
 type accumulator struct {
-	repo       db.Repository
+	repo       Store
 	associator *skills.Associator
 	userID     string
 	now        float64
@@ -24,7 +24,7 @@ type accumulator struct {
 	items      map[string]string                // language\x00key -> itemID (resolve cache)
 }
 
-func newAccumulator(repo db.Repository, associator *skills.Associator, userID string, now float64) *accumulator {
+func newAccumulator(repo Store, associator *skills.Associator, userID string, now float64) *accumulator {
 	return &accumulator{
 		repo:       repo,
 		associator: associator,

@@ -29,13 +29,13 @@ type Session struct {
 }
 
 type Service struct {
-	repo   db.Repository
+	repo   Store
 	tokens *TokenManager
 	now    func() time.Time
 	dummy  string
 }
 
-func NewService(repo db.Repository, secret string) (*Service, error) {
+func NewService(repo Store, secret string) (*Service, error) {
 	tokens, err := NewTokenManager(secret)
 	if err != nil {
 		return nil, err

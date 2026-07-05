@@ -8,7 +8,6 @@ import (
 
 	"github.com/dleiferives/tifl/internal/acquire"
 	authn "github.com/dleiferives/tifl/internal/auth"
-	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/lang"
 	"github.com/dleiferives/tifl/internal/llm"
 	"github.com/dleiferives/tifl/internal/predictor"
@@ -21,7 +20,7 @@ import (
 // Handler holds the dependencies the HTTP layer needs and registers routes onto
 // a mux. Handlers stay thin: parse, call a repository/domain function, serialize.
 type Handler struct {
-	repo         db.Repository
+	repo         Store
 	langs        *lang.Registry
 	broker       *story.Broker                   // nil when generation is not configured (no LLM gateway)
 	reader       *reader.Service                 // reader signal ingest + rating writes (#9/#10)
@@ -114,7 +113,7 @@ func WithAuth(service *authn.Service, secureCookie bool) Option {
 // acquisition services are built from the repository with default tuning; the
 // acquisition engine is shared between the reader's signal ingest and task
 // grading.
-func New(repo db.Repository, broker *story.Broker, client llm.Client, taskTypes *tasks.Registry, langs *lang.Registry, frontendDir string, opts ...Option) *Handler {
+func New(repo Store, broker *story.Broker, client llm.Client, taskTypes *tasks.Registry, langs *lang.Registry, frontendDir string, opts ...Option) *Handler {
 	engine := acquire.NewEngine(repo, predictor.DefaultConfig(), acquire.Config{})
 	associator := skillassoc.NewAssociator(repo, langs)
 	skillXP := skillassoc.NewXPService(repo, associator, nil)

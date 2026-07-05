@@ -14,12 +14,12 @@ import (
 // handlers provide the accepted task signal, while this service resolves item
 // associations, calls the pure engine, and writes XP rows plus audit logs.
 type XPService struct {
-	repo       db.Repository
+	repo       Store
 	associator *Associator
 	engine     *XPEngine
 }
 
-func NewXPService(repo db.Repository, associator *Associator, engine *XPEngine) *XPService {
+func NewXPService(repo Store, associator *Associator, engine *XPEngine) *XPService {
 	if engine == nil {
 		engine = NewXPEngine(DefaultXPConfig())
 	}

@@ -36,8 +36,12 @@ var ErrInvalidAuthSecurityEvent = errors.New("db: invalid auth security event")
 // errNestedTx is returned when Tx is called from inside a Tx callback.
 var errNestedTx = errors.New("db: nested Tx is not supported")
 
-// Repository is the storage boundary. The surface grows method-by-method as each
-// subsystem is implemented; both backends satisfy it identically.
+// Repository is the full storage contract: the parity-suite surface and the
+// Repository a Tx callback receives. Consumer packages do not depend on it —
+// each declares its own narrow Store interface (auth.Store, reader.Store,
+// skills.Store, story.Store, handler.Store, ...) listing exactly the methods
+// it calls, all satisfied by *SQLRepository (#201). New queries are added to
+// the consumer's Store and implemented here.
 type Repository interface {
 	// Lifecycle.
 	Migrate(ctx context.Context) error

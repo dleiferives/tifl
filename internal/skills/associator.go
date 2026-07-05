@@ -6,7 +6,6 @@ import (
 	"errors"
 	"sort"
 
-	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/lang"
 )
@@ -19,12 +18,12 @@ var ErrMissingItemID = errors.New("skills: knowledge item has no item_id")
 // supplied by language plugins. It is intentionally deterministic and small:
 // exact canonical key matches only, no LLM classification or morphology.
 type Associator struct {
-	repo  db.Repository
+	repo  Store
 	langs *lang.Registry
 }
 
 // NewAssociator builds a lazy item-skill association materializer.
-func NewAssociator(repo db.Repository, langs *lang.Registry) *Associator {
+func NewAssociator(repo Store, langs *lang.Registry) *Associator {
 	return &Associator{repo: repo, langs: langs}
 }
 

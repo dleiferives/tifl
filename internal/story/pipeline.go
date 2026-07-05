@@ -58,7 +58,7 @@ func DefaultConfig() Config {
 // registries so the pipeline is fully testable with a FakeClient and a fake
 // repository — no network, no real database.
 type Deps struct {
-	Repo             db.Repository
+	Repo             Store
 	Selector         selector.Selector
 	Client           llm.Client
 	Langs            *lang.Registry

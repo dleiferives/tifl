@@ -128,7 +128,7 @@ func (c Config) Stage(uk domain.UserKnowledge) domain.AcquisitionStage {
 // service, the task grader); Engine owns only the derivation: predict
 // confidence, then evaluate the stage, then persist.
 type Engine struct {
-	repo  db.Repository
+	repo  Store
 	algo  *predictor.Algorithmic
 	cfg   Config
 	cache predictor.CacheConfig
@@ -137,7 +137,7 @@ type Engine struct {
 
 // NewEngine builds an Engine over the repository, using the algorithmic
 // predictor for confidence_score and cfg for the stage thresholds.
-func NewEngine(repo db.Repository, predCfg predictor.Config, cfg Config) *Engine {
+func NewEngine(repo Store, predCfg predictor.Config, cfg Config) *Engine {
 	if (cfg == Config{}) {
 		cfg = DefaultConfig()
 	}
