@@ -51,16 +51,18 @@ var frequency = []string{
 	"έξω",   // outside, out
 
 	// ── Pronouns ──────────────────────────────────────────────────────────────
-	"εγώ",     // I
-	"εσύ",     // you (sg.)
-	"αυτός",   // he / this (masc.)
-	"αυτή",    // she / this (fem.)
-	"αυτό",    // it / this (neut.)
-	"εμείς",   // we
-	"εσείς",   // you (pl.)
-	"αυτοί",   // they (masc.)
-	"αυτές",   // they (fem.)
-	"αυτά",    // they (neut.) / these
+	"εγώ",   // I
+	"εσύ",   // you (sg.)
+	"αυτός", // he / this (masc.)
+	"αυτή",  // she / this (fem.)
+	"αυτό",  // it / this (neut.)
+	"εμείς", // we
+	"εσείς", // you (pl.)
+	// "αυτοί" removed: the resolver lexicon lemmatizes it to "αυτός" (already
+	// listed), so as a frequency entry it would be a non-canonical key the
+	// reader never produces (caught by langtest FrequencyIntegrity, #211).
+	// "αυτές"/"αυτά" removed for the same reason: the lexicon lemmatizes them
+	// to "αυτή"/"αυτό", which are already listed above.
 	"μου",     // my / of me
 	"σου",     // your (sg.) / of you
 	"του",     // his / of him / of it
@@ -146,7 +148,6 @@ var frequency = []string{
 	"δρόμος",     // road, street
 	"νερό",       // water
 	"φαγητό",     // food
-	"δουλειά",    // work (duplicate intentional — high frequency)
 	"σχολείο",    // school
 	"γλώσσα",     // language, tongue
 	"μάθημα",     // lesson, class
@@ -202,5 +203,4 @@ var frequency = []string{
 	"πότε",  // when
 	"πώς",   // how
 	"πόσο",  // how much
-	"γιατί", // why (duplicate — high frequency)
 }

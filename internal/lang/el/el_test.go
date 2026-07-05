@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/dleiferives/tifl/internal/lang"
+	"github.com/dleiferives/tifl/internal/lang/langtest"
 )
 
 // TestNormalize covers the Greek-specific behaviour of answer normalization for
@@ -409,4 +410,39 @@ func TestExtractCanonicalKey(t *testing.T) {
 				c.gloss, key, ok, c.wantKey, c.wantOK)
 		}
 	}
+}
+
+// TestGreekConformance runs the language-plugin conformance kit (#211): the
+// executable contract a language must satisfy before it ships.
+func TestGreekConformance(t *testing.T) {
+	langtest.Run(t, New(), langtest.Corpus{
+		Texts: []string{
+			"Η Μαρία πίνει καφέ στην πλατεία. «Καλημέρα!» λέει.",
+			"Ο σκύλος τρέχει γρήγορα — βλέπεις; Έχει 3 μπάλες, νερό και ψωμί.",
+			"Το παιδί διαβάζει ένα βιβλίο.",
+		},
+		KnownKeys: map[string]string{
+			"σκύλος": "σκύλος",
+			"ΣΚΎΛΟΣ": "σκύλος",
+		},
+		EqualPairs: [][2]string{
+			{"σκύλος", "ΣΚΎΛΟΣ"}, // case folding
+			{"καφές", "καφέσ"},   // final sigma form
+			{" νερό ", "νερό"},   // surrounding whitespace
+		},
+		UnequalPairs: [][2]string{
+			{"πινω", "πίνω"}, // accents are meaning-bearing in Greek
+			{"πού", "που"},   // interrogative vs relative
+		},
+		GlossExamples: map[string]string{
+			"αδύναμος τύπος του εγώ": "εγώ",
+		},
+		PlainGlosses: []string{
+			"ένα ζώο που γαβγίζει",
+		},
+		SurfaceDistinctions: [][2]string{
+			{"πίνει", "πίνω"}, // inflections stay distinct reader ratings
+			{"σκύλος", "σκύλου"},
+		},
+	})
 }

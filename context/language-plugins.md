@@ -57,6 +57,35 @@ the design is wrong — the seam belongs on `lang.Language`.
 
 ---
 
+## Definition of Done: the Conformance Kit (#211)
+
+A language plugin ships when `langtest.Run(t, plugin, corpus)` passes
+(`internal/lang/langtest`). The kit is the executable contract behind the
+invariants this document describes:
+
+- **Lossless tokenization** — concatenating token surfaces reproduces the NFC
+  text byte-for-byte; positions dense; non-word tokens carry no keys.
+- **Key stability** — `ResolveKey` is deterministic, agrees with `Tokenize`,
+  and every resolved key is a fixed point (`ResolveKey(key) == key`).
+- **Frequency integrity** — entries non-empty, unique, and canonical (a
+  non-canonical entry makes the selector target a key the reader never
+  produces; this check caught three real defects in the Greek list on its
+  first run).
+- **Normalize contract** — idempotent; corpus-declared equal/unequal pairs
+  hold (accent sensitivity, case folding, final sigma, …).
+- **Task-type validity** — every `SupportedTaskTypes` id is registered
+  (`tasks.Compose` silently drops unknown ids, so a typo is invisible).
+- **Unicode hygiene** — NFD input yields the same keys as NFC input.
+- **Capability checks** — run only for the optional interfaces the plugin
+  implements (surface keys distinct + idempotent + composition-stable, skill
+  ids unique and language-prefixed, level rules reference existing skills,
+  gloss→lemma extraction round-trips corpus examples).
+
+Corpus authoring: a handful of representative texts with punctuation,
+numerals, and quotes; the equal/unequal pairs encode the language's own
+normalization judgments (see the Greek corpus in `internal/lang/el/el_test.go`
+as the template).
+
 ## The Four Morphological Families
 
 Understanding which family a language belongs to determines the entire knowledge
