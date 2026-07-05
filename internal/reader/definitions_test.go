@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/db/dbtest"
@@ -361,4 +363,93 @@ func TestWordBreakdownCaches(t *testing.T) {
 	if len(client.Calls) != 1 {
 		t.Fatalf("word breakdown should be cached after the first call, got %d", len(client.Calls))
 	}
+}
+
+// countingClient counts CompleteJSON round-trips and can block until released,
+// so tests can pile up concurrent misses on one key.
+type countingClient struct {
+	llm.Client
+	mu      sync.Mutex
+	calls   int
+	release chan struct{}
+}
+
+func (c *countingClient) Complete(ctx context.Context, kind string, req llm.LLMRequest) (llm.LLMResponse, error) {
+	c.mu.Lock()
+	c.calls++
+	c.mu.Unlock()
+	if c.release != nil {
+		<-c.release
+	}
+	return c.Client.Complete(ctx, kind, req)
+}
+
+func (c *countingClient) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
+
+// TestSentenceBreakdownSingleflight: 12 concurrent breakdowns of the same
+// uncached sentence make exactly one LLM call and one cache row (#207).
+func TestSentenceBreakdownSingleflight(t *testing.T) {
+	ctx, svc, repo, fake, userID, storyID := defFixture(t, sentenceBreakdownJSON)
+	counting := &countingClient{Client: fake, release: make(chan struct{})}
+	svcCounting := reader.NewDefinitionService(repo, counting, nil, nil)
+
+	const n = 12
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i := range n {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, errs[i] = svcCounting.SentenceBreakdown(ctx, userID, storyID, 0)
+		}(i)
+	}
+	// Let the goroutines pile up on the flight, then release the one call.
+	time.Sleep(200 * time.Millisecond)
+	close(counting.release)
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("call %d: %v", i, err)
+		}
+	}
+	if got := counting.count(); got != 1 {
+		t.Fatalf("LLM calls = %d, want 1 (stampede not coalesced)", got)
+	}
+	_ = svc
+}
+
+// TestSingleflightSurvivesCallerCancel: the flight winner's cancellation must
+// not fail the waiters (detached context inside the flight).
+func TestSingleflightSurvivesCallerCancel(t *testing.T) {
+	ctx, _, repo, fake, userID, storyID := defFixture(t, sentenceBreakdownJSON)
+	counting := &countingClient{Client: fake, release: make(chan struct{})}
+	svc := reader.NewDefinitionService(repo, counting, nil, nil)
+
+	winnerCtx, cancelWinner := context.WithCancel(ctx)
+	winnerErr := make(chan error, 1)
+	go func() {
+		_, err := svc.SentenceBreakdown(winnerCtx, userID, storyID, 0)
+		winnerErr <- err
+	}()
+	time.Sleep(100 * time.Millisecond) // winner is now blocked in the LLM call
+
+	waiterErr := make(chan error, 1)
+	go func() {
+		_, err := svc.SentenceBreakdown(ctx, userID, storyID, 0)
+		waiterErr <- err
+	}()
+	time.Sleep(100 * time.Millisecond) // waiter has joined the flight
+
+	cancelWinner()
+	close(counting.release)
+
+	if err := <-waiterErr; err != nil {
+		t.Fatalf("waiter failed after winner cancel: %v", err)
+	}
+	<-winnerErr // winner outcome is unimportant; it must not hang
 }

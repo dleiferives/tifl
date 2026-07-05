@@ -14,7 +14,9 @@ import (
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/lang"
+
 	"github.com/dleiferives/tifl/internal/llm"
+	"golang.org/x/sync/singleflight"
 )
 
 // ErrLLMUnavailable is returned when a live definition or breakdown is needed but
@@ -41,6 +43,12 @@ type DefinitionService struct {
 	wik    WiktionarySource // nil = no Wiktionary source wired yet (#41)
 	langs  *lang.Registry   // nil = canonical-key plugin fallback disabled
 	now    func() float64
+
+	// flights deduplicates concurrent LLM calls for the same uncached key
+	// (#207): N readers hitting one uncached sentence produce one model call.
+	// Per-process only — replicas may still each pay one call; the keyed
+	// upserts make that harmless.
+	flights singleflight.Group
 }
 
 // BreakdownResult is the backend-facing breakdown DTO. The embedded Breakdown
@@ -270,17 +278,29 @@ func (s *DefinitionService) ResolveWithTrace(ctx context.Context, userID, storyI
 	if s.client == nil {
 		return DefinitionResolution{}, ErrLLMUnavailable
 	}
-	res, err := llm.CompleteJSON(ctx, s.client, llm.DefinitionBuilder{Key: key, NativeGloss: nativeGloss},
-		domain.LearnerCtx{Language: language}, func(r llm.DefinitionResult) error { return r.Validate() })
+	// Singleflight: concurrent lookups of the same uncached key share one
+	// model call. The flight body uses a detached context so one impatient
+	// caller cancelling cannot poison the shared result for the others.
+	flightKey := "def\x00" + language + "\x00" + key
+	v, err, _ := s.flights.Do(flightKey, func() (any, error) {
+		fctx := context.WithoutCancel(ctx)
+		res, err := llm.CompleteJSON(fctx, s.client, llm.DefinitionBuilder{Key: key, NativeGloss: nativeGloss},
+			domain.LearnerCtx{Language: language}, func(r llm.DefinitionResult) error { return r.Validate() })
+		if err != nil {
+			return nil, err
+		}
+		d := domain.Definition{
+			Language: language, ItemKey: key, Source: domain.DefinitionSourceLLM,
+			Gloss: res.Gloss, GrammaticalNote: res.GrammaticalNote, Example: res.Example, Etymology: res.Etymology,
+			CreatedAt: s.now(),
+		}
+		_ = s.repo.UpsertDefinition(fctx, d)
+		return d, nil
+	})
 	if err != nil {
 		return DefinitionResolution{}, err
 	}
-	d := domain.Definition{
-		Language: language, ItemKey: key, Source: domain.DefinitionSourceLLM,
-		Gloss: res.Gloss, GrammaticalNote: res.GrammaticalNote, Example: res.Example, Etymology: res.Etymology,
-		CreatedAt: s.now(),
-	}
-	_ = s.repo.UpsertDefinition(ctx, d)
+	d := v.(domain.Definition)
 	trace.Steps = append(trace.Steps, DefinitionTraceStep{
 		Step: "llm_fallback", Status: defTraceHit, Source: domain.DefinitionSourceLLM, Key: key,
 	})
@@ -331,15 +351,32 @@ func (s *DefinitionService) SentenceBreakdown(ctx context.Context, userID, story
 	}
 	wordContext := s.wordContextForTokens(ctx, language, spanTokens)
 
-	content, err := llm.CompleteJSON(ctx, s.client,
-		llm.SentenceBreakdownBuilder{Sentence: span.Text, StructureHint: structureHint, Phrases: phrases, Words: wordContext},
-		domain.LearnerCtx{Language: language}, validateSentenceBreakdown)
+	// Singleflight (#207): concurrent misses on the same sentence share one
+	// model call; the winner re-checks the cache inside the flight and runs on
+	// a detached context so a cancelled caller cannot poison the shared call.
+	flightKey := "bd\x00" + string(domain.BreakdownSentence) + "\x00" + language + "\x00" + cacheKey
+	v, err, _ := s.flights.Do(flightKey, func() (any, error) {
+		fctx := context.WithoutCancel(ctx)
+		if b, err := s.repo.GetBreakdown(fctx, domain.BreakdownSentence, language, cacheKey); err == nil {
+			return b, nil
+		} else if !errors.Is(err, db.ErrNotFound) {
+			return nil, err
+		}
+		content, err := llm.CompleteJSON(fctx, s.client,
+			llm.SentenceBreakdownBuilder{Sentence: span.Text, StructureHint: structureHint, Phrases: phrases, Words: wordContext},
+			domain.LearnerCtx{Language: language}, validateSentenceBreakdown)
+		if err != nil {
+			return nil, err
+		}
+		b := domain.Breakdown{Scope: domain.BreakdownSentence, Language: language, CacheKey: cacheKey, Content: content, CreatedAt: s.now()}
+		_ = s.repo.UpsertBreakdown(fctx, b)
+		_ = s.persistSentenceAnalysis(fctx, language, cacheKey, structureKey, template, spanTokens, content)
+		return b, nil
+	})
 	if err != nil {
 		return BreakdownResult{}, err
 	}
-	b := domain.Breakdown{Scope: domain.BreakdownSentence, Language: language, CacheKey: cacheKey, Content: content, CreatedAt: s.now()}
-	_ = s.repo.UpsertBreakdown(ctx, b)
-	_ = s.persistSentenceAnalysis(ctx, language, cacheKey, structureKey, template, spanTokens, content)
+	b := v.(domain.Breakdown)
 	return BreakdownResult{Breakdown: b, Trace: sentenceBreakdownTrace(language, cacheKey, breakdownSourceLLM, false, span, structureKey, template, structureHintStatus, len(phrases), b.CreatedAt)}, nil
 }
 
@@ -364,18 +401,36 @@ func (s *DefinitionService) cachedBreakdown(ctx context.Context, scope domain.Br
 	if s.client == nil {
 		return BreakdownResult{}, ErrLLMUnavailable
 	}
-	content, err := llm.CompleteJSON(ctx, s.client, builder, domain.LearnerCtx{Language: language},
-		func(m map[string]any) error {
-			if len(m) == 0 {
-				return errors.New("empty breakdown")
-			}
-			return nil
-		})
+	// Singleflight (#207): concurrent misses on one sentence/word share one
+	// model call; the winner re-checks the cache inside the flight in case a
+	// racing flight populated it. Detached context: a cancelled waiter must
+	// not poison the shared call.
+	flightKey := "bd\x00" + string(scope) + "\x00" + language + "\x00" + cacheKey
+	v, err, _ := s.flights.Do(flightKey, func() (any, error) {
+		fctx := context.WithoutCancel(ctx)
+		if b, err := s.repo.GetBreakdown(fctx, scope, language, cacheKey); err == nil {
+			return b, nil
+		} else if !errors.Is(err, db.ErrNotFound) {
+			return nil, err
+		}
+		content, err := llm.CompleteJSON(fctx, s.client, builder, domain.LearnerCtx{Language: language},
+			func(m map[string]any) error {
+				if len(m) == 0 {
+					return errors.New("empty breakdown")
+				}
+				return nil
+			})
+		if err != nil {
+			return nil, err
+		}
+		b := domain.Breakdown{Scope: scope, Language: language, CacheKey: cacheKey, Content: content, CreatedAt: s.now()}
+		_ = s.repo.UpsertBreakdown(fctx, b)
+		return b, nil
+	})
 	if err != nil {
 		return BreakdownResult{}, err
 	}
-	b := domain.Breakdown{Scope: scope, Language: language, CacheKey: cacheKey, Content: content, CreatedAt: s.now()}
-	_ = s.repo.UpsertBreakdown(ctx, b)
+	b := v.(domain.Breakdown)
 	return BreakdownResult{Breakdown: b, Trace: breakdownTrace(scope, language, cacheKey, breakdownSourceLLM, false, b.CreatedAt)}, nil
 }
 
