@@ -153,6 +153,10 @@ export interface ImportStoryFileRequest {
   file: File;
 }
 
+interface APIRequestOptions {
+  signal?: AbortSignal;
+}
+
 export async function importStoryFile(request: ImportStoryFileRequest): Promise<APIResponse<"importStory", 201>> {
   const form = new FormData();
   form.set("file", request.file);
@@ -171,8 +175,14 @@ export async function importStoryFile(request: ImportStoryFileRequest): Promise<
   );
 }
 
-export async function getSessionDetail(sessionID: string): Promise<APIResponse<"getSessionDetail", 200>> {
-  return apiFetch<APIResponse<"getSessionDetail", 200>>(`/sessions/${encodeURIComponent(sessionID)}`);
+export async function getSessionDetail(
+  sessionID: string,
+  options: APIRequestOptions = {},
+): Promise<APIResponse<"getSessionDetail", 200>> {
+  return apiFetch<APIResponse<"getSessionDetail", 200>>(
+    `/sessions/${encodeURIComponent(sessionID)}`,
+    { signal: options.signal },
+  );
 }
 
 export async function getSessionDebug(sessionID: string): Promise<APIResponse<"getSessionDebug", 200>> {
@@ -191,8 +201,14 @@ export async function deleteSession(sessionID: string): Promise<void> {
   return apiFetch<void>(`/sessions/${encodeURIComponent(sessionID)}`, { method: "DELETE" });
 }
 
-export async function getSessionContent(sessionID: string): Promise<APIResponse<"getSessionContent", 200>> {
-  return apiFetch<APIResponse<"getSessionContent", 200>>(`/sessions/${encodeURIComponent(sessionID)}/content`);
+export async function getSessionContent(
+  sessionID: string,
+  options: APIRequestOptions = {},
+): Promise<APIResponse<"getSessionContent", 200>> {
+  return apiFetch<APIResponse<"getSessionContent", 200>>(
+    `/sessions/${encodeURIComponent(sessionID)}/content`,
+    { signal: options.signal },
+  );
 }
 
 export async function retrySession(sessionID: string): Promise<APIResponse<"retrySession", 202>> {
@@ -398,8 +414,14 @@ export async function setWordKnowledge(token: string, request: APIRequest<"putWo
   return apiFetch<void>(`/word_knowledge/${encodeURIComponent(token)}`, jsonRequest("PUT", request));
 }
 
-export async function getSessionTasks(sessionID: string): Promise<APIResponse<"getSessionTasks", 200>> {
-  return apiFetch<APIResponse<"getSessionTasks", 200>>(`/sessions/${encodeURIComponent(sessionID)}/tasks`);
+export async function getSessionTasks(
+  sessionID: string,
+  options: APIRequestOptions = {},
+): Promise<APIResponse<"getSessionTasks", 200>> {
+  return apiFetch<APIResponse<"getSessionTasks", 200>>(
+    `/sessions/${encodeURIComponent(sessionID)}/tasks`,
+    { signal: options.signal },
+  );
 }
 
 export async function getTask(taskID: string): Promise<APIResponse<"getTask", 200>> {
