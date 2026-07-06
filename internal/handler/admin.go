@@ -88,10 +88,16 @@ func (h *Handler) adminGetSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	readerTraces, err := h.sessionReaderTraceDTOs(r.Context(), sess.UserID, detail.Session)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, sessionDebugDTO{
-		Session:  toSessionDetailDTO(detail),
-		LlmCalls: h.toLLMCallDTOsWithCost(calls),
-		Cost:     h.costSummary(calls),
+		Session:      toSessionDetailDTO(detail),
+		LlmCalls:     h.toLLMCallDTOsWithCost(calls),
+		Cost:         h.costSummary(calls),
+		ReaderTraces: readerTraces,
 	})
 }
 

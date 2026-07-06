@@ -80,9 +80,7 @@ func (h *Handler) getStory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for _, s := range reader.SentenceSpans(tokens) {
-		resp.Sentences = append(resp.Sentences, sentenceSpanDTO{
-			Index: s.Index, StartPosition: s.StartPosition, EndPosition: s.EndPosition, Text: s.Text,
-		})
+		resp.Sentences = append(resp.Sentences, sentenceSpanFromReader(s))
 	}
 	for _, k := range knowledge {
 		resp.Knowledge[k.ItemKey] = readerKnowledgeDTO{Level: oapigen.ReaderKnowledgeLevel(k.Level), LookupCount: k.LookupCount}
@@ -262,8 +260,12 @@ func (h *Handler) writeReaderError(w http.ResponseWriter, err error) {
 // --- definition & breakdown popups -----------------------------------------
 
 type (
-	definitionDTO      = oapigen.Definition
-	definitionTraceDTO = oapigen.DefinitionTrace
+	definitionDTO         = oapigen.Definition
+	definitionTraceDTO    = oapigen.DefinitionTrace
+	breakdownTraceDTO     = oapigen.BreakdownTrace
+	sentenceBreakdownDTO  = oapigen.SentenceBreakdownTrace
+	wordBreakdownTraceDTO = oapigen.WordBreakdownTrace
+	readerTraceDTO        = oapigen.ReaderTrace
 )
 
 type definitionTraceStepDTO = oapigen.DefinitionTraceStep
@@ -305,6 +307,36 @@ func definitionTraceFromReader(trace reader.DefinitionTrace) definitionTraceDTO 
 		QueryKey: trace.QueryKey, ResolvedKey: trace.ResolvedKey,
 		WinningSource: oapigen.DefinitionTraceWinningSource(trace.WinningSource), Steps: steps,
 	}
+}
+
+func breakdownTraceFromReader(trace reader.BreakdownTrace) breakdownTraceDTO {
+	dto := breakdownTraceDTO{
+		Scope: traceScopeFromDomain(trace.Scope), Language: trace.Language, CacheKey: trace.CacheKey,
+		Source: oapigen.BreakdownTraceSource(trace.Source), CacheHit: trace.CacheHit, CreatedAt: trace.CreatedAt,
+	}
+	if trace.Sentence != nil {
+		dto.Sentence = &sentenceBreakdownDTO{
+			Span:                  sentenceSpanFromReader(trace.Sentence.Span),
+			StructureKey:          trace.Sentence.StructureKey,
+			StructureTemplate:     trace.Sentence.StructureTemplate,
+			StructureHint:         oapigen.SentenceBreakdownTraceStructureHint(trace.Sentence.StructureHint),
+			PhraseCacheMatchCount: trace.Sentence.PhraseCacheMatchCount,
+		}
+	}
+	if trace.Word != nil {
+		dto.Word = &wordBreakdownTraceDTO{CanonicalKey: trace.Word.CanonicalKey}
+	}
+	return dto
+}
+
+func sentenceSpanFromReader(span reader.SentenceSpan) sentenceSpanDTO {
+	return sentenceSpanDTO{
+		Index: span.Index, StartPosition: span.StartPosition, EndPosition: span.EndPosition, Text: span.Text,
+	}
+}
+
+func traceScopeFromDomain(scope domain.BreakdownScope) oapigen.BreakdownTraceScope {
+	return oapigen.BreakdownTraceScope(scope)
 }
 
 type (

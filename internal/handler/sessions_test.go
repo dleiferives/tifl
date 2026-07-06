@@ -3,6 +3,8 @@ package handler_test
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -803,6 +805,7 @@ func TestGetSessionDebugIncludesOwnedLLMCalls(t *testing.T) {
 			ErrorPayload *string `json:"error_payload"`
 			CalledAt     float64 `json:"called_at"`
 		} `json:"llm_calls"`
+		ReaderTraces []struct{} `json:"reader_traces"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatal(err)
@@ -831,6 +834,188 @@ func TestGetSessionDebugIncludesOwnedLLMCalls(t *testing.T) {
 	if out.LLMCalls[1].ErrorPayload == nil || *out.LLMCalls[1].ErrorPayload != errorPayload {
 		t.Fatalf("debug llm error payload mismatch: %+v", out.LLMCalls[1])
 	}
+	if len(out.ReaderTraces) != 0 {
+		t.Fatalf("reader traces = %d, want empty array", len(out.ReaderTraces))
+	}
+}
+
+func TestGetSessionDebugIncludesReaderTraces(t *testing.T) {
+	srv, repo := newServer(t, false)
+	ctx := context.Background()
+
+	sess, err := repo.CreateSession(ctx, domain.Session{
+		UserID: domain.LocalUserID, Language: "xx", Level: "beginner", Status: domain.StatusReady,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	story, err := repo.CreateStory(ctx, domain.Story{
+		UserID: domain.LocalUserID, Language: "xx", Text: "Alpha beta gamma.", Level: "beginner", SessionID: &sess.SessionID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetSessionSelection(ctx, sess.SessionID, story.StoryID, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ReplaceStoryTokens(ctx, story.StoryID, []domain.StoryToken{
+		{StoryID: story.StoryID, Position: 0, Surface: "Alpha", ItemKey: "alpha", IsWord: true},
+		{StoryID: story.StoryID, Position: 1, Surface: " ", IsWord: false},
+		{StoryID: story.StoryID, Position: 2, Surface: "beta", ItemKey: "beta", IsWord: true},
+		{StoryID: story.StoryID, Position: 3, Surface: " ", IsWord: false},
+		{StoryID: story.StoryID, Position: 4, Surface: "gamma", ItemKey: "gamma", IsWord: true},
+		{StoryID: story.StoryID, Position: 5, Surface: ".", IsWord: false},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ReplaceStoryGlossary(ctx, story.StoryID, []domain.StoryGlossaryEntry{
+		{StoryID: story.StoryID, ItemKey: "alpha", Gloss: "alpha gloss"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpsertDefinition(ctx, domain.Definition{
+		Language: "xx", ItemKey: "beta", Source: domain.DefinitionSourceLLM, Gloss: "beta gloss",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpsertBreakdown(ctx, domain.Breakdown{
+		Scope: domain.BreakdownSentence, Language: "xx", CacheKey: debugSentenceCacheKey("Alpha beta gamma."),
+		Content: map[string]any{"translation": "Alpha beta gamma."}, CreatedAt: 300,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpsertBreakdown(ctx, domain.Breakdown{
+		Scope: domain.BreakdownWord, Language: "xx", CacheKey: "alpha",
+		Content: map[string]any{"root": "alpha"}, CreatedAt: 301,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(srv.URL + "/api/v1/sessions/" + sess.SessionID + "/debug")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("debug = %d", resp.StatusCode)
+	}
+	var out struct {
+		ReaderTraces []debugReaderTrace `json:"reader_traces"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.ReaderTraces) != 4 {
+		t.Fatalf("reader traces = %d, want 4: %+v", len(out.ReaderTraces), out.ReaderTraces)
+	}
+
+	alpha := out.ReaderTraces[0]
+	if alpha.Kind != "definition_lookup" || alpha.Key != "alpha" || alpha.Position != 0 ||
+		alpha.Source != "glossary" || alpha.Status != "hit" || alpha.DefinitionTrace == nil {
+		t.Fatalf("unexpected alpha definition trace: %+v", alpha)
+	}
+	if alpha.DefinitionTrace.QueryKey != "alpha" || alpha.DefinitionTrace.WinningSource != "glossary" ||
+		!hasDebugTraceStep(*alpha.DefinitionTrace, "story_glossary", "hit") {
+		t.Fatalf("alpha definition trace details mismatch: %+v", alpha.DefinitionTrace)
+	}
+
+	beta := out.ReaderTraces[1]
+	if beta.Kind != "definition_lookup" || beta.Key != "beta" || beta.Position != 2 ||
+		beta.Source != "llm" || beta.DefinitionTrace == nil ||
+		!hasDebugTraceStep(*beta.DefinitionTrace, "shared_cache", "hit") {
+		t.Fatalf("unexpected beta definition trace: %+v", beta)
+	}
+
+	sentence := out.ReaderTraces[2]
+	if sentence.Kind != "sentence_breakdown" || sentence.Position != 0 || sentence.Source != "cache" ||
+		sentence.CreatedAt != 300 || sentence.BreakdownTrace == nil {
+		t.Fatalf("unexpected sentence trace row: %+v", sentence)
+	}
+	if sentence.BreakdownTrace.Scope != "sentence" || !sentence.BreakdownTrace.CacheHit ||
+		sentence.BreakdownTrace.Sentence == nil ||
+		sentence.BreakdownTrace.Sentence.Span.Text != "Alpha beta gamma." ||
+		sentence.BreakdownTrace.Sentence.StructureHint != "not_consulted" {
+		t.Fatalf("unexpected sentence breakdown trace: %+v", sentence.BreakdownTrace)
+	}
+
+	word := out.ReaderTraces[3]
+	if word.Kind != "word_breakdown" || word.Key != "alpha" || word.Position != 0 ||
+		word.Source != "cache" || word.CreatedAt != 301 || word.BreakdownTrace == nil {
+		t.Fatalf("unexpected word trace row: %+v", word)
+	}
+	if word.BreakdownTrace.Scope != "word" || word.BreakdownTrace.Word == nil ||
+		word.BreakdownTrace.Word.CanonicalKey != "alpha" {
+		t.Fatalf("unexpected word breakdown trace: %+v", word.BreakdownTrace)
+	}
+}
+
+type debugReaderTrace struct {
+	Kind            string  `json:"kind"`
+	StoryID         string  `json:"story_id"`
+	Language        string  `json:"language"`
+	Key             string  `json:"key"`
+	Position        int     `json:"position"`
+	Source          string  `json:"source"`
+	Status          string  `json:"status"`
+	CreatedAt       float64 `json:"created_at"`
+	DefinitionTrace *struct {
+		QueryKey      string `json:"query_key"`
+		ResolvedKey   string `json:"resolved_key"`
+		WinningSource string `json:"winning_source"`
+		Steps         []struct {
+			Step   string `json:"step"`
+			Status string `json:"status"`
+			Source string `json:"source"`
+			Key    string `json:"key"`
+			Count  int    `json:"count"`
+		} `json:"steps"`
+	} `json:"definition_trace"`
+	BreakdownTrace *struct {
+		Scope     string  `json:"scope"`
+		Language  string  `json:"language"`
+		CacheKey  string  `json:"cache_key"`
+		Source    string  `json:"source"`
+		CacheHit  bool    `json:"cache_hit"`
+		CreatedAt float64 `json:"created_at"`
+		Sentence  *struct {
+			Span struct {
+				Index         int    `json:"index"`
+				StartPosition int    `json:"start_position"`
+				EndPosition   int    `json:"end_position"`
+				Text          string `json:"text"`
+			} `json:"span"`
+			StructureHint         string `json:"structure_hint"`
+			PhraseCacheMatchCount int    `json:"phrase_cache_match_count"`
+		} `json:"sentence"`
+		Word *struct {
+			CanonicalKey string `json:"canonical_key"`
+		} `json:"word"`
+	} `json:"breakdown_trace"`
+}
+
+func hasDebugTraceStep(trace struct {
+	QueryKey      string `json:"query_key"`
+	ResolvedKey   string `json:"resolved_key"`
+	WinningSource string `json:"winning_source"`
+	Steps         []struct {
+		Step   string `json:"step"`
+		Status string `json:"status"`
+		Source string `json:"source"`
+		Key    string `json:"key"`
+		Count  int    `json:"count"`
+	} `json:"steps"`
+}, stepName, status string) bool {
+	for _, step := range trace.Steps {
+		if step.Step == stepName && step.Status == status {
+			return true
+		}
+	}
+	return false
+}
+
+func debugSentenceCacheKey(sentence string) string {
+	sum := sha256.Sum256([]byte(strings.Join(strings.Fields(strings.ToLower(sentence)), " ")))
+	return hex.EncodeToString(sum[:])
 }
 
 func TestSessionReadAPITenantIsolation(t *testing.T) {

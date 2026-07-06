@@ -308,6 +308,22 @@ func (s *DefinitionService) ResolveWithTrace(ctx context.Context, userID, storyI
 	return finish(d)
 }
 
+// ResolveStoredWithTrace returns a trace only when the definition is already
+// available from deterministic/stored sources. It never calls Wiktionary or the
+// LLM and never writes a new shared-cache row.
+func (s *DefinitionService) ResolveStoredWithTrace(ctx context.Context, userID, storyID, key string) (DefinitionResolution, bool, error) {
+	offline := &DefinitionService{repo: s.repo, langs: s.langs, now: s.now}
+
+	res, err := offline.ResolveWithTrace(ctx, userID, storyID, key)
+	if errors.Is(err, ErrLLMUnavailable) {
+		return DefinitionResolution{}, false, nil
+	}
+	if err != nil {
+		return DefinitionResolution{}, false, err
+	}
+	return res, true, nil
+}
+
 // SentenceBreakdown returns the breakdown of the sentence containing position.
 // Exact sentence cache hits return without an LLM call. On a miss, graph-backed
 // sentence-structure and phrase-cache rows are used as prompt context, then the
@@ -381,6 +397,32 @@ func (s *DefinitionService) SentenceBreakdown(ctx context.Context, userID, story
 	return BreakdownResult{Breakdown: b, Trace: sentenceBreakdownTrace(language, cacheKey, breakdownSourceLLM, false, span, structureKey, template, structureHintStatus, len(phrases), b.CreatedAt)}, nil
 }
 
+// StoredSentenceBreakdownTrace returns the cached trace for a sentence breakdown
+// if one exists. It never calls the LLM or creates a cache entry.
+func (s *DefinitionService) StoredSentenceBreakdownTrace(ctx context.Context, userID, storyID string, position int) (BreakdownTrace, bool, error) {
+	_, language, err := s.story(ctx, userID, storyID)
+	if err != nil {
+		return BreakdownTrace{}, false, err
+	}
+	tokens, err := s.repo.ListStoryTokens(ctx, storyID)
+	if err != nil {
+		return BreakdownTrace{}, false, err
+	}
+	span, ok := SentenceAt(tokens, position)
+	if !ok {
+		return BreakdownTrace{}, false, nil
+	}
+	cacheKey := hashSentence(span.Text)
+	b, err := s.repo.GetBreakdown(ctx, domain.BreakdownSentence, language, cacheKey)
+	if errors.Is(err, db.ErrNotFound) {
+		return BreakdownTrace{}, false, nil
+	}
+	if err != nil {
+		return BreakdownTrace{}, false, err
+	}
+	return sentenceBreakdownTrace(language, cacheKey, breakdownSourceCache, true, span, "", "", structureHintNotConsulted, 0, b.CreatedAt), true, nil
+}
+
 // WordBreakdown returns the deep breakdown of a word, from the cache or a fresh
 // LLM call (then cached globally by the canonical key).
 func (s *DefinitionService) WordBreakdown(ctx context.Context, userID, storyID, key string) (BreakdownResult, error) {
@@ -390,6 +432,23 @@ func (s *DefinitionService) WordBreakdown(ctx context.Context, userID, storyID, 
 	}
 	return s.cachedBreakdown(ctx, domain.BreakdownWord, language, key,
 		llm.WordBreakdownBuilder{Key: key})
+}
+
+// StoredWordBreakdownTrace returns the cached trace for a word breakdown if one
+// exists. It never calls the LLM or creates a cache entry.
+func (s *DefinitionService) StoredWordBreakdownTrace(ctx context.Context, userID, storyID, key string) (BreakdownTrace, bool, error) {
+	_, language, err := s.story(ctx, userID, storyID)
+	if err != nil {
+		return BreakdownTrace{}, false, err
+	}
+	b, err := s.repo.GetBreakdown(ctx, domain.BreakdownWord, language, key)
+	if errors.Is(err, db.ErrNotFound) {
+		return BreakdownTrace{}, false, nil
+	}
+	if err != nil {
+		return BreakdownTrace{}, false, err
+	}
+	return breakdownTrace(domain.BreakdownWord, language, key, breakdownSourceCache, true, b.CreatedAt), true, nil
 }
 
 // cachedBreakdown returns a cached breakdown or computes, stores, and returns one.

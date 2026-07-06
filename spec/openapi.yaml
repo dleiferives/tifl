@@ -1994,7 +1994,54 @@ components:
             $ref: "#/components/schemas/LLMCall"
         cost:
           $ref: "#/components/schemas/CostSummary"
-      required: [session, llm_calls, cost]
+        reader_traces:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReaderTrace"
+      required: [session, llm_calls, cost, reader_traces]
+    ReaderTrace:
+      type: object
+      description: >
+        One reader-side trace row included in the session debug payload. Rows are
+        derived from stored data only; debug reads do not trigger new lookup,
+        breakdown, Wiktionary, or LLM work.
+      properties:
+        kind:
+          type: string
+          enum: [definition_lookup, sentence_breakdown, word_breakdown]
+          x-enum-varnames:
+            - ReaderTraceKindDefinitionLookup
+            - ReaderTraceKindSentenceBreakdown
+            - ReaderTraceKindWordBreakdown
+        story_id: { type: string }
+        language: { type: string }
+        key:
+          type: string
+          description: Word/item key for definition and word-breakdown rows.
+        position:
+          type: integer
+          description: Token position for the row's story context.
+        source:
+          type: string
+          description: Winning definition source, or breakdown source such as cache/llm.
+        status:
+          type: string
+          enum: [hit, miss, skipped]
+          x-enum-varnames:
+            - ReaderTraceStatusHit
+            - ReaderTraceStatusMiss
+            - ReaderTraceStatusSkipped
+        created_at:
+          type: number
+          format: double
+          description: Unix seconds for cached breakdown rows, when available.
+        definition_trace:
+          allOf: [{ $ref: "#/components/schemas/DefinitionTrace" }]
+          x-go-type-skip-optional-pointer: false
+        breakdown_trace:
+          allOf: [{ $ref: "#/components/schemas/BreakdownTrace" }]
+          x-go-type-skip-optional-pointer: false
+      required: [kind, story_id, language, position, source, status]
     AdminContext:
       type: object
       description: >
@@ -2231,6 +2278,60 @@ components:
           type: string
           description: Readable sentence text reconstructed from story tokens.
       required: [index, start_position, end_position, text]
+    BreakdownTrace:
+      type: object
+      description: Debug-safe source trace for a reader breakdown lookup.
+      properties:
+        scope:
+          type: string
+          enum: [sentence, word]
+          x-enum-varnames:
+            - BreakdownTraceScopeSentence
+            - BreakdownTraceScopeWord
+        language: { type: string }
+        cache_key: { type: string }
+        source:
+          type: string
+          enum: [cache, llm]
+          x-enum-varnames:
+            - BreakdownTraceSourceCache
+            - BreakdownTraceSourceLLM
+        cache_hit: { type: boolean }
+        sentence:
+          allOf: [{ $ref: "#/components/schemas/SentenceBreakdownTrace" }]
+          x-go-type-skip-optional-pointer: false
+        word:
+          allOf: [{ $ref: "#/components/schemas/WordBreakdownTrace" }]
+          x-go-type-skip-optional-pointer: false
+        created_at:
+          type: number
+          format: double
+      required: [scope, language, cache_key, source, cache_hit]
+    SentenceBreakdownTrace:
+      type: object
+      description: Sentence-specific breakdown trace metadata.
+      properties:
+        span:
+          $ref: "#/components/schemas/SentenceSpan"
+        structure_key: { type: string }
+        structure_template: { type: string }
+        structure_hint:
+          type: string
+          enum: [hit, miss, not_consulted]
+          x-enum-varnames:
+            - SentenceBreakdownTraceStructureHintHit
+            - SentenceBreakdownTraceStructureHintMiss
+            - SentenceBreakdownTraceStructureHintNotConsulted
+        phrase_cache_match_count:
+          type: integer
+          minimum: 0
+      required: [span, structure_hint, phrase_cache_match_count]
+    WordBreakdownTrace:
+      type: object
+      description: Word-specific breakdown trace metadata.
+      properties:
+        canonical_key: { type: string }
+      required: [canonical_key]
     StoryLoad:
       type: object
       description: Everything the reader needs at load time, in one response.

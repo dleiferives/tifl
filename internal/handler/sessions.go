@@ -16,6 +16,7 @@ import (
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/handler/oapigen"
 	"github.com/dleiferives/tifl/internal/lang"
+	"github.com/dleiferives/tifl/internal/reader"
 	skillcalc "github.com/dleiferives/tifl/internal/skills"
 	"github.com/dleiferives/tifl/internal/story"
 )
@@ -139,11 +140,108 @@ func (h *Handler) getSessionDebug(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	readerTraces, err := h.sessionReaderTraceDTOs(r.Context(), userID, detail.Session)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, sessionDebugDTO{
-		Session:  toSessionDetailDTO(detail),
-		LlmCalls: h.toLLMCallDTOsWithCost(calls),
-		Cost:     h.costSummary(calls),
+		Session:      toSessionDetailDTO(detail),
+		LlmCalls:     h.toLLMCallDTOsWithCost(calls),
+		Cost:         h.costSummary(calls),
+		ReaderTraces: readerTraces,
 	})
+}
+
+func (h *Handler) sessionReaderTraceDTOs(ctx context.Context, userID string, sess domain.Session) ([]readerTraceDTO, error) {
+	if sess.StoryID == nil || *sess.StoryID == "" {
+		return []readerTraceDTO{}, nil
+	}
+	storyID := *sess.StoryID
+	tokens, err := h.repo.ListStoryTokens(ctx, storyID)
+	if err != nil {
+		return nil, err
+	}
+
+	keys := make([]string, 0)
+	firstPosition := make(map[string]int)
+	for _, token := range tokens {
+		if !token.IsWord || token.ItemKey == "" {
+			continue
+		}
+		if _, ok := firstPosition[token.ItemKey]; ok {
+			continue
+		}
+		firstPosition[token.ItemKey] = token.Position
+		keys = append(keys, token.ItemKey)
+	}
+
+	traces := make([]readerTraceDTO, 0)
+	for _, key := range keys {
+		res, ok, err := h.defs.ResolveStoredWithTrace(ctx, userID, storyID, key)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+		trace := definitionTraceFromReader(res.Trace)
+		traces = append(traces, readerTraceDTO{
+			Kind:            oapigen.ReaderTraceKindDefinitionLookup,
+			StoryId:         storyID,
+			Language:        sess.Language,
+			Key:             key,
+			Position:        firstPosition[key],
+			Source:          res.Trace.WinningSource,
+			Status:          oapigen.ReaderTraceStatusHit,
+			DefinitionTrace: &trace,
+		})
+	}
+
+	for _, span := range reader.SentenceSpans(tokens) {
+		trace, ok, err := h.defs.StoredSentenceBreakdownTrace(ctx, userID, storyID, span.StartPosition)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+		dto := breakdownTraceFromReader(trace)
+		traces = append(traces, readerTraceDTO{
+			Kind:           oapigen.ReaderTraceKindSentenceBreakdown,
+			StoryId:        storyID,
+			Language:       sess.Language,
+			Position:       span.StartPosition,
+			Source:         trace.Source,
+			Status:         oapigen.ReaderTraceStatusHit,
+			CreatedAt:      trace.CreatedAt,
+			BreakdownTrace: &dto,
+		})
+	}
+
+	for _, key := range keys {
+		trace, ok, err := h.defs.StoredWordBreakdownTrace(ctx, userID, storyID, key)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+		dto := breakdownTraceFromReader(trace)
+		traces = append(traces, readerTraceDTO{
+			Kind:           oapigen.ReaderTraceKindWordBreakdown,
+			StoryId:        storyID,
+			Language:       sess.Language,
+			Key:            key,
+			Position:       firstPosition[key],
+			Source:         trace.Source,
+			Status:         oapigen.ReaderTraceStatusHit,
+			CreatedAt:      trace.CreatedAt,
+			BreakdownTrace: &dto,
+		})
+	}
+
+	return traces, nil
 }
 
 func (h *Handler) recordTargetPreviewGuess(w http.ResponseWriter, r *http.Request) {
