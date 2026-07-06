@@ -42,6 +42,7 @@ func testRepository(t *testing.T, newRepo repoFactory) {
 	run("TenantIsolation", testTenantIsolation)
 	run("AuthSecurityEvents", testAuthSecurityEvents)
 	run("LLMCalls", testLLMCalls)
+	run("LLMObservability", testLLMObservability)
 	run("ReaderEvents", testReaderEvents)
 	run("DefinitionsBreakdowns", testDefinitionsBreakdowns)
 	run("Pipeline", testPipeline)
@@ -890,6 +891,85 @@ func testLLMCalls(t *testing.T, repo db.Repository) {
 		got[0].RawResponse == nil || *got[0].RawResponse != rawResponse ||
 		got[0].ParsedOutput == nil || *got[0].ParsedOutput != parsedOutput {
 		t.Fatalf("ListSessionLLMCalls did not round-trip payloads: %+v", got[0])
+	}
+}
+
+// testLLMObservability exercises the admin call log and token aggregation (#24)
+// on both backends, so the per-dialect day-bucket expression is proven to bucket
+// identically. Two calendar days across two models, plus a filter and a
+// payload-free list check.
+func testLLMObservability(t *testing.T, repo db.Repository) {
+	ctx := context.Background()
+	sess, uid := "obs-sess", "obs-user"
+	in, out := 1_000_000, 1_000_000
+	sys := "system prompt"
+	// day 0 (called_at=1000 -> day 0), model-a and model-b; day 1 (86400+1000),
+	// model-a. prompt_version differs so we can filter.
+	rows := []domain.LLMCall{
+		{CallID: "o1", SessionID: &sess, UserID: &uid, Kind: "story_generator", PromptVersion: "v1", Model: "model-a", InputTokens: &in, OutputTokens: &out, Status: "success", SystemPrompt: &sys, CalledAt: 1000},
+		{CallID: "o2", SessionID: &sess, UserID: &uid, Kind: "grader", PromptVersion: "v2", Model: "model-b", InputTokens: &in, OutputTokens: &out, Status: "success", CalledAt: 2000},
+		{CallID: "o3", SessionID: &sess, UserID: &uid, Kind: "grader", PromptVersion: "v1", Model: "model-a", InputTokens: &in, OutputTokens: &out, Status: "error", CalledAt: 86400 + 1000},
+	}
+	for _, r := range rows {
+		must(t, repo.InsertLLMCall(ctx, r))
+	}
+
+	// Filtered list: only v1 calls, newest first, and payloads must be absent.
+	list, err := repo.ListLLMCalls(ctx, domain.LLMCallFilter{PromptVersion: "v1"})
+	must(t, err)
+	if len(list) != 2 || list[0].CallID != "o3" || list[1].CallID != "o1" {
+		t.Fatalf("ListLLMCalls(v1) = %+v, want [o3 o1] newest first", list)
+	}
+	if list[1].SystemPrompt != nil {
+		t.Fatalf("ListLLMCalls must not carry payload columns: %+v", list[1])
+	}
+
+	// GetLLMCall returns full payloads; unknown id is ErrNotFound.
+	full, err := repo.GetLLMCall(ctx, "o1")
+	must(t, err)
+	if full.SystemPrompt == nil || *full.SystemPrompt != sys {
+		t.Fatalf("GetLLMCall did not return payloads: %+v", full)
+	}
+	if _, err := repo.GetLLMCall(ctx, "missing"); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("GetLLMCall(missing) err = %v, want ErrNotFound", err)
+	}
+
+	// ListSessionLLMCallsAll ignores the user filter and returns all three.
+	all, err := repo.ListSessionLLMCallsAll(ctx, sess)
+	must(t, err)
+	if len(all) != 3 {
+		t.Fatalf("ListSessionLLMCallsAll = %d rows, want 3", len(all))
+	}
+
+	// Aggregate by day×model: three buckets (day0/a, day0/b, day1/a), each 1 call
+	// with 1M input + 1M output tokens. Day buckets must be 0 and 1 on both engines.
+	aggs, err := repo.AggregateLLMTokens(ctx, domain.LLMCallFilter{}, domain.LLMTokenGroup{Day: true, Model: true})
+	must(t, err)
+	if len(aggs) != 3 {
+		t.Fatalf("AggregateLLMTokens buckets = %d, want 3: %+v", len(aggs), aggs)
+	}
+	type key struct {
+		day   int64
+		model string
+	}
+	seen := map[key]domain.LLMTokenAggregate{}
+	for _, a := range aggs {
+		seen[key{a.Day, a.Model}] = a
+		if a.Calls != 1 || a.InputTokens != 1_000_000 || a.OutputTokens != 1_000_000 {
+			t.Fatalf("bucket %+v: want 1 call / 1M+1M tokens", a)
+		}
+	}
+	for _, want := range []key{{0, "model-a"}, {0, "model-b"}, {1, "model-a"}} {
+		if _, ok := seen[want]; !ok {
+			t.Fatalf("missing bucket %+v in %+v", want, aggs)
+		}
+	}
+
+	// A user filter that matches nothing returns no buckets (not an error).
+	empty, err := repo.AggregateLLMTokens(ctx, domain.LLMCallFilter{UserID: "nobody"}, domain.LLMTokenGroup{Model: true})
+	must(t, err)
+	if len(empty) != 0 {
+		t.Fatalf("AggregateLLMTokens(nobody) = %+v, want empty", empty)
 	}
 }
 

@@ -66,6 +66,45 @@ type LLMCall struct {
 	CalledAt      float64 // Unix seconds
 }
 
+// LLMCallFilter narrows the global call log and cost aggregations (#24). Every
+// field is optional; a zero value matches everything. Time bounds are Unix
+// seconds and are half-open [Since, Until) when set.
+type LLMCallFilter struct {
+	UserID        string
+	SessionID     string
+	Model         string
+	Kind          string
+	Status        string
+	PromptVersion string
+	Since         float64 // 0 = no lower bound
+	Until         float64 // 0 = no upper bound
+	Limit         int     // 0 = repository default
+	Offset        int
+}
+
+// LLMTokenGroup selects which dimensions a token aggregation groups by. At least
+// one must be set; unset dimensions collapse into the buckets. Day buckets are
+// UTC calendar days derived from called_at.
+type LLMTokenGroup struct {
+	Day     bool
+	Model   bool
+	Kind    bool
+	Session bool
+}
+
+// LLMTokenAggregate is one GROUP BY bucket of token usage over llm_calls. Only
+// the key fields named by the requesting LLMTokenGroup are populated; cost is
+// derived by the caller from tokens × configured pricing, never stored here.
+type LLMTokenAggregate struct {
+	Day          int64 // days since Unix epoch (UTC); valid when grouped by day
+	Model        string
+	Kind         string
+	SessionID    string
+	Calls        int
+	InputTokens  int64
+	OutputTokens int64
+}
+
 // UserKnowledge is a user's acquisition state for one knowledge item — the
 // central table the selection layer reads on every generation request. The
 // nullable fields are pointers so "never set" is distinct from zero. See

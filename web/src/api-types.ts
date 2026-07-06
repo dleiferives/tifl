@@ -766,6 +766,126 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Report whether the caller has admin access
+         * @description Returns is_admin=true for admins. Non-admins receive 404 like every /admin route, so the client learns its admin state from the status code without the server ever advertising the admin surface. In local/no-auth desktop mode the single local user is always an admin (#24).
+         */
+        get: operations["getAdminContext"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/sessions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Admin lookup of any user's session debug payload
+         * @description Returns the full session debug payload (detail, stage timeline, LLM calls with payloads, and derived cost) for any session regardless of owner. Read-only. Non-admins get 404 (#24).
+         */
+        get: operations["adminGetSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/users/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Admin lookup of a user's sessions and cost rollups
+         * @description Resolves the path id as a user_id, or as an email address when it contains '@', then returns that user plus their sessions and cost rollups (per day, per model). Read-only. Non-admins get 404 (#24).
+         */
+        get: operations["adminGetUser"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/calls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Global LLM call log, filtered and paginated
+         * @description Cross-user call log for regression hunting and cost review, newest first. Filterable by user, model, kind, status, prompt_version, and a [from, to) time window; paginated by limit/offset. Rows omit the prompt/response payloads (fetch those via GET /admin/calls/{id}). Read-only. Non-admins get 404 (#24/#134/#212).
+         */
+        get: operations["adminListCalls"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/calls/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Full detail of one LLM call
+         * @description Returns one call by id with its full prompt/response payload columns and derived cost — the expandable detail behind a call-log row. Read-only. Non-admins get 404 (#24).
+         */
+        get: operations["adminGetCall"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/cost": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Global cost rollup by day × model for a window
+         * @description Aggregates spend across all users grouped by UTC day and model over a [from, to) window (defaults to all time). Buckets with unpriced models report cost_known=false rather than a zero. Read-only. Non-admins get 404 (#24).
+         */
+        get: operations["adminCostRollup"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1084,10 +1204,90 @@ export interface components {
             error_payload?: string;
             /** Format: double */
             called_at: number;
+            /**
+             * Format: double
+             * @description Derived USD cost (input+output tokens × configured model pricing). Present only when cost_known is true.
+             */
+            cost_usd?: number;
+            /** @description Whether this call's model has configured pricing. When false the cost is unknown (not zero) and clients render it as such (#24). */
+            cost_known: boolean;
+        };
+        /** @description One row of the admin global call log (#24/#134). Deliberately omits the prompt/response payload columns so the list stays cheap and logs do not leak into casual scrolling; fetch full payloads per call via GET /admin/calls/{id}. */
+        LLMCallLogRow: {
+            call_id: string;
+            session_id?: string;
+            user_id?: string;
+            kind: string;
+            prompt_version: string;
+            model: string;
+            input_tokens?: number;
+            output_tokens?: number;
+            latency_ms?: number;
+            /** @enum {string} */
+            status: "success" | "error" | "timeout";
+            error_detail?: string;
+            /** Format: double */
+            called_at: number;
+            /** Format: double */
+            cost_usd?: number;
+            cost_known: boolean;
+        };
+        /** @description Aggregate cost of a set of calls, deriving unknown pricing honestly. */
+        CostSummary: {
+            /**
+             * Format: double
+             * @description Sum of costs over calls whose model had configured pricing.
+             */
+            total_usd: number;
+            /** @description True when at least one call's model lacked pricing, so total_usd understates spend. */
+            has_unknown: boolean;
         };
         SessionDebug: {
             session: components["schemas"]["SessionDetail"];
             llm_calls: components["schemas"]["LLMCall"][];
+            cost: components["schemas"]["CostSummary"];
+        };
+        /** @description The current caller's admin capability. Only admins reach this endpoint (non-admins get 404 like every /admin route), so is_admin is always true in a 200 response; the client treats a 404 as "not an admin" (#24). */
+        AdminContext: {
+            is_admin: boolean;
+        };
+        /** @description One aggregation bucket of LLM spend. day and/or model are set depending on how the rollup was grouped. cost_usd is present only when every call in the bucket had known pricing (cost_known true); a bucket for an unpriced model reports cost_known false rather than a misleading zero. */
+        CostBucket: {
+            /** @description UTC calendar day (YYYY-MM-DD); present for day-grouped buckets. */
+            day?: string;
+            /** @description Model name; present for model-grouped buckets. */
+            model?: string;
+            calls: number;
+            /** Format: int64 */
+            input_tokens: number;
+            /** Format: int64 */
+            output_tokens: number;
+            /** Format: double */
+            cost_usd?: number;
+            cost_known: boolean;
+        };
+        /** @description A page of the global call log, filtered and paginated. */
+        AdminCallLog: {
+            calls: components["schemas"]["LLMCallLogRow"][];
+            limit: number;
+            offset: number;
+            has_more: boolean;
+        };
+        /** @description Admin lookup of one user — their sessions plus cost rollups. */
+        AdminUserDetail: {
+            user: components["schemas"]["User"];
+            sessions: components["schemas"]["SessionOverview"][];
+            cost_by_day: components["schemas"]["CostBucket"][];
+            cost_by_model: components["schemas"]["CostBucket"][];
+        };
+        /** @description Global spend for a time window, grouped by day × model. */
+        AdminCostRollup: {
+            buckets: components["schemas"]["CostBucket"][];
+            total: components["schemas"]["CostSummary"];
+            /** Format: double */
+            window_from?: number;
+            /** Format: double */
+            window_to?: number;
         };
         /** @description A session's content, discriminated by content_type. Exactly one of story or phrase_set is present. */
         SessionContent: {
@@ -2670,6 +2870,171 @@ export interface operations {
                     "application/json": components["schemas"]["TaskReportResponse"];
                 };
             };
+        };
+    };
+    getAdminContext: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Admin context */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminContext"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    adminGetSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session debug detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionDebug"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    adminGetUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A user_id, or an email address (contains '@'). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description User detail with cost rollups */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminUserDetail"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    adminListCalls: {
+        parameters: {
+            query?: {
+                user_id?: string;
+                model?: string;
+                kind?: string;
+                status?: "success" | "error" | "timeout";
+                prompt_version?: string;
+                session_id?: string;
+                /** @description Lower bound (inclusive) on called_at, Unix seconds. */
+                from?: number;
+                /** @description Upper bound (exclusive) on called_at, Unix seconds. */
+                to?: number;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Call-log page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCallLog"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    adminGetCall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Call detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LLMCall"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    adminCostRollup: {
+        parameters: {
+            query?: {
+                /** @description Lower bound (inclusive) on called_at, Unix seconds. */
+                from?: number;
+                /** @description Upper bound (exclusive) on called_at, Unix seconds. */
+                to?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cost rollup */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCostRollup"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
         };
     };
 }

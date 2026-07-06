@@ -46,6 +46,29 @@ server:
   media_s3_secret_key_env: AWS_SECRET_ACCESS_KEY  # env var name for S3 secret
   media_s3_signed_urls: true       # presign media URLs by default
 
+  # Model pricing for cost tracking (#24). USD per 1,000,000 tokens, per model.
+  # Cost is derived at query time from recorded tokens — never stored — so a
+  # price change here reprices history on next view. The reserved "default"
+  # entry prices any model not listed; omit it to report unlisted models as
+  # "unknown" (never zero). Omitting model_pricing entirely reports every call
+  # as unknown cost, which is fine — the debug/admin views still render.
+  # model_pricing:
+  #   default:
+  #     input_per_million: 0.5
+  #     output_per_million: 1.5
+  #   openrouter/free:
+  #     input_per_million: 0
+  #     output_per_million: 0
+  #   claude-3-5-haiku-latest:
+  #     input_per_million: 0.8
+  #     output_per_million: 4
+  # Admin surface (#24): emails granted the read-only /admin/* endpoints and the
+  # in-app admin UI. A user is an admin iff their email is listed here. In
+  # local/no-auth desktop mode the single local user is always an admin, so this
+  # only applies under auth_mode: jwt. Also settable via ADMIN_EMAILS (CSV).
+  # admin_emails:
+  #   - admin@example.com
+
 # The LLM gateway (cmd/gateway). The example targets a local OpenCode server —
 # a credential-free way to run a real model. Start it with:
 #   opencode serve --port 4202 --hostname 127.0.0.1

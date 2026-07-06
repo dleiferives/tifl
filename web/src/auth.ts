@@ -23,6 +23,7 @@ export async function initializeAuthentication() {
     } else {
       appStore.setLocalMode(profile);
     }
+    void appStore.refreshAdminContext();
     return;
   } catch {
     // In JWT mode, the profile request may still fail before a refresh cookie is
@@ -87,6 +88,7 @@ async function acceptAuthentication(response: AuthResponse) {
   } catch {
     appStore.setProfile(null);
   }
+  void appStore.refreshAdminContext();
 }
 
 async function runAuthOperation(operation: () => Promise<void>, kind: "login" | "register") {

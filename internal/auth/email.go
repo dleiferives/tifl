@@ -57,6 +57,13 @@ func normalizeEmail(raw string) (string, error) {
 	return email.Canonical, nil
 }
 
+// CanonicalizeEmail normalizes raw the same way registration/login does, for
+// comparison against a user's stored EmailCanonical (e.g. admin-list membership,
+// #24). Returns an error for addresses that cannot be parsed.
+func CanonicalizeEmail(raw string) (string, error) {
+	return normalizeEmail(raw)
+}
+
 // SecurityEmailHash returns a stable digest for security event rows without
 // persisting plaintext email addresses.
 func SecurityEmailHash(raw string) string {

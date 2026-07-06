@@ -41,23 +41,34 @@ const (
 	AuthNone AuthMode = "none"
 )
 
+// ModelPrice is the per-1M-token price of one model, used to derive call cost
+// at query time (#24). Prices change monthly and vary by gateway, so they live
+// in config, not code or the database.
+type ModelPrice struct {
+	InputPerMillion  float64 // USD per 1,000,000 prompt tokens
+	OutputPerMillion float64 // USD per 1,000,000 completion tokens
+}
+
 // Config is the fully-resolved API-server configuration.
 type Config struct {
-	Addr                      string      // listen address for the API server
-	StorageMode               StorageMode // which Repository implementation to use
-	DBPath                    string      // SQLite file path (sqlite mode)
-	DatabaseURL               string      // Postgres DSN (postgres mode)
-	LLMBaseURL                string      // where the LLM gateway is listening
-	LLMAPIKey                 string      // optional gateway auth
-	LLMModel                  string      // model name sent to the gateway (blank = gateway default)
-	AuthMode                  AuthMode    // jwt (cloud) or none (desktop-local)
-	JWTSecret                 string      // signing key when AuthMode == jwt
-	AllowInsecureAuthCookie   bool        // development-only: permit refresh cookie over HTTP
-	FrontendDir               string      // compiled SolidJS assets (web/dist)
-	LLMBudgetTokens           int64       // per-user token ceiling per window; 0 = unlimited (#208)
-	LLMBudgetWindowHours      int         // rolling budget window (default 24h)
-	PredictorMode             string      // "legacy" (default) | "fsrs" (#209)
-	TaskReportRegenerationCap int         // per-session task regenerations allowed (default 3)
+	Addr                      string                // listen address for the API server
+	StorageMode               StorageMode           // which Repository implementation to use
+	DBPath                    string                // SQLite file path (sqlite mode)
+	DatabaseURL               string                // Postgres DSN (postgres mode)
+	LLMBaseURL                string                // where the LLM gateway is listening
+	LLMAPIKey                 string                // optional gateway auth
+	LLMModel                  string                // model name sent to the gateway (blank = gateway default)
+	AuthMode                  AuthMode              // jwt (cloud) or none (desktop-local)
+	JWTSecret                 string                // signing key when AuthMode == jwt
+	AllowInsecureAuthCookie   bool                  // development-only: permit refresh cookie over HTTP
+	FrontendDir               string                // compiled SolidJS assets (web/dist)
+	LLMBudgetTokens           int64                 // per-user token ceiling per window; 0 = unlimited (#208)
+	LLMBudgetWindowHours      int                   // rolling budget window (default 24h)
+	PredictorMode             string                // "legacy" (default) | "fsrs" (#209)
+	TaskReportRegenerationCap int                   // per-session task regenerations allowed (default 3)
+	ModelPricing              map[string]ModelPrice // model name -> price; excludes the reserved "default" key (#24)
+	DefaultModelPricing       *ModelPrice           // price for models absent from ModelPricing; nil = report unknown (#24)
+	AdminEmails               []string              // emails granted the read-only admin surface (#24)
 	MediaStorageMode          MediaStorageMode
 	MediaLocalRoot            string
 	MediaPublicBaseURL        string
@@ -116,15 +127,20 @@ type file struct {
 		LLMBudgetWindowHours      int    `yaml:"llm_budget_window_hours"`
 		PredictorMode             string `yaml:"predictor_mode"`
 		TaskReportRegenerationCap *int   `yaml:"task_report_regeneration_cap"`
-		MediaStorageMode          string `yaml:"media_storage_mode"`
-		MediaLocalRoot            string `yaml:"media_local_root"`
-		MediaPublicBaseURL        string `yaml:"media_public_base_url"`
-		MediaS3Bucket             string `yaml:"media_s3_bucket"`
-		MediaS3Endpoint           string `yaml:"media_s3_endpoint"`
-		MediaS3Region             string `yaml:"media_s3_region"`
-		MediaS3AccessKeyEnv       string `yaml:"media_s3_access_key_env"`
-		MediaS3SecretKeyEnv       string `yaml:"media_s3_secret_key_env"`
-		MediaS3SignedURLs         *bool  `yaml:"media_s3_signed_urls"`
+		ModelPricing              map[string]struct {
+			InputPerMillion  float64 `yaml:"input_per_million"`
+			OutputPerMillion float64 `yaml:"output_per_million"`
+		} `yaml:"model_pricing"`
+		AdminEmails               []string `yaml:"admin_emails"`
+		MediaStorageMode          string   `yaml:"media_storage_mode"`
+		MediaLocalRoot            string   `yaml:"media_local_root"`
+		MediaPublicBaseURL        string   `yaml:"media_public_base_url"`
+		MediaS3Bucket             string   `yaml:"media_s3_bucket"`
+		MediaS3Endpoint           string   `yaml:"media_s3_endpoint"`
+		MediaS3Region             string   `yaml:"media_s3_region"`
+		MediaS3AccessKeyEnv       string   `yaml:"media_s3_access_key_env"`
+		MediaS3SecretKeyEnv       string   `yaml:"media_s3_secret_key_env"`
+		MediaS3SignedURLs         *bool    `yaml:"media_s3_signed_urls"`
 	} `yaml:"server"`
 	Gateway struct {
 		Addr        string   `yaml:"addr"`
@@ -208,6 +224,27 @@ func Load(path string) (Config, error) {
 	if cfg.AuthMode == AuthJWT && len([]byte(cfg.JWTSecret)) < 32 {
 		return Config{}, fmt.Errorf("config: jwt_secret must be at least 32 bytes when auth_mode is jwt")
 	}
+
+	// Model pricing (#24): the reserved "default" key becomes the fallback for
+	// unlisted models; every other entry is a per-model price.
+	pricing := make(map[string]ModelPrice, len(s.ModelPricing))
+	for name, p := range s.ModelPricing {
+		price := ModelPrice{InputPerMillion: p.InputPerMillion, OutputPerMillion: p.OutputPerMillion}
+		if strings.EqualFold(strings.TrimSpace(name), "default") {
+			def := price
+			cfg.DefaultModelPricing = &def
+			continue
+		}
+		pricing[name] = price
+	}
+	cfg.ModelPricing = pricing
+
+	adminEmails := s.AdminEmails
+	if env := splitCSV(os.Getenv("ADMIN_EMAILS")); len(env) > 0 {
+		adminEmails = env
+	}
+	cfg.AdminEmails = cleanStrings(adminEmails)
+
 	return cfg, nil
 }
 

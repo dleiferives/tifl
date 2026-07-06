@@ -1236,6 +1236,216 @@ paths:
                 $ref: "#/components/schemas/TaskReportResponse"
         "500":
           $ref: "#/components/responses/InternalError"
+  /admin/context:
+    get:
+      summary: Report whether the caller has admin access
+      description: >
+        Returns is_admin=true for admins. Non-admins receive 404 like every
+        /admin route, so the client learns its admin state from the status code
+        without the server ever advertising the admin surface. In local/no-auth
+        desktop mode the single local user is always an admin (#24).
+      operationId: getAdminContext
+      responses:
+        "200":
+          description: Admin context
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminContext"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /admin/sessions/{id}:
+    get:
+      summary: Admin lookup of any user's session debug payload
+      description: >
+        Returns the full session debug payload (detail, stage timeline, LLM
+        calls with payloads, and derived cost) for any session regardless of
+        owner. Read-only. Non-admins get 404 (#24).
+      operationId: adminGetSession
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      responses:
+        "200":
+          description: Session debug detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionDebug"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /admin/users/{id}:
+    get:
+      summary: Admin lookup of a user's sessions and cost rollups
+      description: >
+        Resolves the path id as a user_id, or as an email address when it
+        contains '@', then returns that user plus their sessions and cost
+        rollups (per day, per model). Read-only. Non-admins get 404 (#24).
+      operationId: adminGetUser
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: A user_id, or an email address (contains '@').
+      responses:
+        "200":
+          description: User detail with cost rollups
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUserDetail"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /admin/calls:
+    get:
+      summary: Global LLM call log, filtered and paginated
+      description: >
+        Cross-user call log for regression hunting and cost review, newest
+        first. Filterable by user, model, kind, status, prompt_version, and a
+        [from, to) time window; paginated by limit/offset. Rows omit the
+        prompt/response payloads (fetch those via GET /admin/calls/{id}).
+        Read-only. Non-admins get 404 (#24/#134/#212).
+      operationId: adminListCalls
+      parameters:
+        - name: user_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: model
+          in: query
+          required: false
+          schema: { type: string }
+        - name: kind
+          in: query
+          required: false
+          schema: { type: string }
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [success, error, timeout]
+        - name: prompt_version
+          in: query
+          required: false
+          schema: { type: string }
+        - name: session_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: from
+          in: query
+          required: false
+          schema: { type: number, format: double }
+          description: Lower bound (inclusive) on called_at, Unix seconds.
+        - name: to
+          in: query
+          required: false
+          schema: { type: number, format: double }
+          description: Upper bound (exclusive) on called_at, Unix seconds.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: Call-log page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminCallLog"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /admin/calls/{id}:
+    get:
+      summary: Full detail of one LLM call
+      description: >
+        Returns one call by id with its full prompt/response payload columns and
+        derived cost — the expandable detail behind a call-log row. Read-only.
+        Non-admins get 404 (#24).
+      operationId: adminGetCall
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Call detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LLMCall"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /admin/cost:
+    get:
+      summary: Global cost rollup by day × model for a window
+      description: >
+        Aggregates spend across all users grouped by UTC day and model over a
+        [from, to) window (defaults to all time). Buckets with unpriced models
+        report cost_known=false rather than a zero. Read-only. Non-admins get
+        404 (#24).
+      operationId: adminCostRollup
+      parameters:
+        - name: from
+          in: query
+          required: false
+          schema: { type: number, format: double }
+          description: Lower bound (inclusive) on called_at, Unix seconds.
+        - name: to
+          in: query
+          required: false
+          schema: { type: number, format: double }
+          description: Upper bound (exclusive) on called_at, Unix seconds.
+      responses:
+        "200":
+          description: Cost rollup
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminCostRollup"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
 components:
   securitySchemes:
     bearerAuth:
@@ -1710,6 +1920,17 @@ components:
           type: string
           description: Raw gateway error response body when available.
         called_at: { type: number, format: double }
+        cost_usd:
+          type: number
+          format: double
+          description: >
+            Derived USD cost (input+output tokens × configured model pricing).
+            Present only when cost_known is true.
+        cost_known:
+          type: boolean
+          description: >
+            Whether this call's model has configured pricing. When false the
+            cost is unknown (not zero) and clients render it as such (#24).
       required:
         - call_id
         - kind
@@ -1717,6 +1938,51 @@ components:
         - model
         - status
         - called_at
+        - cost_known
+    LLMCallLogRow:
+      type: object
+      description: >
+        One row of the admin global call log (#24/#134). Deliberately omits the
+        prompt/response payload columns so the list stays cheap and logs do not
+        leak into casual scrolling; fetch full payloads per call via
+        GET /admin/calls/{id}.
+      properties:
+        call_id: { type: string }
+        session_id: { type: string }
+        user_id: { type: string }
+        kind: { type: string }
+        prompt_version: { type: string }
+        model: { type: string }
+        input_tokens: { type: integer }
+        output_tokens: { type: integer }
+        latency_ms: { type: integer }
+        status:
+          type: string
+          enum: [success, error, timeout]
+        error_detail: { type: string }
+        called_at: { type: number, format: double }
+        cost_usd: { type: number, format: double }
+        cost_known: { type: boolean }
+      required:
+        - call_id
+        - kind
+        - prompt_version
+        - model
+        - status
+        - called_at
+        - cost_known
+    CostSummary:
+      type: object
+      description: Aggregate cost of a set of calls, deriving unknown pricing honestly.
+      properties:
+        total_usd:
+          type: number
+          format: double
+          description: Sum of costs over calls whose model had configured pricing.
+        has_unknown:
+          type: boolean
+          description: True when at least one call's model lacked pricing, so total_usd understates spend.
+      required: [total_usd, has_unknown]
     SessionDebug:
       type: object
       properties:
@@ -1726,7 +1992,82 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/LLMCall"
-      required: [session, llm_calls]
+        cost:
+          $ref: "#/components/schemas/CostSummary"
+      required: [session, llm_calls, cost]
+    AdminContext:
+      type: object
+      description: >
+        The current caller's admin capability. Only admins reach this endpoint
+        (non-admins get 404 like every /admin route), so is_admin is always true
+        in a 200 response; the client treats a 404 as "not an admin" (#24).
+      properties:
+        is_admin: { type: boolean }
+      required: [is_admin]
+    CostBucket:
+      type: object
+      description: >
+        One aggregation bucket of LLM spend. day and/or model are set depending
+        on how the rollup was grouped. cost_usd is present only when every call
+        in the bucket had known pricing (cost_known true); a bucket for an
+        unpriced model reports cost_known false rather than a misleading zero.
+      properties:
+        day:
+          type: string
+          description: UTC calendar day (YYYY-MM-DD); present for day-grouped buckets.
+        model:
+          type: string
+          description: Model name; present for model-grouped buckets.
+        calls: { type: integer }
+        input_tokens: { type: integer, format: int64 }
+        output_tokens: { type: integer, format: int64 }
+        cost_usd: { type: number, format: double }
+        cost_known: { type: boolean }
+      required: [calls, input_tokens, output_tokens, cost_known]
+    AdminCallLog:
+      type: object
+      description: A page of the global call log, filtered and paginated.
+      properties:
+        calls:
+          type: array
+          items:
+            $ref: "#/components/schemas/LLMCallLogRow"
+        limit: { type: integer }
+        offset: { type: integer }
+        has_more: { type: boolean }
+      required: [calls, limit, offset, has_more]
+    AdminUserDetail:
+      type: object
+      description: Admin lookup of one user — their sessions plus cost rollups.
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        sessions:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionOverview"
+        cost_by_day:
+          type: array
+          items:
+            $ref: "#/components/schemas/CostBucket"
+        cost_by_model:
+          type: array
+          items:
+            $ref: "#/components/schemas/CostBucket"
+      required: [user, sessions, cost_by_day, cost_by_model]
+    AdminCostRollup:
+      type: object
+      description: Global spend for a time window, grouped by day × model.
+      properties:
+        buckets:
+          type: array
+          items:
+            $ref: "#/components/schemas/CostBucket"
+        total:
+          $ref: "#/components/schemas/CostSummary"
+        window_from: { type: number, format: double }
+        window_to: { type: number, format: double }
+      required: [buckets, total]
     SessionContent:
       type: object
       description: >
