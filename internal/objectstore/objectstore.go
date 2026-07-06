@@ -20,8 +20,16 @@ var (
 	// ErrNotFound is returned by Get when no object exists for the key.
 	ErrNotFound = errors.New("objectstore: object not found")
 
-	// ErrUnsupported is returned for reserved storage modes that have config
-	// shape but no implementation yet.
+	// ErrInvalidConfig is returned when a configured store is missing required
+	// provider settings or credentials.
+	ErrInvalidConfig = errors.New("objectstore: invalid storage config")
+
+	// ErrInvalidURLOptions is returned when callers request unsafe or unsupported
+	// access URL settings.
+	ErrInvalidURLOptions = errors.New("objectstore: invalid url options")
+
+	// ErrUnsupported is returned for unknown storage modes or access URL
+	// capabilities that the configured store cannot provide.
 	ErrUnsupported = errors.New("objectstore: unsupported storage mode")
 )
 
@@ -30,6 +38,7 @@ var (
 // authorization. Implementations own object persistence and key safety.
 type ObjectStore interface {
 	Put(ctx context.Context, key string, r io.Reader, contentType string) (ObjectRef, error)
+	Info(ctx context.Context, key string) (ObjectInfo, error)
 	Get(ctx context.Context, key string) (io.ReadCloser, ObjectInfo, error)
 	Delete(ctx context.Context, key string) error
 	URL(ctx context.Context, key string, opts URLOptions) (string, error)
@@ -53,7 +62,8 @@ type ObjectInfo struct {
 // URLOptions describes a future cloud/local URL request. Local storage ignores
 // Expires because local paths and configured public base URLs are not signed.
 type URLOptions struct {
-	Expires time.Duration
+	Expires       time.Duration
+	RequirePublic bool
 }
 
 const (

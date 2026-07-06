@@ -686,6 +686,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/media": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download the authenticated task media object
+         * @description Streams the media object referenced by the caller's task row. The client supplies only the task id; the server resolves the stored object key after tenant-scoped task lookup, so arbitrary object keys or local paths are never accepted from API callers.
+         */
+        get: operations["getTaskMedia"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/media/url": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Create a bounded task media access URL
+         * @description Returns a short-lived or otherwise server-scoped media access URL for the object referenced by the caller's task row. The response never includes local filesystem paths, provider object keys, or arbitrary caller-supplied object references.
+         */
+        get: operations["getTaskMediaURL"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/submit": {
         parameters: {
             query?: never;
@@ -1296,6 +1336,19 @@ export interface components {
             reference_assisted: boolean;
             grade?: components["schemas"]["Grade"];
             report?: components["schemas"]["TaskReportState"];
+        };
+        /** @description Server-issued access URL for task media. Clients should treat the URL as a refreshable bearer grant, not as durable storage identity. */
+        MediaURL: {
+            /** @description Browser-safe URL for this task's media object. */
+            url: string;
+            /**
+             * Format: int64
+             * @description Unix seconds when the client should refresh the URL.
+             */
+            expires_at: number;
+            content_type: string;
+            /** Format: int64 */
+            size: number;
         };
         /** @enum {string} */
         TaskReportReason: "malformed" | "wrong_answer_key" | "nonsensical" | "too_hard";
@@ -2485,6 +2538,58 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
+        };
+    };
+    getTaskMedia: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Task media bytes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getTaskMediaURL: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Task media access URL */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaURL"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     submitTask: {

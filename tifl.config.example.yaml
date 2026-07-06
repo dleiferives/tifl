@@ -33,18 +33,18 @@ server:
   # predictor_mode: fsrs
   # Maximum unanswered-task regenerations per session after user reports.
   # task_report_regeneration_cap: 3
-  # Binary media/object storage for future audio, scan/OCR, and uploads. Local
-  # mode stores objects below media_local_root using stable object keys. S3 mode
-  # is reserved for hosted object storage and not wired into runtime flows yet.
+  # Binary media/object storage for audio, scan/OCR, and uploads. Local mode
+  # stores objects below media_local_root using stable object keys. S3 mode uses
+  # an S3-compatible bucket such as AWS S3, Cloudflare R2, or MinIO.
   media_storage_mode: local        # local | s3                           (default local)
   media_local_root: data/media     # local media root                     (default data/media)
-  media_public_base_url: ""        # optional URL prefix for served local media
-  media_s3_bucket: ""              # future S3-compatible bucket
-  media_s3_endpoint: ""            # future S3-compatible endpoint, e.g. R2/MinIO
-  media_s3_region: ""              # future S3 region
-  media_s3_access_key_env: AWS_ACCESS_KEY_ID      # env var name for future S3 access key
-  media_s3_secret_key_env: AWS_SECRET_ACCESS_KEY  # env var name for future S3 secret
-  media_s3_signed_urls: true       # future S3 URLs should be presigned by default
+  media_public_base_url: ""        # URL prefix when serving local media or public S3/CDN objects
+  media_s3_bucket: ""              # S3-compatible bucket
+  media_s3_endpoint: ""            # optional S3-compatible endpoint, e.g. R2/MinIO
+  media_s3_region: ""              # S3 region; R2 commonly uses "auto"
+  media_s3_access_key_env: AWS_ACCESS_KEY_ID      # env var name for S3 access key
+  media_s3_secret_key_env: AWS_SECRET_ACCESS_KEY  # env var name for S3 secret
+  media_s3_signed_urls: true       # presign media URLs by default
 
 # The LLM gateway (cmd/gateway). The example targets a local OpenCode server —
 # a credential-free way to run a real model. Start it with:

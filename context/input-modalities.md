@@ -299,6 +299,6 @@ training data purposes, not for routing logic.
 - Alignment quality: word-level timestamps from TTS are often approximate. How much
   drift is acceptable before the reader sync feels broken?
 - Scan upload UX: camera capture in the browser (mobile) vs file upload (desktop)
-- Media storage lifecycle: `internal/objectstore` now defines the key/ref
-  abstraction and local filesystem implementation. Future work should add the
-  S3-compatible implementation, signed URL policy, and account-deletion cleanup.
+- Media storage lifecycle: `internal/objectstore` defines the key/ref
+  abstraction, local filesystem storage, S3-compatible storage, and bounded URL
+  policy. Future work should add account-deletion cleanup.

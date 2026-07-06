@@ -271,8 +271,7 @@ story_audio
 `file_path` should be interpreted as a media object key such as
 `story_audio/{story_id}/{audio_id}.mp3`. It must not store an absolute local
 path, a public URL, or an S3 provider-specific URL. The configured media
-`ObjectStore` maps that key to local filesystem storage or future S3-compatible
-storage.
+`ObjectStore` maps that key to local filesystem storage or S3-compatible storage.
 
 `alignment` maps each word token to a time range in the audio file. The reader
 uses this to highlight the currently-playing word during playback, and listening

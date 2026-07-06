@@ -173,12 +173,14 @@ The configured object store maps those keys to a backend:
 
 - `local`: files below `media_local_root`, with traversal-resistant key
   resolution.
-- `s3`: reserved config seam for S3-compatible storage and signed URLs.
+- `s3`: S3-compatible storage, with short-lived signed URLs by default and
+  optional public/CDN URLs through `media_public_base_url`.
 
 Handlers and domain code should validate upload size/type before writing, then
 store only the object key in SQL columns such as `story_audio.file_path` or
 `tasks.media_path`. API responses should not expose arbitrary local filesystem
-paths; cloud/public media access should go through explicit URLs or signed URLs.
+paths or accept caller-supplied object keys; media access should go through
+domain-scoped routes that return explicit URLs or proxy bytes after auth.
 
 ---
 

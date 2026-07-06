@@ -10,6 +10,7 @@ import (
 	authn "github.com/dleiferives/tifl/internal/auth"
 	"github.com/dleiferives/tifl/internal/lang"
 	"github.com/dleiferives/tifl/internal/llm"
+	"github.com/dleiferives/tifl/internal/objectstore"
 	"github.com/dleiferives/tifl/internal/predictor"
 	"github.com/dleiferives/tifl/internal/reader"
 	skillassoc "github.com/dleiferives/tifl/internal/skills"
@@ -39,6 +40,7 @@ type Handler struct {
 	taskReportRegenerationCap int                             // per-session server-side cap for task report regenerations
 	llmEnabled                bool                            // false when no LLM client: LLM-graded tasks return 503
 	models                    llm.ModelLister                 // nil when the gateway cannot list upstream models
+	media                     objectstore.ObjectStore         // nil disables media access endpoints
 	frontendDir               string
 	auth                      *authn.Service
 	cookieSecure              bool
@@ -95,6 +97,8 @@ func currentAPIRoutes() []apiRoute {
 		{Method: http.MethodPost, Path: "/api/v1/sessions/{id}/retry", Handler: (*Handler).retrySession, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/sessions/{id}/tasks", Handler: (*Handler).getSessionTasks, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/tasks/{id}", Handler: (*Handler).getTask, RequireUser: true},
+		{Method: http.MethodGet, Path: "/api/v1/tasks/{id}/media", Handler: (*Handler).getTaskMedia, RequireUser: true},
+		{Method: http.MethodGet, Path: "/api/v1/tasks/{id}/media/url", Handler: (*Handler).getTaskMediaURL, RequireUser: true},
 		{Method: http.MethodPost, Path: "/api/v1/tasks/{id}/submit", Handler: (*Handler).submitTask, RequireUser: true},
 		{Method: http.MethodPost, Path: "/api/v1/tasks/{id}/report", Handler: (*Handler).reportTask, RequireUser: true},
 		{Method: http.MethodPost, Path: "/api/v1/auth/register", Handler: (*Handler).register, AuthOnly: true},
@@ -153,6 +157,12 @@ func WithTaskRegenerationQueue(q TaskRegenerationQueue) Option {
 // endpoint. Negative values are treated as zero by config validation before this.
 func WithTaskReportRegenerationCap(cap int) Option {
 	return func(h *Handler) { h.taskReportRegenerationCap = cap }
+}
+
+// WithMediaStore enables task media download/access-url endpoints. The endpoint
+// still authorizes through task ownership before touching object storage.
+func WithMediaStore(store objectstore.ObjectStore) Option {
+	return func(h *Handler) { h.media = store }
 }
 
 func WithAuth(service *authn.Service, secureCookie bool) Option {
