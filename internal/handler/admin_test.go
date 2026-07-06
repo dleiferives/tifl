@@ -264,8 +264,8 @@ func TestAdminCallLogPromptVersionFilterAndPagination(t *testing.T) {
 	srv, repo := newObsLocalServer(t, obsPricing())
 	// 3 calls on v1, 2 on v2, interleaved by time.
 	specs := []struct {
-		pv  string
-		at  float64
+		pv string
+		at float64
 	}{
 		{"v1", 1_700_000_005},
 		{"v2", 1_700_000_004},

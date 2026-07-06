@@ -131,16 +131,16 @@ type file struct {
 			InputPerMillion  float64 `yaml:"input_per_million"`
 			OutputPerMillion float64 `yaml:"output_per_million"`
 		} `yaml:"model_pricing"`
-		AdminEmails               []string `yaml:"admin_emails"`
-		MediaStorageMode          string   `yaml:"media_storage_mode"`
-		MediaLocalRoot            string   `yaml:"media_local_root"`
-		MediaPublicBaseURL        string   `yaml:"media_public_base_url"`
-		MediaS3Bucket             string   `yaml:"media_s3_bucket"`
-		MediaS3Endpoint           string   `yaml:"media_s3_endpoint"`
-		MediaS3Region             string   `yaml:"media_s3_region"`
-		MediaS3AccessKeyEnv       string   `yaml:"media_s3_access_key_env"`
-		MediaS3SecretKeyEnv       string   `yaml:"media_s3_secret_key_env"`
-		MediaS3SignedURLs         *bool    `yaml:"media_s3_signed_urls"`
+		AdminEmails         []string `yaml:"admin_emails"`
+		MediaStorageMode    string   `yaml:"media_storage_mode"`
+		MediaLocalRoot      string   `yaml:"media_local_root"`
+		MediaPublicBaseURL  string   `yaml:"media_public_base_url"`
+		MediaS3Bucket       string   `yaml:"media_s3_bucket"`
+		MediaS3Endpoint     string   `yaml:"media_s3_endpoint"`
+		MediaS3Region       string   `yaml:"media_s3_region"`
+		MediaS3AccessKeyEnv string   `yaml:"media_s3_access_key_env"`
+		MediaS3SecretKeyEnv string   `yaml:"media_s3_secret_key_env"`
+		MediaS3SignedURLs   *bool    `yaml:"media_s3_signed_urls"`
 	} `yaml:"server"`
 	Gateway struct {
 		Addr        string   `yaml:"addr"`
