@@ -59,8 +59,26 @@ type GatewayConfig struct {
 	Provider    string // openrouter | ollama | openai | anthropic | opencode
 	UpstreamURL string // upstream base URL (required for opencode)
 	APIKey      string // upstream credential
+	APIKeys     []string
 	Model       string // default model when a request omits one
 	Agent       string // opencode only: agent to drive (default "writer")
+	Balance     string // least_in_flight | round_robin
+	MaxRetries  int    // transient-error retries before giving up
+	BaseDelayMS int    // first retry backoff delay in milliseconds
+	Gateways    []GatewayEntry
+}
+
+// GatewayEntry is one configured upstream gateway/provider. Each API key becomes
+// its own selectable endpoint in the gateway process.
+type GatewayEntry struct {
+	Name        string
+	Provider    string
+	UpstreamURL string
+	APIKey      string
+	APIKeys     []string
+	Model       string
+	Agent       string
+	Models      []string
 }
 
 // file mirrors the on-disk YAML. Both sections are optional; a binary reads only
@@ -84,12 +102,26 @@ type file struct {
 		TaskReportRegenerationCap *int   `yaml:"task_report_regeneration_cap"`
 	} `yaml:"server"`
 	Gateway struct {
-		Addr        string `yaml:"addr"`
-		Provider    string `yaml:"provider"`
-		UpstreamURL string `yaml:"upstream_url"`
-		APIKey      string `yaml:"api_key"`
-		Model       string `yaml:"model"`
-		Agent       string `yaml:"agent"`
+		Addr        string   `yaml:"addr"`
+		Provider    string   `yaml:"provider"`
+		UpstreamURL string   `yaml:"upstream_url"`
+		APIKey      string   `yaml:"api_key"`
+		APIKeys     []string `yaml:"api_keys"`
+		Model       string   `yaml:"model"`
+		Agent       string   `yaml:"agent"`
+		Balance     string   `yaml:"balance"`
+		MaxRetries  int      `yaml:"max_retries"`
+		BaseDelayMS int      `yaml:"base_delay_ms"`
+		Gateways    []struct {
+			Name        string   `yaml:"name"`
+			Provider    string   `yaml:"provider"`
+			UpstreamURL string   `yaml:"upstream_url"`
+			APIKey      string   `yaml:"api_key"`
+			APIKeys     []string `yaml:"api_keys"`
+			Model       string   `yaml:"model"`
+			Agent       string   `yaml:"agent"`
+			Models      []string `yaml:"models"`
+		} `yaml:"gateways"`
 	} `yaml:"gateway"`
 }
 
@@ -151,13 +183,40 @@ func LoadGateway(path string) (GatewayConfig, error) {
 	if strings.EqualFold(strings.TrimSpace(provider), "openrouter") && model == "" {
 		model = "openrouter/free"
 	}
+	apiKey := pick("GATEWAY_API_KEY", g.APIKey, "")
+	apiKeys := g.APIKeys
+	if envKeys := splitCSV(os.Getenv("GATEWAY_API_KEYS")); len(envKeys) > 0 {
+		apiKeys = envKeys
+	}
+	gateways := make([]GatewayEntry, 0, len(g.Gateways))
+	for _, entry := range g.Gateways {
+		entryModel := entry.Model
+		if strings.EqualFold(strings.TrimSpace(entry.Provider), "openrouter") && entryModel == "" {
+			entryModel = "openrouter/free"
+		}
+		gateways = append(gateways, GatewayEntry{
+			Name:        strings.TrimSpace(entry.Name),
+			Provider:    entry.Provider,
+			UpstreamURL: entry.UpstreamURL,
+			APIKey:      strings.TrimSpace(entry.APIKey),
+			APIKeys:     cleanStrings(entry.APIKeys),
+			Model:       entryModel,
+			Agent:       entry.Agent,
+			Models:      cleanStrings(entry.Models),
+		})
+	}
 	return GatewayConfig{
 		Addr:        pick("GATEWAY_ADDR", g.Addr, "127.0.0.1:8001"),
 		Provider:    provider,
 		UpstreamURL: pick("GATEWAY_UPSTREAM_URL", g.UpstreamURL, ""),
-		APIKey:      pick("GATEWAY_API_KEY", g.APIKey, ""),
+		APIKey:      apiKey,
+		APIKeys:     cleanStrings(apiKeys),
 		Model:       model,
 		Agent:       pick("GATEWAY_AGENT", g.Agent, ""),
+		Balance:     pick("GATEWAY_BALANCE", g.Balance, "least_in_flight"),
+		MaxRetries:  pickIntDefault("GATEWAY_MAX_RETRIES", g.MaxRetries, 0),
+		BaseDelayMS: pickIntDefault("GATEWAY_BASE_DELAY_MS", g.BaseDelayMS, 0),
+		Gateways:    gateways,
 	}, nil
 }
 
@@ -230,6 +289,23 @@ func pick(envKey, fileVal, def string) string {
 		return fileVal
 	}
 	return def
+}
+
+func splitCSV(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	return cleanStrings(strings.Split(raw, ","))
+}
+
+func cleanStrings(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		if s := strings.TrimSpace(v); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func pickBool(envKey string, fileVal bool) (bool, error) {

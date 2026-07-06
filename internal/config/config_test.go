@@ -163,9 +163,103 @@ func TestLoadGateway_OpenRouterDefaultModel(t *testing.T) {
 	}
 }
 
+func TestLoadGateway_APIKeysAndRetrySettings(t *testing.T) {
+	path := writeCfg(t, `
+gateway:
+  provider: openrouter
+  api_key: sk-main
+  api_keys:
+    - sk-a
+    - " "
+    - sk-b
+  balance: round_robin
+  max_retries: 5
+  base_delay_ms: 100
+`)
+	g, err := config.LoadGateway(path)
+	if err != nil {
+		t.Fatalf("LoadGateway: %v", err)
+	}
+	if g.APIKey != "sk-main" {
+		t.Fatalf("api_key not read: %q", g.APIKey)
+	}
+	if !sameStrings(g.APIKeys, []string{"sk-a", "sk-b"}) {
+		t.Fatalf("api_keys not cleaned: %+v", g.APIKeys)
+	}
+	if g.Balance != "round_robin" || g.MaxRetries != 5 || g.BaseDelayMS != 100 {
+		t.Fatalf("balancer settings not read: %+v", g)
+	}
+}
+
+func TestLoadGateway_EnvAPIKeysOverridesFileList(t *testing.T) {
+	path := writeCfg(t, `
+gateway:
+  api_keys:
+    - file-a
+    - file-b
+`)
+	t.Setenv("GATEWAY_API_KEYS", "env-a, env-b,, ")
+	g, err := config.LoadGateway(path)
+	if err != nil {
+		t.Fatalf("LoadGateway: %v", err)
+	}
+	if !sameStrings(g.APIKeys, []string{"env-a", "env-b"}) {
+		t.Fatalf("env api keys should override file list: %+v", g.APIKeys)
+	}
+}
+
+func TestLoadGateway_MultipleGatewayEntries(t *testing.T) {
+	path := writeCfg(t, `
+gateway:
+  gateways:
+    - name: openrouter-main
+      provider: openrouter
+      api_keys:
+        - sk-or-1
+        - sk-or-2
+      models:
+        - openrouter/free
+    - name: local-opencode
+      provider: opencode
+      upstream_url: http://127.0.0.1:4202
+      model: opencode/nemotron-3-ultra-free
+      agent: writer
+`)
+	g, err := config.LoadGateway(path)
+	if err != nil {
+		t.Fatalf("LoadGateway: %v", err)
+	}
+	if len(g.Gateways) != 2 {
+		t.Fatalf("gateway entries = %d, want 2: %+v", len(g.Gateways), g.Gateways)
+	}
+	first := g.Gateways[0]
+	if first.Name != "openrouter-main" || first.Provider != "openrouter" || first.Model != "openrouter/free" {
+		t.Fatalf("openrouter entry not resolved/defaulted: %+v", first)
+	}
+	if !sameStrings(first.APIKeys, []string{"sk-or-1", "sk-or-2"}) || !sameStrings(first.Models, []string{"openrouter/free"}) {
+		t.Fatalf("openrouter lists wrong: %+v", first)
+	}
+	second := g.Gateways[1]
+	if second.Name != "local-opencode" || second.UpstreamURL != "http://127.0.0.1:4202" || second.Agent != "writer" {
+		t.Fatalf("opencode entry wrong: %+v", second)
+	}
+}
+
 func TestLoad_MalformedFileErrors(t *testing.T) {
 	path := writeCfg(t, "server: [this is not a mapping")
 	if _, err := config.Load(path); err == nil {
 		t.Fatal("expected parse error on malformed YAML")
 	}
+}
+
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
