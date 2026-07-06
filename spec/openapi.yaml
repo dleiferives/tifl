@@ -569,53 +569,6 @@ paths:
           $ref: "#/components/responses/NotFound"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
-  /stories:
-    get:
-      summary: List the current user's imported (standalone) stories
-      description: >
-        Newest-first page of the current user's standalone imported stories —
-        rows in the stories table with no generation session. Generated
-        (session-backed) stories are listed via GET /sessions, not here. The
-        title is a clean display label (the "Imported: " topic prefix is
-        stripped; untitled imports fall back to the first words of the text).
-        By default all languages are included; pass language to scope the page
-        to one language.
-      operationId: listImportedStories
-      parameters:
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
-        - name: language
-          in: query
-          required: false
-          description: registered language code to scope the page to; omitted lists all languages
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Imported story page
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ImportedStoryList"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "500":
-          $ref: "#/components/responses/InternalError"
   /stories/import:
     post:
       summary: Import text as a reader story
@@ -675,30 +628,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StoryLoad"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "500":
-          $ref: "#/components/responses/InternalError"
-    delete:
-      summary: Delete a story (imported or generated)
-      description: >
-        Deletes the owner's story. One endpoint, two meanings: a standalone
-        imported story deletes the story row and its tokens/glossary/audio and
-        the caller's reader events for it; a generated (session-backed) story
-        deletes the whole session via the existing session-delete cascade
-        (story, tasks, phrases, generation stages). Ownership is enforced —
-        another user's story returns 404.
-      operationId: deleteStory
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string }
-      responses:
-        "204":
-          description: Deleted
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -1203,31 +1132,6 @@ components:
         language: { type: string }
         title: { type: string }
       required: [story_id, language]
-    ImportedStory:
-      type: object
-      description: One row in the imported-story (standalone reader content) list.
-      properties:
-        story_id: { type: string }
-        title:
-          type: string
-          description: >
-            clean display title — the "Imported: " topic prefix is stripped and
-            untitled imports fall back to the first words of the text.
-        language: { type: string }
-        level: { type: string }
-        created_at: { type: number, format: double }
-      required: [story_id, title, language, level, created_at]
-    ImportedStoryList:
-      type: object
-      properties:
-        stories:
-          type: array
-          items:
-            $ref: "#/components/schemas/ImportedStory"
-        limit: { type: integer }
-        offset: { type: integer }
-        has_more: { type: boolean }
-      required: [stories, limit, offset, has_more]
     Profile:
       type: object
       properties:
