@@ -30,6 +30,14 @@ func TestLocalStorePutGetDelete(t *testing.T) {
 		t.Fatalf("Put ref = %+v", ref)
 	}
 
+	infoOnly, err := store.Info(ctx, ref.Key)
+	if err != nil {
+		t.Fatalf("Info: %v", err)
+	}
+	if infoOnly.Key != ref.Key || infoOnly.ContentType != "audio/mpeg" || infoOnly.Size != ref.Size || infoOnly.UpdatedAt.IsZero() {
+		t.Fatalf("Info = %+v", infoOnly)
+	}
+
 	body, info, err := store.Get(ctx, ref.Key)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
@@ -53,6 +61,9 @@ func TestLocalStorePutGetDelete(t *testing.T) {
 	}
 	if _, _, err := store.Get(ctx, ref.Key); !errors.Is(err, objectstore.ErrNotFound) {
 		t.Fatalf("Get after Delete: want ErrNotFound, got %v", err)
+	}
+	if _, err := store.Info(ctx, ref.Key); !errors.Is(err, objectstore.ErrNotFound) {
+		t.Fatalf("Info after Delete: want ErrNotFound, got %v", err)
 	}
 	if err := store.Delete(ctx, ref.Key); err != nil {
 		t.Fatalf("Delete missing should be idempotent: %v", err)
@@ -102,6 +113,9 @@ func TestLocalStoreURL(t *testing.T) {
 	want := filepath.Join(root, "task_media", "task123", "upload456.jpg")
 	if localURL != want {
 		t.Fatalf("URL local = %q, want %q", localURL, want)
+	}
+	if _, err := store.URL(ctx, "task_media/task123/upload456.jpg", objectstore.URLOptions{RequirePublic: true}); !errors.Is(err, objectstore.ErrUnsupported) {
+		t.Fatalf("URL local RequirePublic: want ErrUnsupported, got %v", err)
 	}
 
 	publicStore, err := objectstore.NewLocalStore(root, objectstore.WithPublicBaseURL("https://cdn.example.test/media"))
@@ -160,8 +174,15 @@ func TestNewFromConfig(t *testing.T) {
 		t.Fatalf("configured store URL: %v", err)
 	}
 
-	cfg.MediaStorageMode = config.MediaStorageS3
-	if _, err := objectstore.NewFromConfig(cfg); !errors.Is(err, objectstore.ErrUnsupported) {
-		t.Fatalf("NewFromConfig s3: want ErrUnsupported, got %v", err)
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	cfg = config.Config{
+		MediaStorageMode:  config.MediaStorageS3,
+		MediaS3Bucket:     "tifl-media",
+		MediaS3Region:     "auto",
+		MediaS3SignedURLs: true,
+	}
+	if _, err := objectstore.NewFromConfig(cfg); !errors.Is(err, objectstore.ErrInvalidConfig) {
+		t.Fatalf("NewFromConfig s3 missing creds: want ErrInvalidConfig, got %v", err)
 	}
 }

@@ -126,7 +126,7 @@ after generation. This is what lets task performance update the right rows in
 `media_path` is a legacy column name. New task media should store an object key
 such as `task_media/{task_id}/{upload_id}.jpg`, not an absolute filesystem path
 or provider URL. The media `ObjectStore` resolves that key to local filesystem
-storage or future S3-compatible storage.
+storage or S3-compatible storage.
 
 The `input_method` field is set at response submission time, not generation time.
 The same task can receive a typed response or a scanned image — the task type

@@ -112,6 +112,29 @@ func (s *LocalStore) Put(ctx context.Context, key string, r io.Reader, contentTy
 	return ObjectRef{Key: key, ContentType: contentType, Size: size}, nil
 }
 
+func (s *LocalStore) Info(ctx context.Context, key string) (ObjectInfo, error) {
+	localKey, err := localName(key)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return ObjectInfo{}, err
+	}
+	f, err := s.root.Open(localKey)
+	if errors.Is(err, fs.ErrNotExist) {
+		return ObjectInfo{}, ErrNotFound
+	}
+	if err != nil {
+		return ObjectInfo{}, fmt.Errorf("objectstore: open object: %w", err)
+	}
+	defer f.Close()
+	stat, err := f.Stat()
+	if err != nil {
+		return ObjectInfo{}, fmt.Errorf("objectstore: stat object: %w", err)
+	}
+	return s.objectInfo(key, stat)
+}
+
 func (s *LocalStore) Get(ctx context.Context, key string) (io.ReadCloser, ObjectInfo, error) {
 	localKey, err := localName(key)
 	if err != nil {
@@ -132,6 +155,15 @@ func (s *LocalStore) Get(ctx context.Context, key string) (io.ReadCloser, Object
 		_ = f.Close()
 		return nil, ObjectInfo{}, fmt.Errorf("objectstore: stat object: %w", err)
 	}
+	info, err := s.objectInfo(key, stat)
+	if err != nil {
+		_ = f.Close()
+		return nil, ObjectInfo{}, err
+	}
+	return f, info, nil
+}
+
+func (s *LocalStore) objectInfo(key string, stat fs.FileInfo) (ObjectInfo, error) {
 	info, err := s.readMetadata(key)
 	if errors.Is(err, fs.ErrNotExist) {
 		info = ObjectInfo{
@@ -141,8 +173,7 @@ func (s *LocalStore) Get(ctx context.Context, key string) (io.ReadCloser, Object
 			UpdatedAt:   stat.ModTime().UTC(),
 		}
 	} else if err != nil {
-		_ = f.Close()
-		return nil, ObjectInfo{}, err
+		return ObjectInfo{}, err
 	}
 	info.Key = key
 	info.Size = stat.Size()
@@ -152,7 +183,7 @@ func (s *LocalStore) Get(ctx context.Context, key string) (io.ReadCloser, Object
 	if info.UpdatedAt.IsZero() {
 		info.UpdatedAt = stat.ModTime().UTC()
 	}
-	return f, info, nil
+	return info, nil
 }
 
 func (s *LocalStore) Delete(ctx context.Context, key string) error {
@@ -186,6 +217,9 @@ func (s *LocalStore) URL(ctx context.Context, key string, opts URLOptions) (stri
 			return "", fmt.Errorf("objectstore: build public url: %w", err)
 		}
 		return u, nil
+	}
+	if opts.RequirePublic {
+		return "", fmt.Errorf("%w: local public media URL is not configured", ErrUnsupported)
 	}
 	return filepath.Join(s.rootPath, localKey), nil
 }

@@ -51,10 +51,10 @@ func TestOpenMediaStoreLocal(t *testing.T) {
 	}
 }
 
-func TestOpenMediaStoreRejectsReservedS3(t *testing.T) {
+func TestOpenMediaStoreRejectsInvalidS3Config(t *testing.T) {
 	_, err := openMediaStore(config.Config{MediaStorageMode: config.MediaStorageS3})
-	if !errors.Is(err, objectstore.ErrUnsupported) {
-		t.Fatalf("openMediaStore s3: want ErrUnsupported, got %v", err)
+	if !errors.Is(err, objectstore.ErrInvalidConfig) {
+		t.Fatalf("openMediaStore s3: want ErrInvalidConfig, got %v", err)
 	}
 }
 

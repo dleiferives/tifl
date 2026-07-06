@@ -186,6 +186,7 @@ func main() {
 		handlerOpts = append(handlerOpts, handler.WithFSRSScoring())
 	}
 	handlerOpts = append(handlerOpts, handler.WithTaskReportRegenerationCap(cfg.TaskReportRegenerationCap))
+	handlerOpts = append(handlerOpts, handler.WithMediaStore(mediaStore))
 	if jobsClient != nil {
 		handlerOpts = append(handlerOpts, handler.WithSignalQueue(jobsClient))
 	}

@@ -1153,6 +1153,18 @@ type Language struct {
 // LanguageKeyStrategy defines model for Language.KeyStrategy.
 type LanguageKeyStrategy string
 
+// MediaURL Server-issued access URL for task media. Clients should treat the URL as a refreshable bearer grant, not as durable storage identity.
+type MediaURL struct {
+	ContentType string `json:"content_type"`
+
+	// ExpiresAt Unix seconds when the client should refresh the URL.
+	ExpiresAt int64 `json:"expires_at"`
+	Size      int64 `json:"size"`
+
+	// Url Browser-safe URL for this task's media object.
+	Url string `json:"url"`
+}
+
 // PhraseAnnotation defines model for PhraseAnnotation.
 type PhraseAnnotation struct {
 	// Kind e.g. construction | vocabulary

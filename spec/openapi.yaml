@@ -1083,6 +1083,65 @@ paths:
           $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
+  /tasks/{id}/media:
+    get:
+      summary: Download the authenticated task media object
+      description: >
+        Streams the media object referenced by the caller's task row. The client
+        supplies only the task id; the server resolves the stored object key
+        after tenant-scoped task lookup, so arbitrary object keys or local paths
+        are never accepted from API callers.
+      operationId: getTaskMedia
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Task media bytes
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /tasks/{id}/media/url:
+    get:
+      summary: Create a bounded task media access URL
+      description: >
+        Returns a short-lived or otherwise server-scoped media access URL for
+        the object referenced by the caller's task row. The response never
+        includes local filesystem paths, provider object keys, or arbitrary
+        caller-supplied object references.
+      operationId: getTaskMediaURL
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Task media access URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaURL"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /tasks/{id}/submit:
     post:
       summary: Submit a response, grade it, update the learning signal
@@ -2009,6 +2068,23 @@ components:
           allOf: [{ $ref: "#/components/schemas/TaskReportState" }]
           x-go-type-skip-optional-pointer: false
       required: [task_id, task_type, content, graded, reference_assisted]
+    MediaURL:
+      type: object
+      description: Server-issued access URL for task media. Clients should treat the URL as a refreshable bearer grant, not as durable storage identity.
+      properties:
+        url:
+          type: string
+          description: Browser-safe URL for this task's media object.
+        expires_at:
+          type: integer
+          format: int64
+          description: Unix seconds when the client should refresh the URL.
+        content_type: { type: string }
+        size:
+          type: integer
+          format: int64
+          minimum: 0
+      required: [url, expires_at, content_type, size]
     TaskReportReason:
       type: string
       enum: [malformed, wrong_answer_key, nonsensical, too_hard]
