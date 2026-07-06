@@ -413,6 +413,21 @@ export async function submitTask(taskID: string, request: APIRequest<"submitTask
   );
 }
 
+export async function reportTask(taskID: string, request: APIRequest<"reportTask">): Promise<APISchema<"TaskReportResponse">> {
+  const response = await sendRequest(
+    `/tasks/${encodeURIComponent(taskID)}/report`,
+    jsonRequest("POST", request),
+  );
+  if (response.status === 503) {
+    const body = parseJSON(await response.text());
+    if (isTaskReportResponse(body)) {
+      return body;
+    }
+    throw new APIError(response, isErrorBody(body) ? body : null);
+  }
+  return decodeResponse<APISchema<"TaskReportResponse">>(response);
+}
+
 function jsonRequest(method: "PATCH" | "POST" | "PUT", body: unknown): RequestInit {
   return {
     method,
@@ -532,4 +547,13 @@ function parseJSON(text: string): unknown {
 
 function isErrorBody(body: unknown): body is APIErrorBody {
   return typeof body === "object" && body !== null && "error" in body && typeof (body as { error: unknown }).error === "string";
+}
+
+function isTaskReportResponse(body: unknown): body is APISchema<"TaskReportResponse"> {
+  const candidate = body as Partial<APISchema<"TaskReportResponse">> | null;
+  return typeof candidate === "object" && candidate !== null &&
+    typeof candidate.report_id === "string" &&
+    typeof candidate.task_id === "string" &&
+    typeof candidate.status === "string" &&
+    typeof candidate.message === "string";
 }

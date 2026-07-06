@@ -2015,6 +2015,112 @@ select {
   justify-content: flex-end;
 }
 
+.task-report-status {
+  margin: 0;
+  padding: 0.55rem 0.65rem;
+  border-left: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--accent), transparent 90%);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.task-report-status[data-status="failed"],
+.task-report-status[data-status="unavailable"],
+.task-report-status[data-status="cap_reached"] {
+  border-left-color: var(--danger);
+  background: var(--danger-subtle);
+}
+
+.task-report-status[data-status="regenerated"] {
+  border-left-color: var(--success);
+  background: color-mix(in srgb, var(--success), transparent 88%);
+}
+
+.task-report-control {
+  display: grid;
+  gap: 0.55rem;
+  justify-items: start;
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+}
+
+.task-report-toggle {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 0.18rem;
+  cursor: pointer;
+}
+
+.task-report-toggle:hover,
+.task-report-toggle:focus-visible {
+  color: var(--accent);
+}
+
+.task-report-form {
+  display: grid;
+  gap: 0.6rem;
+  width: 100%;
+}
+
+.task-report-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.task-report-chip {
+  padding: 0.38rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.task-report-chip[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent), transparent 88%);
+}
+
+.task-report-note {
+  width: 100%;
+  min-height: 4.5rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  background: var(--surface);
+  color: var(--text);
+  resize: vertical;
+}
+
+.task-report-note:focus {
+  border-color: var(--accent);
+  outline: 3px solid var(--focus-ring);
+}
+
+.task-report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.task-report-message {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
 .task-grade {
   display: grid;
   gap: 0.5rem;

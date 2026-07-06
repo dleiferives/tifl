@@ -1,6 +1,6 @@
 import { createMemo, createSignal, For, Match, onMount, Show, Switch, type Accessor, type JSX } from "solid-js";
 import { createStore, type SetStoreFunction } from "solid-js/store";
-import { APIError, getSessionTasks, submitTask, type APIRequest, type APISchema } from "../api";
+import { APIError, getSessionTasks, getTask, reportTask, submitTask, type APIRequest, type APISchema } from "../api";
 import { routeHref } from "../router";
 import { appStore } from "../store";
 
@@ -8,12 +8,23 @@ type Task = APISchema<"Task"> & { attempt_count?: number };
 type Grade = APISchema<"Grade">;
 type SkillXPDelta = APISchema<"SkillXPDelta">;
 type SubmitRequest = APIRequest<"submitTask">;
+type ReportRequest = APIRequest<"reportTask">;
+type ReportReason = APISchema<"TaskReportReason">;
+type ReportState = APISchema<"TaskReportState">;
+type ReportResponse = APISchema<"TaskReportResponse">;
 type ResponseStore = Record<string, unknown>;
 
 // Task types whose grading routes through the LLM gateway: their submit is slow
 // and can come back 503 (no gateway) / 502 (gateway error), so the UI shows an
 // explicit pending state for them rather than the instant flip rule types get.
 const LLM_TYPES = new Set(["production"]);
+const REPORT_POLL_STATUSES = new Set(["queued", "regenerating"]);
+const REPORT_REASONS: { value: ReportReason; label: string }[] = [
+  { value: "malformed", label: "Malformed" },
+  { value: "wrong_answer_key", label: "Wrong key" },
+  { value: "nonsensical", label: "Nonsensical" },
+  { value: "too_hard", label: "Too hard" },
+];
 
 // ---- per-type renderer registry --------------------------------------------
 // One entry per server TaskType. Adding a new task type on the server needs only
@@ -151,6 +162,39 @@ export function TasksView(props: { sessionId: string }) {
     announceGrade(result.grade, result.skill_xp);
   }
 
+  async function report(index: number, request: ReportRequest): Promise<ReportResponse> {
+    const task = tasks[index];
+    const result = await reportTask(task.task_id, request);
+    try {
+      const fresh = await getTask(task.task_id);
+      setTasks(index, fresh);
+      if (isPollingReport(fresh.report)) {
+        void pollTaskReport(index, task.task_id);
+      }
+    } catch {
+      setTasks(index, "report", reportFallbackState(result, request.reason));
+    }
+    return result;
+  }
+
+  async function pollTaskReport(index: number, taskID: string) {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      await delay(1500);
+      if (tasks[index]?.task_id !== taskID || !isPollingReport(tasks[index]?.report)) {
+        return;
+      }
+      try {
+        const fresh = await getTask(taskID);
+        setTasks(index, fresh);
+        if (!isPollingReport(fresh.report)) {
+          return;
+        }
+      } catch {
+        return;
+      }
+    }
+  }
+
   return (
     <section class="tasks-view">
       <header class="view-heading">
@@ -195,7 +239,12 @@ export function TasksView(props: { sessionId: string }) {
             <For each={tasks}>
               {(task, index) => (
                 <li>
-                  <TaskCard task={task} position={index() + 1} onSubmit={(request) => submit(index(), request)} />
+                  <TaskCard
+                    task={task}
+                    position={index() + 1}
+                    onSubmit={(request) => submit(index(), request)}
+                    onReport={(request) => report(index(), request)}
+                  />
                 </li>
               )}
             </For>
@@ -206,7 +255,12 @@ export function TasksView(props: { sessionId: string }) {
   );
 }
 
-function TaskCard(props: { task: Task; position: number; onSubmit: (request: SubmitRequest) => Promise<void> }) {
+function TaskCard(props: {
+  task: Task;
+  position: number;
+  onSubmit: (request: SubmitRequest) => Promise<void>;
+  onReport: (request: ReportRequest) => Promise<ReportResponse>;
+}) {
   const [response, setResponse] = createStore<ResponseStore>({});
   const [submitting, setSubmitting] = createSignal(false);
   const [errorMessage, setErrorMessage] = createSignal("");
@@ -242,6 +296,7 @@ function TaskCard(props: { task: Task; position: number; onSubmit: (request: Sub
         <span class="task-number">Task {props.position}</span>
         <span class="task-type-chip">{rendererLabel(props.task.task_type)}</span>
       </header>
+      <ReportStatusView report={props.task.report} />
 
       <Show
         when={renderer()}
@@ -282,10 +337,109 @@ function TaskCard(props: { task: Task; position: number; onSubmit: (request: Sub
                 </button>
               </div>
             </form>
+            <ReportControl disabled={submitting()} onReport={props.onReport} />
           </>
         )}
       </Show>
     </article>
+  );
+}
+
+function ReportControl(props: { disabled: boolean; onReport: (request: ReportRequest) => Promise<ReportResponse> }) {
+  const [open, setOpen] = createSignal(false);
+  const [reason, setReason] = createSignal<ReportReason | "">("");
+  const [note, setNote] = createSignal("");
+  const [submitting, setSubmitting] = createSignal(false);
+  const [message, setMessage] = createSignal("");
+  const [error, setError] = createSignal("");
+
+  async function submitReport(event: Event) {
+    event.preventDefault();
+    if (!reason() || submitting()) {
+      return;
+    }
+    setSubmitting(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await props.onReport({ reason: reason() as ReportReason, note: note().trim() || undefined });
+      setMessage(result.message);
+      setOpen(false);
+      setReason("");
+      setNote("");
+    } catch (err) {
+      setError(reportErrorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div class="task-report-control">
+      <Show
+        when={open()}
+        fallback={
+          <button class="task-report-toggle" type="button" disabled={props.disabled} onClick={() => setOpen(true)}>
+            Report a problem
+          </button>
+        }
+      >
+        <form class="task-report-form" onSubmit={submitReport}>
+          <div class="task-report-reasons" role="group" aria-label="Report reason">
+            <For each={REPORT_REASONS}>
+              {(option) => (
+                <button
+                  class="task-report-chip"
+                  type="button"
+                  aria-pressed={reason() === option.value}
+                  disabled={submitting()}
+                  onClick={() => setReason(option.value)}
+                >
+                  {option.label}
+                </button>
+              )}
+            </For>
+          </div>
+          <Show when={reason()}>
+            <textarea
+              class="task-report-note"
+              rows={2}
+              maxLength={1000}
+              placeholder="Optional note"
+              value={note()}
+              disabled={submitting()}
+              onInput={(event) => setNote(event.currentTarget.value)}
+            />
+            <div class="task-report-actions">
+              <button class="secondary-button" type="button" disabled={submitting()} onClick={() => setOpen(false)}>
+                Cancel
+              </button>
+              <button class="primary-button" type="submit" disabled={submitting()}>
+                {submitting() ? "Sending..." : "Send report"}
+              </button>
+            </div>
+          </Show>
+        </form>
+      </Show>
+      <Show when={message()}>
+        <p class="task-report-message" role="status">{message()}</p>
+      </Show>
+      <Show when={error()}>
+        <p class="task-error" role="alert">{error()}</p>
+      </Show>
+    </div>
+  );
+}
+
+function ReportStatusView(props: { report?: ReportState }) {
+  return (
+    <Show when={props.report}>
+      {(report) => (
+        <p class="task-report-status" data-status={report().status} role="status" aria-busy={isPollingReport(report()) ? "true" : undefined}>
+          {report().message}
+        </p>
+      )}
+    </Show>
   );
 }
 
@@ -373,6 +527,39 @@ function submitErrorMessage(error: unknown): string {
     }
   }
   return "Your response could not be submitted.";
+}
+
+function isPollingReport(report?: ReportState): boolean {
+  return report ? REPORT_POLL_STATUSES.has(report.status) : false;
+}
+
+function reportFallbackState(response: ReportResponse, reason: ReportReason): ReportState {
+  return {
+    report_id: response.report_id,
+    status: response.status,
+    reason,
+    message: response.message,
+    replacement_task_id: response.replacement_task_id,
+    reported_at: Date.now() / 1000,
+    regeneration_cap: response.regeneration_cap,
+    regenerations_used: response.regenerations_used,
+  };
+}
+
+function reportErrorMessage(error: unknown): string {
+  if (error instanceof APIError) {
+    if (error.status === 400) {
+      return "Choose a report reason before sending.";
+    }
+    if (error.status === 404) {
+      return "This task no longer exists.";
+    }
+  }
+  return "The report could not be sent.";
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 // ---- tolerant content/response accessors ------------------------------------
