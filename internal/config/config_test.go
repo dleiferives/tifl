@@ -33,6 +33,49 @@ func TestLoad_DefaultsWhenNoFile(t *testing.T) {
 	}
 }
 
+func TestLoad_ModelPricingAndAdminEmails(t *testing.T) {
+	path := writeCfg(t, `
+server:
+  admin_emails:
+    - Admin@Example.com
+    - other@example.com
+  model_pricing:
+    default:
+      input_per_million: 0.5
+      output_per_million: 1.5
+    model-a:
+      input_per_million: 2
+      output_per_million: 4
+`)
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.DefaultModelPricing == nil || cfg.DefaultModelPricing.InputPerMillion != 0.5 {
+		t.Fatalf("reserved default not extracted: %+v", cfg.DefaultModelPricing)
+	}
+	if _, ok := cfg.ModelPricing["default"]; ok {
+		t.Fatalf("default key must not remain in the per-model map")
+	}
+	if p := cfg.ModelPricing["model-a"]; p.InputPerMillion != 2 || p.OutputPerMillion != 4 {
+		t.Fatalf("model-a pricing = %+v, want 2/4", p)
+	}
+	if len(cfg.AdminEmails) != 2 || cfg.AdminEmails[0] != "Admin@Example.com" {
+		t.Fatalf("admin_emails = %+v, want raw entries preserved", cfg.AdminEmails)
+	}
+}
+
+func TestLoad_AdminEmailsEnvOverride(t *testing.T) {
+	t.Setenv("ADMIN_EMAILS", "a@x.com, b@x.com")
+	cfg, err := config.Load(filepath.Join(t.TempDir(), "absent.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.AdminEmails) != 2 || cfg.AdminEmails[0] != "a@x.com" || cfg.AdminEmails[1] != "b@x.com" {
+		t.Fatalf("ADMIN_EMAILS override = %+v", cfg.AdminEmails)
+	}
+}
+
 func TestLoad_FileValues(t *testing.T) {
 	path := writeCfg(t, `
 server:
