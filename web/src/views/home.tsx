@@ -8,13 +8,12 @@ import {
   retrySession,
   unarchiveSession,
   type APIRequest,
-  type APISchema,
 } from "../api";
+import { ConfirmDialog, type ConfirmDialogRequest } from "../components/confirm_dialog";
 import { routeHref } from "../router";
 import { appStore } from "../store";
+import { formatLevel, SessionRow, sessionTitle, type SessionOverview, type SessionStatus } from "./session_rows";
 
-type SessionOverview = APISchema<"SessionOverview">;
-type SessionStatus = SessionOverview["status"];
 type GenerateRequest = APIRequest<"generateSession">;
 
 interface SessionGroup {
@@ -52,11 +51,6 @@ const SESSION_GROUPS: SessionGroup[] = [
   },
 ];
 
-const dateFormatter = new Intl.DateTimeFormat(undefined, {
-  dateStyle: "medium",
-  timeStyle: "short",
-});
-
 export function HomeView() {
   const [sessions, setSessions] = createSignal<SessionOverview[]>([]);
   const [loading, setLoading] = createSignal(true);
@@ -68,6 +62,7 @@ export function HomeView() {
   const [retryingSessionID, setRetryingSessionID] = createSignal("");
   const [archivedView, setArchivedView] = createSignal(false);
   const [busyAction, setBusyAction] = createSignal("");
+  const [confirmRequest, setConfirmRequest] = createSignal<ConfirmDialogRequest | null>(null);
 
   const totalTasks = createMemo(() => sessions().reduce((sum, session) => sum + session.tasks.total, 0));
   const completedTasks = createMemo(() => sessions().reduce((sum, session) => sum + session.tasks.completed, 0));
@@ -158,10 +153,12 @@ export function HomeView() {
 
   const deleteCurrentSession = async (session: SessionOverview) => {
     const title = sessionTitle(session);
-    if (!window.confirm(`Delete "${title}"? This removes generated content and cannot be undone.`)) {
-      return;
-    }
-    await runSessionAction("delete", session.session_id, async () => deleteSession(session.session_id));
+    setConfirmRequest({
+      title: `Delete "${title}"?`,
+      message: "This deletes the session: its story, tasks, and your grades on them.",
+      confirmLabel: "Delete session",
+      onConfirm: () => runSessionAction("delete", session.session_id, async () => deleteSession(session.session_id)),
+    });
   };
 
   const runSessionAction = async (kind: string, sessionID: string, action: () => Promise<void>) => {
@@ -194,6 +191,7 @@ export function HomeView() {
           </button>
           <a class="button-link secondary-link" href={routeHref("/start")}>Guided session…</a>
           <a class="button-link secondary-link" href={routeHref("/import")}>Import text</a>
+          <a class="button-link secondary-link" href={routeHref("/library")}>Library</a>
         </div>
       </header>
 
@@ -282,6 +280,7 @@ export function HomeView() {
           </Show>
         </Match>
       </Switch>
+      <ConfirmDialog request={confirmRequest()} onCancel={() => setConfirmRequest(null)} />
     </section>
   );
 }
@@ -295,116 +294,6 @@ function Metric(props: { label: string; value: number | string }) {
   );
 }
 
-function SessionRow(props: {
-  session: SessionOverview;
-  retrying: boolean;
-  archivedView: boolean;
-  busyAction: string;
-  onRetry: (sessionID: string) => Promise<void>;
-  onArchive: (sessionID: string) => Promise<void>;
-  onRestore: (sessionID: string) => Promise<void>;
-  onDelete: (session: SessionOverview) => Promise<void>;
-}) {
-  return (
-    <article class="session-row">
-      <div class="session-row-main">
-        <div class="session-title-line">
-          <h3>{sessionTitle(props.session)}</h3>
-          <span class="status-chip" data-status={props.session.status}>{statusLabel(props.session.status)}</span>
-        </div>
-        <dl class="session-meta" aria-label="Session metadata">
-          <div>
-            <dt>Language</dt>
-            <dd>{props.session.language.toUpperCase()}</dd>
-          </div>
-          <div>
-            <dt>Level</dt>
-            <dd>{formatLevel(props.session.level)}</dd>
-          </div>
-          <div>
-            <dt>Created</dt>
-            <dd>{formatUnixSeconds(props.session.created_at)}</dd>
-          </div>
-          <div>
-            <dt>Tasks</dt>
-            <dd>{props.session.tasks.completed}/{props.session.tasks.total}</dd>
-          </div>
-        </dl>
-        <p class="session-detail-line">
-          {sessionDetailLine(props.session)}
-        </p>
-      </div>
-      <div class="session-actions">
-        <SessionActions
-          session={props.session}
-          retrying={props.retrying}
-          archivedView={props.archivedView}
-          busyAction={props.busyAction}
-          onRetry={props.onRetry}
-          onArchive={props.onArchive}
-          onRestore={props.onRestore}
-          onDelete={props.onDelete}
-        />
-      </div>
-    </article>
-  );
-}
-
-function SessionActions(props: {
-  session: SessionOverview;
-  retrying: boolean;
-  archivedView: boolean;
-  busyAction: string;
-  onRetry: (sessionID: string) => Promise<void>;
-  onArchive: (sessionID: string) => Promise<void>;
-  onRestore: (sessionID: string) => Promise<void>;
-  onDelete: (session: SessionOverview) => Promise<void>;
-}) {
-  const session = props.session;
-  const isBusy = (kind: string) => props.busyAction === `${kind}:${session.session_id}`;
-  return (
-    <>
-      <Show when={session.status === "pending" || session.status === "generating"}>
-        <a class="button-link secondary-link" href={generationHref(session.session_id)}>Generation</a>
-      </Show>
-      <Show when={session.story_id && (session.status === "ready" || session.status === "reading" || session.status === "complete")}>
-        <a class="button-link" href={readerHref(session.story_id || "", session.session_id)}>Reader</a>
-      </Show>
-      <Show when={session.content_type === "phrase_set" && (session.status === "ready" || session.status === "reading" || session.status === "complete")}>
-        <a class="button-link" href={phrasesHref(session.session_id)}>Phrases</a>
-      </Show>
-      <Show when={session.tasks.total > 0 && (session.status === "ready" || session.status === "reading" || session.status === "complete")}>
-        <a class="button-link secondary-link" href={tasksHref(session.session_id)}>Tasks</a>
-      </Show>
-      <Show when={session.status === "failed"}>
-        <button class="primary-button" type="button" disabled={props.retrying} onClick={() => void props.onRetry(session.session_id)}>
-          {props.retrying ? "Retrying..." : "Retry"}
-        </button>
-        <a class="button-link secondary-link" href={generationHref(session.session_id)}>Details</a>
-      </Show>
-      <Show when={session.status === "ready" && !session.story_id && session.content_type !== "phrase_set"}>
-        <a class="button-link secondary-link" href={generationHref(session.session_id)}>Generation</a>
-      </Show>
-      <a class="button-link secondary-link" href={debugHref(session.session_id)}>Debug</a>
-      <Show
-        when={props.archivedView}
-        fallback={
-          <button class="secondary-button" type="button" disabled={isBusy("archive")} onClick={() => void props.onArchive(session.session_id)}>
-            {isBusy("archive") ? "Archiving..." : "Archive"}
-          </button>
-        }
-      >
-        <button class="secondary-button" type="button" disabled={isBusy("restore")} onClick={() => void props.onRestore(session.session_id)}>
-          {isBusy("restore") ? "Restoring..." : "Restore"}
-        </button>
-      </Show>
-      <button class="danger-button" type="button" disabled={isBusy("delete")} onClick={() => void props.onDelete(session)}>
-        {isBusy("delete") ? "Deleting..." : "Delete"}
-      </button>
-    </>
-  );
-}
-
 function homeSubtitle(): string {
   const language = appStore.activeLanguage();
   const level = appStore.currentLevel();
@@ -412,89 +301,6 @@ function homeSubtitle(): string {
     return `${language.toUpperCase()} · ${formatLevel(level)} default`;
   }
   return "Sessions and study controls.";
-}
-
-function sessionTitle(session: SessionOverview): string {
-  if (session.topic) {
-    return session.topic;
-  }
-  if (session.session_type === "expression_guided" && session.user_expressions?.length) {
-    return session.user_expressions.slice(0, 2).join(", ");
-  }
-  return `${formatSessionType(session.session_type)} session`;
-}
-
-function sessionDetailLine(session: SessionOverview): string {
-  const selected = `${session.selected_counts.targets} targets, ${session.selected_counts.new} new`;
-  if (session.status === "failed") {
-    return `${selected}. Retry generation or open the generation route for failure details.`;
-  }
-  if (session.status === "generating" || session.status === "pending") {
-    return `${selected}. Generation is in progress.`;
-  }
-  if (session.tasks.total === 0) {
-    return `${selected}. No tasks are attached yet.`;
-  }
-  return `${selected}. ${session.tasks.pending} tasks pending.`;
-}
-
-function formatSessionType(sessionType: SessionOverview["session_type"]): string {
-  switch (sessionType) {
-    case "topic_guided":
-      return "Topic-guided";
-    case "expression_guided":
-      return "Expression-guided";
-    default:
-      return "System";
-  }
-}
-
-function statusLabel(status: SessionStatus): string {
-  switch (status) {
-    case "generating":
-      return "Generating";
-    case "ready":
-      return "Ready";
-    case "reading":
-      return "Reading";
-    case "complete":
-      return "Complete";
-    case "failed":
-      return "Failed";
-    default:
-      return "Pending";
-  }
-}
-
-function formatLevel(level: string): string {
-  return level.split("-").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
-}
-
-function formatUnixSeconds(value: number): string {
-  if (!Number.isFinite(value)) {
-    return "Unknown";
-  }
-  return dateFormatter.format(new Date(value * 1000));
-}
-
-function generationHref(sessionID: string): string {
-  return routeHref(`/generation/${encodeURIComponent(sessionID)}`);
-}
-
-function readerHref(storyID: string, sessionID: string): string {
-  return routeHref(`/reader/${encodeURIComponent(storyID)}?sessionId=${encodeURIComponent(sessionID)}`);
-}
-
-function phrasesHref(sessionID: string): string {
-  return routeHref(`/phrases/${encodeURIComponent(sessionID)}`);
-}
-
-function tasksHref(sessionID: string): string {
-  return routeHref(`/tasks/${encodeURIComponent(sessionID)}`);
-}
-
-function debugHref(sessionID: string): string {
-  return routeHref(`/debug/${encodeURIComponent(sessionID)}`);
 }
 
 function sessionListErrorMessage(error: unknown): string {

@@ -138,6 +138,14 @@ export async function importStory(request: APIRequest<"importStory">): Promise<A
   );
 }
 
+export async function listImportedStories(query: APIQuery<"listImportedStories"> = {}): Promise<APIResponse<"listImportedStories", 200>> {
+  return apiFetch<APIResponse<"listImportedStories", 200>>(`/stories${queryString(query)}`);
+}
+
+export async function deleteStory(storyID: string): Promise<void> {
+  return apiFetch<void>(`/stories/${encodeURIComponent(storyID)}`, { method: "DELETE" });
+}
+
 export interface ImportStoryFileRequest {
   language?: string;
   level?: string;

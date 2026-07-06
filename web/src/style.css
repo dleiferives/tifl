@@ -532,6 +532,15 @@ select {
   background: var(--surface);
 }
 
+.session-row[data-openable="true"] {
+  cursor: pointer;
+}
+
+.session-row[data-openable="true"]:hover {
+  border-color: color-mix(in srgb, var(--accent), var(--border) 58%);
+  box-shadow: 0 0.25rem 0.75rem var(--shadow);
+}
+
 .session-row-main {
   display: grid;
   gap: 0.55rem;
@@ -618,6 +627,81 @@ select {
   justify-content: flex-end;
 }
 
+.library-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.compact-button,
+.compact-link {
+  min-height: 2rem;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.9rem;
+}
+
+.icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.row-menu-wrap {
+  position: relative;
+}
+
+.row-menu {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  z-index: 20;
+  display: grid;
+  min-width: 9rem;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  background: var(--surface);
+  box-shadow: 0 0.5rem 1.5rem var(--shadow);
+}
+
+.row-menu button {
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.row-menu button:hover:not(:disabled) {
+  background: var(--surface-subtle);
+}
+
+.row-menu button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.row-menu .danger-menu-item {
+  color: var(--danger);
+}
+
+.row-menu-separator {
+  height: 1px;
+  background: var(--border);
+}
+
 .secondary-link {
   border: 1px solid var(--border);
   background: var(--surface);
@@ -627,6 +711,125 @@ select {
 .load-more-row {
   display: flex;
   justify-content: center;
+}
+
+.library-view {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.library-heading {
+  margin-bottom: 0;
+}
+
+.library-heading-actions,
+.library-section-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.toggle-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2.25rem;
+  color: var(--text-muted);
+  font-weight: 650;
+}
+
+.toggle-control input {
+  width: 1rem;
+  height: 1rem;
+}
+
+.library-sections {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.app-main .library-section {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.library-section-heading {
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border);
+}
+
+.library-section:first-child .library-section-heading {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.library-section-heading h2,
+.library-section-heading p {
+  margin: 0;
+}
+
+.library-section-heading h2 {
+  font-size: 1rem;
+}
+
+.library-section-heading p {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.compact-segmented {
+  grid-template-columns: repeat(2, minmax(4.75rem, 1fr));
+}
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgb(31 41 51 / 42%);
+}
+
+.app-main .confirm-dialog {
+  width: min(26rem, 100%);
+  padding: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--surface);
+  box-shadow: 0 1rem 2.5rem rgb(31 41 51 / 22%);
+}
+
+.confirm-dialog h2,
+.confirm-dialog p {
+  margin: 0;
+}
+
+.confirm-dialog h2 {
+  font-size: 1.1rem;
+}
+
+.confirm-dialog p {
+  margin-top: 0.6rem;
+  color: var(--text-muted);
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+.solid-danger {
+  background: var(--danger);
+  color: #ffffff;
 }
 
 .save-state {
@@ -734,6 +937,16 @@ select {
 
   .session-actions {
     justify-content: flex-start;
+  }
+
+  .library-row-actions {
+    justify-content: flex-start;
+  }
+
+  .library-heading-actions,
+  .library-section-heading {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .settings-grid {

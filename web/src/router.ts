@@ -5,6 +5,7 @@ export type Route =
   | { name: "login"; path: "/login" }
   | { name: "start"; path: "/start" }
   | { name: "import"; path: "/import" }
+  | { name: "library"; path: "/library" }
   | { name: "settings"; path: "/settings" }
   | { name: "generation"; path: string; sessionId: string }
   | { name: "debug"; path: string; sessionId: string }
@@ -41,6 +42,9 @@ export function parseHash(hash: string): Route {
   }
   if (segments.length === 1 && segments[0] === "import") {
     return { name: "import", path: "/import" };
+  }
+  if (segments.length === 1 && segments[0] === "library") {
+    return { name: "library", path: "/library" };
   }
   if (segments.length === 1 && segments[0] === "settings") {
     return { name: "settings", path: "/settings" };
