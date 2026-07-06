@@ -129,17 +129,21 @@ gateway:
 	if g.Addr != "127.0.0.1:8001" {
 		t.Fatalf("gateway addr default wrong: %q", g.Addr)
 	}
+	if g.Balance != "least_in_flight" {
+		t.Fatalf("gateway balance default wrong: %q", g.Balance)
+	}
 }
 
 func TestLoadGateway_EnvOverridesFile(t *testing.T) {
-	path := writeCfg(t, "gateway:\n  model: file-model\n")
+	path := writeCfg(t, "gateway:\n  api_key: file-key\n  model: file-model\n")
+	t.Setenv("GATEWAY_API_KEY", "env-key")
 	t.Setenv("GATEWAY_MODEL", "env-model")
 	g, err := config.LoadGateway(path)
 	if err != nil {
 		t.Fatalf("LoadGateway: %v", err)
 	}
-	if g.Model != "env-model" {
-		t.Fatalf("env should override file: %q", g.Model)
+	if g.APIKey != "env-key" || g.Model != "env-model" {
+		t.Fatalf("env should override file: %+v", g)
 	}
 }
 
@@ -242,6 +246,25 @@ gateway:
 	second := g.Gateways[1]
 	if second.Name != "local-opencode" || second.UpstreamURL != "http://127.0.0.1:4202" || second.Agent != "writer" {
 		t.Fatalf("opencode entry wrong: %+v", second)
+	}
+}
+
+func TestLoadGateway_AddrEnvOverridesMultipleGatewayFile(t *testing.T) {
+	path := writeCfg(t, `
+gateway:
+  addr: 127.0.0.1:9000
+  gateways:
+    - name: openrouter-main
+      provider: openrouter
+      api_key: sk
+`)
+	t.Setenv("GATEWAY_ADDR", "127.0.0.1:9001")
+	g, err := config.LoadGateway(path)
+	if err != nil {
+		t.Fatalf("LoadGateway: %v", err)
+	}
+	if g.Addr != "127.0.0.1:9001" {
+		t.Fatalf("gateway addr env should override file: %q", g.Addr)
 	}
 }
 

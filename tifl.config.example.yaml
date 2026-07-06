@@ -42,8 +42,12 @@ gateway:
   provider: opencode              # openrouter | ollama | openai | anthropic | opencode  (default ollama)
   upstream_url: http://127.0.0.1:4202  # provider base URL (required for opencode)
   api_key: ""                     # upstream credential (not needed for opencode/ollama)
+  # api_keys: []                  # multiple credentials for the same provider; each becomes a balanced endpoint
   model: opencode/nemotron-3-ultra-free  # default model ("providerID/modelID" for opencode)
   agent: writer                   # opencode only: agent to drive        (default writer)
+  # balance: least_in_flight      # least_in_flight | round_robin        (default least_in_flight)
+  # max_retries: 3                # transient upstream retries           (default 3)
+  # base_delay_ms: 250            # first retry backoff                  (default 250)
 
 # OpenRouter example:
 # gateway:
@@ -51,3 +55,23 @@ gateway:
 #   upstream_url: ""              # blank = https://openrouter.ai/api/v1
 #   api_key: ""                   # put the real key in local tifl.yaml or GATEWAY_API_KEY, never in git
 #   model: openrouter/free        # OpenRouter default when omitted; any slug from https://openrouter.ai/models works
+#
+# Multi-gateway / multi-key example:
+# gateway:
+#   balance: least_in_flight
+#   gateways:
+#     - name: openrouter-main
+#       provider: openrouter
+#       api_keys:
+#         - ""                    # put real keys in local tifl.yaml, never in git
+#         - ""
+#       model: openrouter/free
+#       models:
+#         - openrouter/free
+#     - name: anthropic-direct
+#       provider: anthropic
+#       api_keys:
+#         - ""
+#       model: claude-3-5-haiku-latest
+#       models:
+#         - claude-3-5-haiku-latest

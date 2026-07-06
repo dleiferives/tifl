@@ -50,8 +50,12 @@ gateway:  # cmd/gateway
   provider: opencode
   upstream_url: http://127.0.0.1:4202
   api_key: ""
+  api_keys: []
   model: opencode/nemotron-3-ultra-free
   agent: writer
+  balance: least_in_flight
+  max_retries: 3
+  base_delay_ms: 250
 ```
 
 Every key is optional; an omitted key falls back to its default (below).
@@ -101,8 +105,12 @@ the server over HTTPS. See [Authentication](authentication.md).
 | `provider` | `GATEWAY_PROVIDER` | `ollama` | upstream: `ollama`, `openrouter`, `openai`, `anthropic`, `opencode` |
 | `upstream_url` | `GATEWAY_UPSTREAM_URL` | per provider | upstream base URL (required for `opencode`) |
 | `api_key` | `GATEWAY_API_KEY` | — | upstream credential |
+| `api_keys` | `GATEWAY_API_KEYS` | — | comma-separated/list credentials; each key becomes a balanced endpoint |
 | `model` | `GATEWAY_MODEL` | `openrouter/free` for OpenRouter; otherwise — | default model when a request omits one |
 | `agent` | `GATEWAY_AGENT` | `writer` | OpenCode only: agent to drive |
+| `balance` | `GATEWAY_BALANCE` | `least_in_flight` | `least_in_flight` or `round_robin` across configured endpoints |
+| `max_retries` | `GATEWAY_MAX_RETRIES` | `3` | transient upstream retries |
+| `base_delay_ms` | `GATEWAY_BASE_DELAY_MS` | `250` | first retry backoff delay |
 
 `llm_base_url` (server) and `addr` (gateway) must point at each other — they
 default to the same `127.0.0.1:8001` so the two processes connect out of the box.
@@ -124,6 +132,15 @@ For CI or hosted deployments, prefer environment variables:
 ```bash
 GATEWAY_PROVIDER=openrouter \
 GATEWAY_API_KEY=... \
+GATEWAY_MODEL=openrouter/free \
+make run-gateway
+```
+
+For a same-provider key pool in hosted deployments, use:
+
+```bash
+GATEWAY_PROVIDER=openrouter \
+GATEWAY_API_KEYS=sk-1,sk-2,sk-3 \
 GATEWAY_MODEL=openrouter/free \
 make run-gateway
 ```
@@ -156,6 +173,62 @@ ships a tool-less single-shot `writer` agent at `.opencode/agent/writer.md`). Th
 provider routing and mappings live in
 [`internal/gateway`](../internal/gateway/); OpenCode specifics are in
 [`opencode.go`](../internal/gateway/opencode.go).
+
+### Multiple keys and gateways
+
+Use `api_keys` when one provider account has multiple credentials to spread
+rate-limit pressure. The gateway builds one selectable endpoint per key:
+
+```yaml
+gateway:
+  provider: openrouter
+  api_keys:
+    - sk-or-1
+    - sk-or-2
+  model: openrouter/free
+```
+
+Use `gateways` when routing across multiple upstreams/providers:
+
+```yaml
+gateway:
+  balance: least_in_flight
+  max_retries: 3
+  base_delay_ms: 250
+
+  gateways:
+    - name: openrouter-main
+      provider: openrouter
+      api_keys:
+        - sk-or-1
+        - sk-or-2
+      model: openrouter/free
+      models:
+        - openrouter/free
+
+    - name: anthropic-direct
+      provider: anthropic
+      api_keys:
+        - sk-ant-1
+      model: claude-3-5-haiku-latest
+      models:
+        - claude-3-5-haiku-latest
+```
+
+When `gateways` is present, each entry may set `name`, `provider`,
+`upstream_url`, `api_key`, `api_keys`, `model`, `agent`, and `models`. `name` is
+used only for logs. `models` is an optional exact allow-list; if omitted, that
+endpoint may receive any requested model.
+
+`least_in_flight` is the default because LLM calls have uneven latency. The
+gateway also respects upstream `Retry-After` headers, cools down rate-limited or
+overloaded endpoints, and disables endpoints that return credential/billing
+errors. Logs identify the selected gateway and key label but never print raw
+API keys.
+
+This is load balancing, not model fallback. The gateway does not yet rewrite a
+requested model to a different fallback model after model-unavailable,
+context-length, or capability errors.
 
 ## Example: local model, no credentials
 
