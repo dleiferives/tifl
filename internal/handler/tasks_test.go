@@ -120,6 +120,39 @@ func TestSubmitRuleGradedMC(t *testing.T) {
 	}
 }
 
+func TestSubmitPersistsReferenceAssisted(t *testing.T) {
+	srv, repo := newServer(t, false)
+	seedItem(t, repo, "it1", "alpha")
+	content := map[string]any{
+		"question": "τί;", "options": []any{"x", "y"},
+		"correct_index": float64(1), "target_item_ids": []any{"it1"},
+	}
+	_, taskID := seedTask(t, repo, tasks.TypeComprehensionMC, content, []string{"it1"})
+
+	resp := submit(t, srv, taskID, `{"response":{"selected_index":1},"reference_assisted":true}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("submit status = %d", resp.StatusCode)
+	}
+	var out struct {
+		ReferenceAssisted bool `json:"reference_assisted"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.ReferenceAssisted {
+		t.Fatalf("submit response reference_assisted = false, want true")
+	}
+
+	task, err := repo.GetTask(context.Background(), domain.LocalUserID, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !task.ReferenceAssisted {
+		t.Fatal("task row did not persist reference_assisted")
+	}
+}
+
 func TestSubmitEnsuresSkillAssociationsForTargets(t *testing.T) {
 	ctx := context.Background()
 	repo := dbtest.NewRepo(t)

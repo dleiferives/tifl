@@ -613,11 +613,11 @@ func (r *SQLRepository) CreateTask(ctx context.Context, t domain.Task, targets [
 	err = r.inTx(ctx, func(tx *dtx) error {
 		if _, err := tx.exec(ctx,
 			`INSERT INTO tasks(task_id, session_id, user_id, task_type, language, content,
-			   response, input_method, media_path, grade, graded_by, graded_at, attempt_count, created_at)
-			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			   response, input_method, media_path, grade, reference_assisted, graded_by, graded_at, attempt_count, created_at)
+			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			t.TaskID, t.SessionID, t.UserID, t.TaskType, t.Language, content,
 			response, nullEmpty(t.InputMethod), nullEmpty(t.MediaPath), grade,
-			nullEmpty(t.GradedBy), nullFloat(t.GradedAt), 1, t.CreatedAt); err != nil {
+			boolToInt(t.ReferenceAssisted), nullEmpty(t.GradedBy), nullFloat(t.GradedAt), 1, t.CreatedAt); err != nil {
 			return err
 		}
 		for _, itemID := range targets {
@@ -638,7 +638,7 @@ func (r *SQLRepository) CreateTask(ctx context.Context, t domain.Task, targets [
 func (r *SQLRepository) GetTask(ctx context.Context, userID, taskID string) (domain.Task, error) {
 	row := r.queryRow(ctx,
 		`SELECT task_id, session_id, user_id, task_type, language, content, response,
-		        input_method, media_path, grade, graded_by, graded_at, attempt_count, created_at
+		        input_method, media_path, grade, reference_assisted, graded_by, graded_at, attempt_count, created_at
 		 FROM tasks WHERE task_id = ? AND user_id = ?`, taskID, userID)
 	t, err := scanTask(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -657,9 +657,9 @@ func (r *SQLRepository) RecordTaskGrade(ctx context.Context, userID, taskID stri
 		return err
 	}
 	res, err := r.exec(ctx,
-		`UPDATE tasks SET response = ?, input_method = ?, grade = ?, graded_by = ?, graded_at = ?
+		`UPDATE tasks SET response = ?, input_method = ?, grade = ?, reference_assisted = ?, graded_by = ?, graded_at = ?
 		 WHERE task_id = ? AND user_id = ?`,
-		response, nullEmpty(g.InputMethod), grade, nullEmpty(g.GradedBy), g.GradedAt, taskID, userID)
+		response, nullEmpty(g.InputMethod), grade, boolToInt(g.ReferenceAssisted), nullEmpty(g.GradedBy), g.GradedAt, taskID, userID)
 	if err != nil {
 		return err
 	}
@@ -682,7 +682,7 @@ func (r *SQLRepository) ReplaceTaskContent(ctx context.Context, userID, taskID s
 		res, err := tx.exec(ctx,
 			`UPDATE tasks
 			    SET content = ?, response = NULL, input_method = NULL, media_path = NULL,
-			        grade = NULL, graded_by = NULL, graded_at = NULL, attempt_count = 1
+			        grade = NULL, reference_assisted = 0, graded_by = NULL, graded_at = NULL, attempt_count = 1
 			  WHERE task_id = ? AND user_id = ?
 			    AND graded_at IS NULL AND COALESCE(graded_by, '') = ''`,
 			contentJSON, taskID, userID)
@@ -723,7 +723,7 @@ func (r *SQLRepository) IncrementTaskAttempt(ctx context.Context, taskID string)
 func (r *SQLRepository) ListSessionTasks(ctx context.Context, sessionID string) ([]domain.Task, error) {
 	rows, err := r.query(ctx,
 		`SELECT task_id, session_id, user_id, task_type, language, content, response,
-		        input_method, media_path, grade, graded_by, graded_at, attempt_count, created_at
+		        input_method, media_path, grade, reference_assisted, graded_by, graded_at, attempt_count, created_at
 		 FROM tasks WHERE session_id = ? ORDER BY created_at, task_id`, sessionID)
 	if err != nil {
 		return nil, err
@@ -920,9 +920,10 @@ func scanTask(row rowScanner) (domain.Task, error) {
 		response, grade                  sql.NullString
 		inputMethod, mediaPath, gradedBy sql.NullString
 		gradedAt                         sql.NullFloat64
+		referenceAssisted                int
 	)
 	if err := row.Scan(&t.TaskID, &t.SessionID, &t.UserID, &t.TaskType, &t.Language,
-		&content, &response, &inputMethod, &mediaPath, &grade, &gradedBy, &gradedAt, &t.AttemptCount, &t.CreatedAt); err != nil {
+		&content, &response, &inputMethod, &mediaPath, &grade, &referenceAssisted, &gradedBy, &gradedAt, &t.AttemptCount, &t.CreatedAt); err != nil {
 		return domain.Task{}, err
 	}
 	var err error
@@ -937,6 +938,7 @@ func scanTask(row rowScanner) (domain.Task, error) {
 	}
 	t.InputMethod = inputMethod.String
 	t.MediaPath = mediaPath.String
+	t.ReferenceAssisted = referenceAssisted != 0
 	t.GradedBy = gradedBy.String
 	t.GradedAt = floatPtr(gradedAt)
 	return t, nil

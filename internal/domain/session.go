@@ -190,20 +190,21 @@ type StoryGlossaryEntry struct {
 // are opaque JSON owned by the task type (internal/tasks); the database never
 // inspects them. See context/task-system.md ("Database Schema").
 type Task struct {
-	TaskID       string
-	SessionID    string
-	UserID       string
-	TaskType     string
-	Language     string
-	Content      map[string]any
-	Response     map[string]any
-	InputMethod  string
-	MediaPath    string
-	Grade        map[string]any
-	GradedBy     string // "rule" | "llm"
-	GradedAt     *float64
-	AttemptCount int
-	CreatedAt    float64
+	TaskID            string
+	SessionID         string
+	UserID            string
+	TaskType          string
+	Language          string
+	Content           map[string]any
+	Response          map[string]any
+	InputMethod       string
+	MediaPath         string
+	Grade             map[string]any
+	ReferenceAssisted bool
+	GradedBy          string // "rule" | "llm"
+	GradedAt          *float64
+	AttemptCount      int
+	CreatedAt         float64
 }
 
 // TaskGrade is the outcome of grading one submission, persisted onto the task row
@@ -211,9 +212,10 @@ type Task struct {
 // submitted; Grade/GradedBy/GradedAt record the result. See
 // context/task-system.md ("The Signal Flow: Task -> Knowledge").
 type TaskGrade struct {
-	Response    map[string]any
-	InputMethod string
-	Grade       map[string]any
-	GradedBy    string
-	GradedAt    float64
+	Response          map[string]any
+	InputMethod       string
+	Grade             map[string]any
+	ReferenceAssisted bool
+	GradedBy          string
+	GradedAt          float64
 }

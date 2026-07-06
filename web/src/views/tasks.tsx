@@ -266,6 +266,9 @@ export function TasksPanel(props: {
   showHeading?: boolean;
   actions?: JSX.Element;
   completeAction?: JSX.Element;
+  referenceAssisted?: (task: Task) => boolean;
+  onShowReference?: () => void;
+  onReadAgain?: () => void;
   onRetry?: () => void;
   onSubmit: (index: number, request: SubmitRequest) => Promise<void>;
   onReport: (index: number, request: ReportRequest) => Promise<ReportResponse>;
@@ -319,6 +322,24 @@ export function TasksPanel(props: {
           <Show when={allDone()}>
             <p class="tasks-complete" role="status">All tasks have a current grade for this session.</p>
           </Show>
+          <Show when={props.completed < props.total && (props.onShowReference || props.onReadAgain)}>
+            <div class="task-reference-actions">
+              <Show when={props.onShowReference}>
+                {(showReference) => (
+                  <button class="secondary-button" type="button" onClick={showReference()}>
+                    Show story
+                  </button>
+                )}
+              </Show>
+              <Show when={props.completed === 0 && props.onReadAgain}>
+                {(readAgain) => (
+                  <button class="secondary-button" type="button" onClick={readAgain()}>
+                    Not ready - read again
+                  </button>
+                )}
+              </Show>
+            </div>
+          </Show>
           <ol class="task-list">
             <For each={props.tasks}>
               {(task, index) => (
@@ -326,6 +347,7 @@ export function TasksPanel(props: {
                   <TaskCard
                     task={task}
                     position={index() + 1}
+                    referenceAssisted={props.referenceAssisted?.(task) ?? task.reference_assisted}
                     onSubmit={(request) => props.onSubmit(index(), request)}
                     onReport={(request) => props.onReport(index(), request)}
                   />
@@ -345,6 +367,7 @@ export function TasksPanel(props: {
 function TaskCard(props: {
   task: Task;
   position: number;
+  referenceAssisted: boolean;
   onSubmit: (request: SubmitRequest) => Promise<void>;
   onReport: (request: ReportRequest) => Promise<ReportResponse>;
 }) {
@@ -383,7 +406,12 @@ function TaskCard(props: {
     <article class="task-card" data-type={props.task.task_type} data-graded={props.task.graded ? "" : undefined}>
       <header class="task-card-head">
         <span class="task-number">Task {props.position}</span>
-        <span class="task-type-chip">{rendererLabel(props.task.task_type)}</span>
+        <span class="task-card-tags">
+          <Show when={props.referenceAssisted}>
+            <span class="task-reference-chip">Story viewed</span>
+          </Show>
+          <span class="task-type-chip">{rendererLabel(props.task.task_type)}</span>
+        </span>
       </header>
       <ReportStatusView report={props.task.report} />
 

@@ -577,7 +577,7 @@ export interface paths {
         put?: never;
         /**
          * Ingest a flushed batch of reader events
-         * @description Appends a batch of behavioural events to the durable log (idempotent on event_id) and derives knowledge signals from the newly-stored ones — lookup_count, the per-item level (from rate events), and story exposure / context variety (counted once per first read). The caller's identity is authoritative; the payload carries no user_id.
+         * @description Appends a batch of behavioural events to the durable log (idempotent on event_id) and derives knowledge signals from the newly-stored ones — lookup_count, the per-item level (from rate events), story exposure / context variety (counted once per first read), and not-ready self-assessment on a session's selected targets. Reference peeks are logged for retrieval-integrity measurement but do not block the learner. The caller's identity is authoritative; the payload carries no user_id.
          */
         post: operations["postReaderEvents"];
         delete?: never;
@@ -1128,10 +1128,12 @@ export interface components {
             story_id: string;
             session_id?: string;
             /** @enum {string} */
-            event_type: "lookup" | "rate" | "navigate" | "sentence_break";
+            event_type: "lookup" | "rate" | "navigate" | "sentence_break" | "reference_peek" | "not_ready_read_again";
             /** @description story token position the event is about */
             position?: number;
-            /** @description rate only: "1".."5" | "w" | "i" */
+            /** @description reference_peek only: unanswered tasks the peek applies to */
+            task_ids?: string[];
+            /** @description rate only: "1".."5" | "w" | "i"; server may store event-specific metadata here */
             value?: string;
             /**
              * Format: double
@@ -1236,6 +1238,8 @@ export interface components {
                 [key: string]: unknown;
             };
             graded: boolean;
+            /** @description True when the submitted answer was marked as story/reference-assisted. */
+            reference_assisted: boolean;
             grade?: components["schemas"]["Grade"];
             report?: components["schemas"]["TaskReportState"];
         };
@@ -1275,6 +1279,8 @@ export interface components {
              * @enum {string}
              */
             input_method?: "typed";
+            /** @description True when the answer followed an explicit story/reference peek. */
+            reference_assisted?: boolean;
         };
         TaskReportRequest: {
             reason: components["schemas"]["TaskReportReason"];
@@ -1296,6 +1302,8 @@ export interface components {
             grade: components["schemas"]["Grade"];
             /** @description Skill XP deltas persisted for this accepted grade. */
             skill_xp: components["schemas"]["SkillXPDelta"][];
+            /** @description Persisted retrieval-integrity flag for this submission. */
+            reference_assisted: boolean;
             /** @description How many times this task has been submitted (1 = first submission). */
             attempt_count: number;
         };

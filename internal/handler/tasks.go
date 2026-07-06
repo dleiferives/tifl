@@ -191,11 +191,12 @@ func (h *Handler) submitTask(w http.ResponseWriter, r *http.Request) {
 	attemptCount := task.AttemptCount
 	if err := h.repo.Tx(r.Context(), func(repo db.Repository) error {
 		if err := repo.RecordTaskGrade(r.Context(), userID, id, domain.TaskGrade{
-			Response:    req.Response,
-			InputMethod: string(method),
-			Grade:       gradeToMap(grade),
-			GradedBy:    string(gradedBy),
-			GradedAt:    now,
+			Response:          req.Response,
+			InputMethod:       string(method),
+			Grade:             gradeToMap(grade),
+			ReferenceAssisted: req.ReferenceAssisted,
+			GradedBy:          string(gradedBy),
+			GradedAt:          now,
 		}); err != nil {
 			return err
 		}
@@ -235,8 +236,9 @@ func (h *Handler) submitTask(w http.ResponseWriter, r *http.Request) {
 		TaskId: id,
 		Grade: gradeDTO{Correct: grade.Correct, Score: grade.Score, Feedback: grade.Feedback,
 			ItemsDemonstrated: grade.ItemsDemonstrated, GradedBy: oapigen.GradeGradedBy(gradedBy)},
-		SkillXp:      skillXPDTOs(skillChanges),
-		AttemptCount: attemptCount,
+		SkillXp:           skillXPDTOs(skillChanges),
+		ReferenceAssisted: req.ReferenceAssisted,
+		AttemptCount:      attemptCount,
 	})
 
 	// Off the critical path: resolve any pending tier verifications this grade
@@ -288,7 +290,7 @@ func (h *Handler) fillLLMGradeContext(r *http.Request, gr *tasks.GradeRequest, t
 // type's Present view, and the grade is surfaced only once the task is graded. An
 // unregistered type yields empty content rather than risk leaking raw content.
 func (h *Handler) presentTask(ctx context.Context, t domain.Task) (taskDTO, error) {
-	dto := taskDTO{TaskId: t.TaskID, TaskType: t.TaskType, Content: map[string]any{}}
+	dto := taskDTO{TaskId: t.TaskID, TaskType: t.TaskType, Content: map[string]any{}, ReferenceAssisted: t.ReferenceAssisted}
 	if tt, ok := h.taskTypes.Get(t.TaskType); ok {
 		dto.Content = tt.Present(t.Content)
 	}

@@ -689,11 +689,12 @@ func testPipeline(t *testing.T, repo db.Repository) {
 
 	// RecordTaskGrade persists the submitted response and grade in one update.
 	must(t, repo.RecordTaskGrade(ctx, user.UserID, task.TaskID, domain.TaskGrade{
-		Response:    map[string]any{"selected_index": float64(1)},
-		InputMethod: "typed",
-		Grade:       map[string]any{"correct": true, "score": float64(1)},
-		GradedBy:    "rule",
-		GradedAt:    1800.0,
+		Response:          map[string]any{"selected_index": float64(1)},
+		InputMethod:       "typed",
+		Grade:             map[string]any{"correct": true, "score": float64(1)},
+		ReferenceAssisted: true,
+		GradedBy:          "rule",
+		GradedAt:          1800.0,
 	}))
 	graded, err := repo.GetTask(ctx, user.UserID, task.TaskID)
 	must(t, err)
@@ -705,6 +706,9 @@ func testPipeline(t *testing.T, repo db.Repository) {
 	}
 	if graded.InputMethod != "typed" || graded.GradedBy != "rule" {
 		t.Fatalf("grade metadata wrong: %+v", graded)
+	}
+	if !graded.ReferenceAssisted {
+		t.Fatalf("reference_assisted not persisted: %+v", graded)
 	}
 	if graded.GradedAt == nil || *graded.GradedAt != 1800.0 {
 		t.Fatalf("graded_at not persisted: %+v", graded.GradedAt)

@@ -918,9 +918,11 @@ paths:
       description: >
         Appends a batch of behavioural events to the durable log (idempotent on
         event_id) and derives knowledge signals from the newly-stored ones —
-        lookup_count, the per-item level (from rate events), and story exposure /
-        context variety (counted once per first read). The caller's identity is
-        authoritative; the payload carries no user_id.
+        lookup_count, the per-item level (from rate events), story exposure /
+        context variety (counted once per first read), and not-ready
+        self-assessment on a session's selected targets. Reference peeks are
+        logged for retrieval-integrity measurement but do not block the learner.
+        The caller's identity is authoritative; the payload carries no user_id.
       operationId: postReaderEvents
       requestBody:
         required: true
@@ -1776,12 +1778,18 @@ components:
         session_id: { type: string }
         event_type:
           type: string
-          enum: [lookup, rate, navigate, sentence_break]
+          enum: [lookup, rate, navigate, sentence_break, reference_peek, not_ready_read_again]
         position:
           type: integer
           description: "story token position the event is about"
           x-go-type-skip-optional-pointer: false
-        value: { type: string, description: 'rate only: "1".."5" | "w" | "i"' }
+        task_ids:
+          type: array
+          items: { type: string }
+          description: "reference_peek only: unanswered tasks the peek applies to"
+        value:
+          type: string
+          description: 'rate only: "1".."5" | "w" | "i"; server may store event-specific metadata here'
         occurred_at: { type: number, format: double, description: "Unix seconds (client clock)" }
       required: [story_id, event_type]
     ReaderEventsRequest:
@@ -1907,13 +1915,16 @@ components:
           additionalProperties: true
           description: Present-filtered content — never includes answer keys.
         graded: { type: boolean }
+        reference_assisted:
+          type: boolean
+          description: True when the submitted answer was marked as story/reference-assisted.
         grade:
           allOf: [{ $ref: "#/components/schemas/Grade" }]
           x-go-type-skip-optional-pointer: false
         report:
           allOf: [{ $ref: "#/components/schemas/TaskReportState" }]
           x-go-type-skip-optional-pointer: false
-      required: [task_id, task_type, content, graded]
+      required: [task_id, task_type, content, graded, reference_assisted]
     TaskReportReason:
       type: string
       enum: [malformed, wrong_answer_key, nonsensical, too_hard]
@@ -1963,6 +1974,9 @@ components:
           type: string
           description: 'property of the response; only "typed" supported today'
           enum: [typed]
+        reference_assisted:
+          type: boolean
+          description: True when the answer followed an explicit story/reference peek.
       required: [response]
     TaskReportRequest:
       type: object
@@ -2002,11 +2016,14 @@ components:
           description: Skill XP deltas persisted for this accepted grade.
           items:
             $ref: "#/components/schemas/SkillXPDelta"
+        reference_assisted:
+          type: boolean
+          description: Persisted retrieval-integrity flag for this submission.
         attempt_count:
           type: integer
           minimum: 1
           description: How many times this task has been submitted (1 = first submission).
-      required: [task_id, grade, skill_xp, attempt_count]
+      required: [task_id, grade, skill_xp, reference_assisted, attempt_count]
     SkillXPDelta:
       type: object
       properties:

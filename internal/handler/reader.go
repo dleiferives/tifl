@@ -151,6 +151,15 @@ func (h *Handler) postReaderEvents(w http.ResponseWriter, r *http.Request) {
 		if e.Value != "" {
 			ev.Value = &e.Value
 		}
+		if len(e.TaskIds) > 0 {
+			payload, err := json.Marshal(map[string][]string{"task_ids": e.TaskIds})
+			if err != nil {
+				writeError(w, http.StatusBadRequest, fmt.Errorf("invalid reader event task ids: %w", err))
+				return
+			}
+			v := string(payload)
+			ev.Value = &v
+		}
 		events = append(events, ev)
 	}
 

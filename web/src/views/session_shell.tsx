@@ -7,6 +7,7 @@ import {
   getSessionDetail,
   getSessionTasks,
   getStory,
+  postReaderEvents,
   startReading,
   submitTask,
   type APIRequest,
@@ -64,6 +65,8 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
   });
   const [completing, setCompleting] = createSignal(false);
   const [actionError, setActionError] = createSignal("");
+  const [referencePeeked, setReferencePeeked] = createStore<Record<string, boolean>>({});
+  const [submittingTasks, setSubmittingTasks] = createStore<Record<string, boolean>>({});
   const taskReports = createTaskReportController({
     tasks: () => state.tasks,
     setTask: (index, task) => setState("tasks", index, reconcile(task)),
@@ -74,6 +77,8 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
   let loadAbort: AbortController | undefined;
   let activeSessionID = "";
   let lastSwitchEvent = "";
+  let lastPanelSession = "";
+  let previousPanelStep: SessionStep | undefined;
   let readingStartPending = false;
 
   onCleanup(() => {
@@ -85,6 +90,8 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
     const sessionID = props.sessionId;
     if (sessionID !== activeSessionID) {
       activeSessionID = sessionID;
+      setReferencePeeked(reconcile({}));
+      setSubmittingTasks(reconcile({}));
       resetVisited(props.step);
       void loadSession(sessionID);
       return;
@@ -101,6 +108,12 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
     window.dispatchEvent(new CustomEvent("tifl:session-panel-switch", {
       detail: { session_id: props.sessionId, step: props.step },
     }));
+    const previous = lastPanelSession === props.sessionId ? previousPanelStep : undefined;
+    lastPanelSession = props.sessionId;
+    previousPanelStep = props.step;
+    if (previous === "tasks" && props.step === "read") {
+      recordReferencePeek();
+    }
   });
 
   createEffect(() => {
@@ -271,18 +284,84 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
     if (!task) {
       return;
     }
+    const referenceAssisted = !!referencePeeked[task.task_id] || task.reference_assisted;
     const wasGraded = task.graded;
-    const result = await submitTask(task.task_id, request);
-    const nextCompleted = wasGraded ? completed() : completed() + 1;
-    batch(() => {
-      setState("tasks", index, "grade", result.grade);
-      setState("tasks", index, "graded", true);
-      setState("tasks", index, "attempt_count", result.attempt_count);
-      if (!wasGraded) {
-        updateTaskProgress(total(), nextCompleted);
-      }
-    });
-    announceGrade(result.grade, result.skill_xp);
+    setSubmittingTasks(task.task_id, true);
+    try {
+      const result = await submitTask(task.task_id, { ...request, reference_assisted: referenceAssisted });
+      const nextCompleted = wasGraded ? completed() : completed() + 1;
+      batch(() => {
+        setState("tasks", index, "grade", result.grade);
+        setState("tasks", index, "graded", true);
+        setState("tasks", index, "reference_assisted", result.reference_assisted);
+        setState("tasks", index, "attempt_count", result.attempt_count);
+        if (result.reference_assisted) {
+          setReferencePeeked(task.task_id, true);
+        }
+        if (!wasGraded) {
+          updateTaskProgress(total(), nextCompleted);
+        }
+      });
+      announceGrade(result.grade, result.skill_xp);
+    } finally {
+      setSubmittingTasks(task.task_id, false);
+    }
+  }
+
+  function showReference() {
+    recordReferencePeek();
+    window.location.hash = sessionHref(props.sessionId, "read");
+  }
+
+  function readAgain() {
+    if (completed() === 0) {
+      recordNotReadyReadAgain();
+    }
+    window.location.hash = sessionHref(props.sessionId, "read");
+  }
+
+  function recordReferencePeek() {
+    const storyID = sessionStoryID();
+    if (!storyID) {
+      return;
+    }
+    const taskIDs = state.tasks
+      .filter((task) => !task.graded && !referencePeeked[task.task_id] && !submittingTasks[task.task_id])
+      .map((task) => task.task_id);
+    if (taskIDs.length === 0) {
+      return;
+    }
+    taskIDs.forEach((taskID) => setReferencePeeked(taskID, true));
+    void postReaderEvents({
+      events: [{
+        event_id: randomEventID("reference-peek"),
+        story_id: storyID,
+        session_id: props.sessionId,
+        event_type: "reference_peek",
+        task_ids: taskIDs,
+        occurred_at: unixNow(),
+      }],
+    }).catch(() => undefined);
+  }
+
+  function recordNotReadyReadAgain() {
+    const storyID = sessionStoryID();
+    if (!storyID) {
+      return;
+    }
+    void postReaderEvents({
+      events: [{
+        event_id: randomEventID("not-ready"),
+        story_id: storyID,
+        session_id: props.sessionId,
+        event_type: "not_ready_read_again",
+        occurred_at: unixNow(),
+      }],
+    }).catch(() => undefined);
+  }
+
+  function sessionStoryID(): string {
+    return state.content?.story?.story_id || state.detail?.story_id || "";
   }
 
   async function completeCurrentSession() {
@@ -453,6 +532,9 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
                       onSubmit={submitTaskAt}
                       onReport={(index, request) => taskReports.report(index, request)}
                       completeAction={completeAction()}
+                      referenceAssisted={(task) => !!referencePeeked[task.task_id] || task.reference_assisted}
+                      onShowReference={showReference}
+                      onReadAgain={completed() === 0 ? readAgain : undefined}
                     />
                   </div>
                 </Show>
@@ -811,6 +893,10 @@ function isAbort(error: unknown): boolean {
 
 function unixNow(): number {
   return Math.floor(Date.now() / 1000);
+}
+
+function randomEventID(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function statusLabel(status: SessionDetail["status"]): string {

@@ -2,6 +2,7 @@ package reader
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -152,6 +153,9 @@ func (s *Service) IngestOnly(ctx context.Context, userID string, events []domain
 		if sid == "" {
 			return 0, nil, fmt.Errorf("%w: missing story_id", ErrInvalidEvent)
 		}
+		if err := s.validateEvent(ctx, userID, events[i]); err != nil {
+			return 0, nil, err
+		}
 		if _, ok := stories[sid]; !ok {
 			// Ownership/existence check up front so a bad batch 404s at flush
 			// time, not silently in a worker.
@@ -213,6 +217,15 @@ func (s *Service) ProcessPendingEvents(ctx context.Context, userID, storyID stri
 	eventIDs := make([]string, 0, len(pending))
 	for _, e := range pending {
 		eventIDs = append(eventIDs, e.EventID)
+		switch e.EventType {
+		case domain.ReaderEventNotReadyReadAgain:
+			if err := s.applyNotReady(ctx, userID, e); err != nil {
+				return err
+			}
+			continue
+		case domain.ReaderEventReferencePeek:
+			continue
+		}
 		if e.Position == nil {
 			continue
 		}
@@ -251,6 +264,78 @@ func (s *Service) ProcessPendingEvents(ctx context.Context, userID, storyID stri
 		return err
 	}
 	return s.repo.MarkReaderEventsProcessed(ctx, eventIDs, s.now())
+}
+
+func (s *Service) validateEvent(ctx context.Context, userID string, e domain.ReaderEvent) error {
+	switch e.EventType {
+	case domain.ReaderEventLookup, domain.ReaderEventRate, domain.ReaderEventNavigate, domain.ReaderEventSentenceBreak:
+		return nil
+	case domain.ReaderEventReferencePeek:
+		if e.SessionID == nil || len(referencePeekTaskIDs(e)) == 0 {
+			return fmt.Errorf("%w: reference_peek requires session_id and task_ids", ErrInvalidEvent)
+		}
+		return s.validateSessionEvent(ctx, userID, e)
+	case domain.ReaderEventNotReadyReadAgain:
+		if e.SessionID == nil {
+			return fmt.Errorf("%w: not_ready_read_again requires session_id", ErrInvalidEvent)
+		}
+		return s.validateSessionEvent(ctx, userID, e)
+	default:
+		return fmt.Errorf("%w: unknown event_type %q", ErrInvalidEvent, e.EventType)
+	}
+}
+
+func (s *Service) validateSessionEvent(ctx context.Context, userID string, e domain.ReaderEvent) error {
+	sess, err := s.repo.GetSession(ctx, *e.SessionID)
+	if err != nil {
+		return err
+	}
+	if sess.UserID != userID {
+		return ErrStoryNotOwned
+	}
+	if sess.StoryID == nil || *sess.StoryID != e.StoryID {
+		return fmt.Errorf("%w: event story_id does not match session", ErrInvalidEvent)
+	}
+	return nil
+}
+
+func (s *Service) applyNotReady(ctx context.Context, userID string, e domain.ReaderEvent) error {
+	if e.SessionID == nil {
+		return nil
+	}
+	sess, err := s.repo.GetSession(ctx, *e.SessionID)
+	if err != nil {
+		return err
+	}
+	for _, itemID := range sess.SelectedTargets {
+		uk, err := s.repo.GetUserKnowledgeItem(ctx, userID, itemID)
+		if errors.Is(err, db.ErrNotFound) {
+			uk = domain.UserKnowledge{UserID: userID, ItemID: itemID}
+		} else if err != nil {
+			return err
+		}
+		uk.ExposureCount++
+		now := s.now()
+		uk.LastSeen = &now
+		s.engine.ReviewFSRS(&uk, predictor.RatingAgain)
+		if _, err := s.engine.Refresh(ctx, uk); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func referencePeekTaskIDs(e domain.ReaderEvent) []string {
+	if e.Value == nil {
+		return nil
+	}
+	var payload struct {
+		TaskIDs []string `json:"task_ids"`
+	}
+	if err := json.Unmarshal([]byte(*e.Value), &payload); err != nil {
+		return nil
+	}
+	return payload.TaskIDs
 }
 
 // storyCtx is the per-story data Ingest needs: ownership-checked language, the

@@ -11,6 +11,7 @@ import (
 // (consumer-owned, per #201) makes the package's complete storage footprint
 // visible in one place and keeps test doubles small.
 type Store interface {
+	GetSession(ctx context.Context, sessionID string) (domain.Session, error)
 	GetStory(ctx context.Context, storyID string) (domain.Story, error)
 	ListStoryTokens(ctx context.Context, storyID string) ([]domain.StoryToken, error)
 	ListStoryGlossary(ctx context.Context, storyID string) ([]domain.StoryGlossaryEntry, error)

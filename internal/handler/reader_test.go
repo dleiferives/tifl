@@ -157,6 +157,57 @@ func TestPostReaderEventsDerivesSignals(t *testing.T) {
 	}
 }
 
+func TestPostReaderEventsAcceptsPeekAndNotReady(t *testing.T) {
+	srv, repo := newServer(t, false)
+	ctx := context.Background()
+	storyID := seedStory(t, repo)
+	seedItem(t, repo, "target1", "target")
+	sess, err := repo.CreateSession(ctx, domain.Session{
+		UserID: domain.LocalUserID, StoryID: &storyID, Language: "xx", Level: "beginner",
+		SelectedTargets: []string{"target1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := repo.CreateTask(ctx, domain.Task{
+		SessionID: sess.SessionID, UserID: domain.LocalUserID, TaskType: "comprehension_mc",
+		Language: "xx", Content: map[string]any{"question": "?", "options": []any{"x"}, "correct_index": float64(0)},
+	}, []string{"target1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{"events":[
+		{"event_id":"peek1","story_id":"` + storyID + `","session_id":"` + sess.SessionID + `","event_type":"reference_peek","task_ids":["` + task.TaskID + `"]},
+		{"event_id":"not-ready1","story_id":"` + storyID + `","session_id":"` + sess.SessionID + `","event_type":"not_ready_read_again"}
+	]}`
+	resp, err := http.Post(srv.URL+"/api/v1/reader/events", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("want 202, got %d: %s", resp.StatusCode, raw)
+	}
+	var out struct {
+		Ingested int `json:"ingested"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Ingested != 2 {
+		t.Fatalf("want 2 ingested, got %d", out.Ingested)
+	}
+	uk, err := repo.GetUserKnowledgeItem(ctx, domain.LocalUserID, "target1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uk.ExposureCount != 1 || uk.TaskTotal != 0 || uk.TaskCorrect != 0 {
+		t.Fatalf("not-ready signal should be exposure-only on target, got %+v", uk)
+	}
+}
+
 func TestPutWordKnowledgeWritesCanonicalLevel(t *testing.T) {
 	srv, repo := newServer(t, false)
 	storyID := seedStory(t, repo)

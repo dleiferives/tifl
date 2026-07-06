@@ -7,10 +7,12 @@ package domain
 type ReaderEventType string
 
 const (
-	ReaderEventLookup        ReaderEventType = "lookup"
-	ReaderEventRate          ReaderEventType = "rate"
-	ReaderEventNavigate      ReaderEventType = "navigate"
-	ReaderEventSentenceBreak ReaderEventType = "sentence_break"
+	ReaderEventLookup            ReaderEventType = "lookup"
+	ReaderEventRate              ReaderEventType = "rate"
+	ReaderEventNavigate          ReaderEventType = "navigate"
+	ReaderEventSentenceBreak     ReaderEventType = "sentence_break"
+	ReaderEventReferencePeek     ReaderEventType = "reference_peek"
+	ReaderEventNotReadyReadAgain ReaderEventType = "not_ready_read_again"
 )
 
 // ReaderLevel is the learner's own knowledge rating for an item, set in the

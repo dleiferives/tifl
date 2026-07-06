@@ -397,10 +397,12 @@ func (e ProfilePatchLevel) Valid() bool {
 
 // Defines values for ReaderEventEventType.
 const (
-	Lookup        ReaderEventEventType = "lookup"
-	Navigate      ReaderEventEventType = "navigate"
-	Rate          ReaderEventEventType = "rate"
-	SentenceBreak ReaderEventEventType = "sentence_break"
+	Lookup            ReaderEventEventType = "lookup"
+	Navigate          ReaderEventEventType = "navigate"
+	NotReadyReadAgain ReaderEventEventType = "not_ready_read_again"
+	Rate              ReaderEventEventType = "rate"
+	ReferencePeek     ReaderEventEventType = "reference_peek"
+	SentenceBreak     ReaderEventEventType = "sentence_break"
 )
 
 // Valid indicates whether the value is a known member of the ReaderEventEventType enum.
@@ -410,7 +412,11 @@ func (e ReaderEventEventType) Valid() bool {
 		return true
 	case Navigate:
 		return true
+	case NotReadyReadAgain:
+		return true
 	case Rate:
+		return true
+	case ReferencePeek:
 		return true
 	case SentenceBreak:
 		return true
@@ -1223,7 +1229,10 @@ type ReaderEvent struct {
 	SessionId string `json:"session_id,omitempty"`
 	StoryId   string `json:"story_id"`
 
-	// Value rate only: "1".."5" | "w" | "i"
+	// TaskIds reference_peek only: unanswered tasks the peek applies to
+	TaskIds []string `json:"task_ids,omitempty"`
+
+	// Value rate only: "1".."5" | "w" | "i"; server may store event-specific metadata here
 	Value string `json:"value,omitempty"`
 }
 
@@ -1521,6 +1530,9 @@ type SubmitTaskRequest struct {
 	// InputMethod property of the response; only "typed" supported today
 	InputMethod SubmitTaskRequestInputMethod `json:"input_method,omitempty"`
 
+	// ReferenceAssisted True when the answer followed an explicit story/reference peek.
+	ReferenceAssisted bool `json:"reference_assisted,omitempty"`
+
 	// Response type-specific response JSON (e.g. {selected_index}, {answer}, {text})
 	Response map[string]interface{} `json:"response"`
 }
@@ -1536,6 +1548,9 @@ type SubmitTaskResponse struct {
 	// Grade The outcome of grading one task response.
 	Grade Grade `json:"grade"`
 
+	// ReferenceAssisted Persisted retrieval-integrity flag for this submission.
+	ReferenceAssisted bool `json:"reference_assisted"`
+
 	// SkillXp Skill XP deltas persisted for this accepted grade.
 	SkillXp []SkillXPDelta `json:"skill_xp"`
 	TaskId  string         `json:"task_id"`
@@ -1547,8 +1562,11 @@ type Task struct {
 	Content map[string]interface{} `json:"content"`
 	Grade   *Grade                 `json:"grade,omitempty"`
 	Graded  bool                   `json:"graded"`
-	Report  *TaskReportState       `json:"report,omitempty"`
-	TaskId  string                 `json:"task_id"`
+
+	// ReferenceAssisted True when the submitted answer was marked as story/reference-assisted.
+	ReferenceAssisted bool             `json:"reference_assisted"`
+	Report            *TaskReportState `json:"report,omitempty"`
+	TaskId            string           `json:"task_id"`
 
 	// TaskType registered TaskType id
 	TaskType string `json:"task_type"`
