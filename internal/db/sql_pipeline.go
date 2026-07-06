@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/dleiferives/tifl/internal/domain"
@@ -663,6 +665,42 @@ func (r *SQLRepository) RecordTaskGrade(ctx context.Context, userID, taskID stri
 	return nil
 }
 
+func (r *SQLRepository) ReplaceTaskContent(ctx context.Context, userID, taskID string, content map[string]any, targets []string) (domain.Task, error) {
+	contentJSON, err := marshalJSON(content)
+	if err != nil {
+		return domain.Task{}, err
+	}
+	if err := r.inTx(ctx, func(tx *dtx) error {
+		res, err := tx.exec(ctx,
+			`UPDATE tasks
+			    SET content = ?, response = NULL, input_method = NULL, media_path = NULL,
+			        grade = NULL, graded_by = NULL, graded_at = NULL, attempt_count = 1
+			  WHERE task_id = ? AND user_id = ?
+			    AND graded_at IS NULL AND COALESCE(graded_by, '') = ''`,
+			contentJSON, taskID, userID)
+		if err != nil {
+			return err
+		}
+		if err := requireRow(res); err != nil {
+			return err
+		}
+		if _, err := tx.exec(ctx, `DELETE FROM task_targets WHERE task_id = ?`, taskID); err != nil {
+			return err
+		}
+		for _, itemID := range targets {
+			if _, err := tx.exec(ctx,
+				`INSERT INTO task_targets(task_id, item_id) VALUES(?, ?) ON CONFLICT DO NOTHING`,
+				taskID, itemID); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return domain.Task{}, err
+	}
+	return r.GetTask(ctx, userID, taskID)
+}
+
 func (r *SQLRepository) IncrementTaskAttempt(ctx context.Context, taskID string) (int, error) {
 	var count int
 	err := r.queryRow(ctx,
@@ -693,6 +731,95 @@ func (r *SQLRepository) ListSessionTasks(ctx context.Context, sessionID string) 
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+func (r *SQLRepository) CreateContentReport(ctx context.Context, report domain.ContentReport) (domain.ContentReport, error) {
+	if report.ReportID == "" {
+		report.ReportID = id.New()
+	}
+	if report.CreatedAt == 0 {
+		report.CreatedAt = float64(time.Now().Unix())
+	}
+	if report.Snapshot == nil {
+		report.Snapshot = map[string]any{}
+	}
+	snapshot, err := marshalJSON(report.Snapshot)
+	if err != nil {
+		return domain.ContentReport{}, err
+	}
+	_, err = r.exec(ctx,
+		`INSERT INTO content_reports(report_id, reporter_user_id, kind, target_id,
+		    context_kind, context_id, reason_category, note, snapshot, outcome,
+		    outcome_detail, replacement_task_id, created_at, updated_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		report.ReportID, report.ReporterUserID, report.Kind, report.TargetID,
+		report.ContextKind, report.ContextID, report.ReasonCategory, nullEmpty(report.Note),
+		snapshot, report.Outcome, nullEmpty(report.OutcomeDetail), nullEmpty(report.ReplacementTaskID),
+		report.CreatedAt, nullFloat(report.UpdatedAt))
+	if err != nil {
+		return domain.ContentReport{}, err
+	}
+	return report, nil
+}
+
+func (r *SQLRepository) GetContentReport(ctx context.Context, reportID string) (domain.ContentReport, error) {
+	report, err := scanContentReport(r.queryRow(ctx,
+		`SELECT report_id, reporter_user_id, kind, target_id, context_kind, context_id,
+		        reason_category, note, snapshot, outcome, outcome_detail,
+		        replacement_task_id, created_at, updated_at
+		   FROM content_reports WHERE report_id = ?`, reportID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.ContentReport{}, ErrNotFound
+	}
+	return report, err
+}
+
+func (r *SQLRepository) LatestContentReportForTarget(ctx context.Context, kind, targetID string) (domain.ContentReport, error) {
+	report, err := scanContentReport(r.queryRow(ctx,
+		`SELECT report_id, reporter_user_id, kind, target_id, context_kind, context_id,
+		        reason_category, note, snapshot, outcome, outcome_detail,
+		        replacement_task_id, created_at, updated_at
+		   FROM content_reports
+		  WHERE kind = ? AND target_id = ?
+		  ORDER BY created_at DESC, report_id DESC
+		  LIMIT 1`, kind, targetID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.ContentReport{}, ErrNotFound
+	}
+	return report, err
+}
+
+func (r *SQLRepository) CountContentReportsByOutcome(ctx context.Context, contextKind, contextID, kind string, outcomes []string) (int, error) {
+	if len(outcomes) == 0 {
+		return 0, nil
+	}
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(outcomes)), ",")
+	args := make([]any, 0, 3+len(outcomes))
+	args = append(args, contextKind, contextID, kind)
+	for _, outcome := range outcomes {
+		args = append(args, outcome)
+	}
+	var count int
+	err := r.queryRow(ctx,
+		fmt.Sprintf(`SELECT COUNT(*)
+		   FROM content_reports
+		  WHERE context_kind = ? AND context_id = ? AND kind = ?
+		    AND outcome IN (%s)`, placeholders),
+		args...).Scan(&count)
+	return count, err
+}
+
+func (r *SQLRepository) UpdateContentReportOutcome(ctx context.Context, reportID, outcome, detail, replacementTaskID string) error {
+	now := float64(time.Now().Unix())
+	res, err := r.exec(ctx,
+		`UPDATE content_reports
+		    SET outcome = ?, outcome_detail = ?, replacement_task_id = ?, updated_at = ?
+		  WHERE report_id = ?`,
+		outcome, nullEmpty(detail), nullEmpty(replacementTaskID), now, reportID)
+	if err != nil {
+		return err
+	}
+	return requireRow(res)
 }
 
 // --- shared scan + helpers -------------------------------------------------
@@ -805,6 +932,29 @@ func scanTask(row rowScanner) (domain.Task, error) {
 	t.GradedBy = gradedBy.String
 	t.GradedAt = floatPtr(gradedAt)
 	return t, nil
+}
+
+func scanContentReport(row rowScanner) (domain.ContentReport, error) {
+	var (
+		report                    domain.ContentReport
+		note, detail, replacement sql.NullString
+		snapshot                  sql.NullString
+		updated                   sql.NullFloat64
+	)
+	if err := row.Scan(&report.ReportID, &report.ReporterUserID, &report.Kind, &report.TargetID,
+		&report.ContextKind, &report.ContextID, &report.ReasonCategory, &note, &snapshot,
+		&report.Outcome, &detail, &replacement, &report.CreatedAt, &updated); err != nil {
+		return domain.ContentReport{}, err
+	}
+	var err error
+	if report.Snapshot, err = unmarshalJSON(snapshot); err != nil {
+		return domain.ContentReport{}, err
+	}
+	report.Note = note.String
+	report.OutcomeDetail = detail.String
+	report.ReplacementTaskID = replacement.String
+	report.UpdatedAt = floatPtr(updated)
+	return report, nil
 }
 
 // inTx runs fn inside a transaction, committing on success and rolling back on

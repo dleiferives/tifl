@@ -734,6 +734,66 @@ func (e SubmitTaskRequestInputMethod) Valid() bool {
 	}
 }
 
+// Defines values for TaskReportReason.
+const (
+	Malformed      TaskReportReason = "malformed"
+	Nonsensical    TaskReportReason = "nonsensical"
+	TooHard        TaskReportReason = "too_hard"
+	WrongAnswerKey TaskReportReason = "wrong_answer_key"
+)
+
+// Valid indicates whether the value is a known member of the TaskReportReason enum.
+func (e TaskReportReason) Valid() bool {
+	switch e {
+	case Malformed:
+		return true
+	case Nonsensical:
+		return true
+	case TooHard:
+		return true
+	case WrongAnswerKey:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TaskReportStatus.
+const (
+	Answered     TaskReportStatus = "answered"
+	CapReached   TaskReportStatus = "cap_reached"
+	Failed       TaskReportStatus = "failed"
+	None         TaskReportStatus = "none"
+	Queued       TaskReportStatus = "queued"
+	Regenerated  TaskReportStatus = "regenerated"
+	Regenerating TaskReportStatus = "regenerating"
+	Unavailable  TaskReportStatus = "unavailable"
+)
+
+// Valid indicates whether the value is a known member of the TaskReportStatus enum.
+func (e TaskReportStatus) Valid() bool {
+	switch e {
+	case Answered:
+		return true
+	case CapReached:
+		return true
+	case Failed:
+		return true
+	case None:
+		return true
+	case Queued:
+		return true
+	case Regenerated:
+		return true
+	case Regenerating:
+		return true
+	case Unavailable:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for WordKnowledgeRequestLevel.
 const (
 	WordKnowledgeRequestLevelEmpty     WordKnowledgeRequestLevel = ""
@@ -1487,6 +1547,7 @@ type Task struct {
 	Content map[string]interface{} `json:"content"`
 	Grade   *Grade                 `json:"grade,omitempty"`
 	Graded  bool                   `json:"graded"`
+	Report  *TaskReportState       `json:"report,omitempty"`
 	TaskId  string                 `json:"task_id"`
 
 	// TaskType registered TaskType id
@@ -1500,6 +1561,47 @@ type TaskProgress struct {
 	Pending   int `json:"pending"`
 	Total     int `json:"total"`
 }
+
+// TaskReportReason defines model for TaskReportReason.
+type TaskReportReason string
+
+// TaskReportRequest defines model for TaskReportRequest.
+type TaskReportRequest struct {
+	// Note Optional learner note explaining the defect.
+	Note   string           `json:"note,omitempty"`
+	Reason TaskReportReason `json:"reason"`
+}
+
+// TaskReportResponse defines model for TaskReportResponse.
+type TaskReportResponse struct {
+	Message           string `json:"message"`
+	RegenerationCap   int    `json:"regeneration_cap"`
+	RegenerationsUsed int    `json:"regenerations_used"`
+
+	// ReplacementTaskId Present when regeneration has already produced or will update a task id.
+	ReplacementTaskId string           `json:"replacement_task_id,omitempty"`
+	ReportId          string           `json:"report_id"`
+	Status            TaskReportStatus `json:"status"`
+	TaskId            string           `json:"task_id"`
+}
+
+// TaskReportState Latest report/regeneration state for this task, if any.
+type TaskReportState struct {
+	Message           string           `json:"message"`
+	Reason            TaskReportReason `json:"reason"`
+	RegenerationCap   int              `json:"regeneration_cap"`
+	RegenerationsUsed int              `json:"regenerations_used"`
+
+	// ReplacementTaskId Task id containing the regenerated content; same as task_id when replacement is in place.
+	ReplacementTaskId string           `json:"replacement_task_id,omitempty"`
+	ReportId          string           `json:"report_id"`
+	ReportedAt        float64          `json:"reported_at"`
+	Status            TaskReportStatus `json:"status"`
+	UpdatedAt         float64          `json:"updated_at,omitempty"`
+}
+
+// TaskReportStatus defines model for TaskReportStatus.
+type TaskReportStatus string
 
 // User defines model for User.
 type User struct {
@@ -1639,6 +1741,9 @@ type PostSentenceBreakdownJSONRequestBody PostSentenceBreakdownJSONBody
 
 // PostWordBreakdownJSONRequestBody defines body for PostWordBreakdown for application/json ContentType.
 type PostWordBreakdownJSONRequestBody PostWordBreakdownJSONBody
+
+// ReportTaskJSONRequestBody defines body for ReportTask for application/json ContentType.
+type ReportTaskJSONRequestBody = TaskReportRequest
 
 // SubmitTaskJSONRequestBody defines body for SubmitTask for application/json ContentType.
 type SubmitTaskJSONRequestBody = SubmitTaskRequest

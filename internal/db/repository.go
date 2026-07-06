@@ -208,10 +208,22 @@ type Repository interface {
 	// POST /tasks/{id}/submit and returns ErrNotFound when no such task exists.
 	GetTask(ctx context.Context, userID, taskID string) (domain.Task, error)
 	RecordTaskGrade(ctx context.Context, userID, taskID string, g domain.TaskGrade) error
+	// ReplaceTaskContent swaps an unanswered task's generated content in place,
+	// resets any response/grade fields, and replaces task_targets atomically.
+	ReplaceTaskContent(ctx context.Context, userID, taskID string, content map[string]any, targets []string) (domain.Task, error)
 	// IncrementTaskAttempt atomically increments attempt_count for the task and
 	// returns the new count. Used on re-submission to track how many times a
 	// learner has attempted the same task.
 	IncrementTaskAttempt(ctx context.Context, taskID string) (int, error)
+
+	// Content reports — generic immutable snapshots of reported generated
+	// content. Task reporting is the first consumer; other content kinds reuse
+	// the same record shape.
+	CreateContentReport(ctx context.Context, report domain.ContentReport) (domain.ContentReport, error)
+	GetContentReport(ctx context.Context, reportID string) (domain.ContentReport, error)
+	LatestContentReportForTarget(ctx context.Context, kind, targetID string) (domain.ContentReport, error)
+	CountContentReportsByOutcome(ctx context.Context, contextKind, contextID, kind string, outcomes []string) (int, error)
+	UpdateContentReportOutcome(ctx context.Context, reportID, outcome, detail, replacementTaskID string) error
 
 	// Skills — storage foundation for the competency/XP system. Skill definitions
 	// are language-provided data, but the repository owns idempotent persistence,

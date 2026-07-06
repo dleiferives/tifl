@@ -36,20 +36,21 @@ const (
 
 // Config is the fully-resolved API-server configuration.
 type Config struct {
-	Addr                    string      // listen address for the API server
-	StorageMode             StorageMode // which Repository implementation to use
-	DBPath                  string      // SQLite file path (sqlite mode)
-	DatabaseURL             string      // Postgres DSN (postgres mode)
-	LLMBaseURL              string      // where the LLM gateway is listening
-	LLMAPIKey               string      // optional gateway auth
-	LLMModel                string      // model name sent to the gateway (blank = gateway default)
-	AuthMode                AuthMode    // jwt (cloud) or none (desktop-local)
-	JWTSecret               string      // signing key when AuthMode == jwt
-	AllowInsecureAuthCookie bool        // development-only: permit refresh cookie over HTTP
-	FrontendDir             string      // compiled SolidJS assets (web/dist)
-	LLMBudgetTokens         int64       // per-user token ceiling per window; 0 = unlimited (#208)
-	LLMBudgetWindowHours    int         // rolling budget window (default 24h)
-	PredictorMode           string      // "legacy" (default) | "fsrs" (#209)
+	Addr                      string      // listen address for the API server
+	StorageMode               StorageMode // which Repository implementation to use
+	DBPath                    string      // SQLite file path (sqlite mode)
+	DatabaseURL               string      // Postgres DSN (postgres mode)
+	LLMBaseURL                string      // where the LLM gateway is listening
+	LLMAPIKey                 string      // optional gateway auth
+	LLMModel                  string      // model name sent to the gateway (blank = gateway default)
+	AuthMode                  AuthMode    // jwt (cloud) or none (desktop-local)
+	JWTSecret                 string      // signing key when AuthMode == jwt
+	AllowInsecureAuthCookie   bool        // development-only: permit refresh cookie over HTTP
+	FrontendDir               string      // compiled SolidJS assets (web/dist)
+	LLMBudgetTokens           int64       // per-user token ceiling per window; 0 = unlimited (#208)
+	LLMBudgetWindowHours      int         // rolling budget window (default 24h)
+	PredictorMode             string      // "legacy" (default) | "fsrs" (#209)
+	TaskReportRegenerationCap int         // per-session task regenerations allowed (default 3)
 }
 
 // GatewayConfig is the fully-resolved LLM-gateway configuration.
@@ -66,20 +67,21 @@ type GatewayConfig struct {
 // the one it needs.
 type file struct {
 	Server struct {
-		Addr                    string `yaml:"addr"`
-		StorageMode             string `yaml:"storage_mode"`
-		DBPath                  string `yaml:"db_path"`
-		DatabaseURL             string `yaml:"database_url"`
-		LLMBaseURL              string `yaml:"llm_base_url"`
-		LLMAPIKey               string `yaml:"llm_api_key"`
-		LLMModel                string `yaml:"llm_model"`
-		AuthMode                string `yaml:"auth_mode"`
-		JWTSecret               string `yaml:"jwt_secret"`
-		AllowInsecureAuthCookie bool   `yaml:"allow_insecure_auth_cookie"`
-		FrontendDir             string `yaml:"frontend_dir"`
-		LLMBudgetTokens         int64  `yaml:"llm_budget_tokens"`
-		LLMBudgetWindowHours    int    `yaml:"llm_budget_window_hours"`
-		PredictorMode           string `yaml:"predictor_mode"`
+		Addr                      string `yaml:"addr"`
+		StorageMode               string `yaml:"storage_mode"`
+		DBPath                    string `yaml:"db_path"`
+		DatabaseURL               string `yaml:"database_url"`
+		LLMBaseURL                string `yaml:"llm_base_url"`
+		LLMAPIKey                 string `yaml:"llm_api_key"`
+		LLMModel                  string `yaml:"llm_model"`
+		AuthMode                  string `yaml:"auth_mode"`
+		JWTSecret                 string `yaml:"jwt_secret"`
+		AllowInsecureAuthCookie   bool   `yaml:"allow_insecure_auth_cookie"`
+		FrontendDir               string `yaml:"frontend_dir"`
+		LLMBudgetTokens           int64  `yaml:"llm_budget_tokens"`
+		LLMBudgetWindowHours      int    `yaml:"llm_budget_window_hours"`
+		PredictorMode             string `yaml:"predictor_mode"`
+		TaskReportRegenerationCap int    `yaml:"task_report_regeneration_cap"`
 	} `yaml:"server"`
 	Gateway struct {
 		Addr        string `yaml:"addr"`
@@ -105,23 +107,27 @@ func Load(path string) (Config, error) {
 		return Config{}, err
 	}
 	cfg := Config{
-		Addr:                    pick("TIFL_ADDR", s.Addr, "127.0.0.1:8000"),
-		StorageMode:             StorageMode(pick("STORAGE_MODE", s.StorageMode, string(StorageSQLite))),
-		DBPath:                  pick("DB_PATH", s.DBPath, "data/tifl.db"),
-		DatabaseURL:             pick("DATABASE_URL", s.DatabaseURL, ""),
-		LLMBaseURL:              pick("LLM_BASE_URL", s.LLMBaseURL, "http://127.0.0.1:8001"),
-		LLMAPIKey:               pick("LLM_API_KEY", s.LLMAPIKey, ""),
-		LLMModel:                pick("LLM_MODEL", s.LLMModel, ""),
-		AuthMode:                AuthMode(pick("AUTH_MODE", s.AuthMode, string(AuthNone))),
-		JWTSecret:               pick("JWT_SECRET", s.JWTSecret, ""),
-		AllowInsecureAuthCookie: allowInsecureCookie,
-		FrontendDir:             pick("FRONTEND_DIR", s.FrontendDir, "web/dist"),
-		LLMBudgetTokens:         pickInt64("LLM_BUDGET_TOKENS", s.LLMBudgetTokens, 0),
-		LLMBudgetWindowHours:    pickIntDefault("LLM_BUDGET_WINDOW_HOURS", s.LLMBudgetWindowHours, 24),
-		PredictorMode:           pick("PREDICTOR_MODE", s.PredictorMode, "legacy"),
+		Addr:                      pick("TIFL_ADDR", s.Addr, "127.0.0.1:8000"),
+		StorageMode:               StorageMode(pick("STORAGE_MODE", s.StorageMode, string(StorageSQLite))),
+		DBPath:                    pick("DB_PATH", s.DBPath, "data/tifl.db"),
+		DatabaseURL:               pick("DATABASE_URL", s.DatabaseURL, ""),
+		LLMBaseURL:                pick("LLM_BASE_URL", s.LLMBaseURL, "http://127.0.0.1:8001"),
+		LLMAPIKey:                 pick("LLM_API_KEY", s.LLMAPIKey, ""),
+		LLMModel:                  pick("LLM_MODEL", s.LLMModel, ""),
+		AuthMode:                  AuthMode(pick("AUTH_MODE", s.AuthMode, string(AuthNone))),
+		JWTSecret:                 pick("JWT_SECRET", s.JWTSecret, ""),
+		AllowInsecureAuthCookie:   allowInsecureCookie,
+		FrontendDir:               pick("FRONTEND_DIR", s.FrontendDir, "web/dist"),
+		LLMBudgetTokens:           pickInt64("LLM_BUDGET_TOKENS", s.LLMBudgetTokens, 0),
+		LLMBudgetWindowHours:      pickIntDefault("LLM_BUDGET_WINDOW_HOURS", s.LLMBudgetWindowHours, 24),
+		PredictorMode:             pick("PREDICTOR_MODE", s.PredictorMode, "legacy"),
+		TaskReportRegenerationCap: pickIntDefault("TASK_REPORT_REGENERATION_CAP", s.TaskReportRegenerationCap, 3),
 	}
 	if cfg.PredictorMode != "legacy" && cfg.PredictorMode != "fsrs" {
 		return Config{}, fmt.Errorf("config: unknown predictor_mode %q", cfg.PredictorMode)
+	}
+	if cfg.TaskReportRegenerationCap < 0 {
+		return Config{}, fmt.Errorf("config: task_report_regeneration_cap must be >= 0")
 	}
 	if cfg.AuthMode != AuthNone && cfg.AuthMode != AuthJWT {
 		return Config{}, fmt.Errorf("config: unknown auth_mode %q", cfg.AuthMode)

@@ -1095,6 +1095,54 @@ paths:
           $ref: "#/components/responses/ServiceUnavailable"
         "500":
           $ref: "#/components/responses/InternalError"
+  /tasks/{id}/report:
+    post:
+      summary: Report a malformed task and request replacement
+      description: >
+        Records a generic content report snapshot for the task. For unanswered
+        tasks, the server may also enqueue one-task regeneration in place,
+        bounded by the per-session cap. The report is persisted even when
+        regeneration is refused because the task is already answered, the cap is
+        reached, or task regeneration is unavailable.
+      operationId: reportTask
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskReportRequest"
+      responses:
+        "202":
+          description: Report recorded and regeneration queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskReportResponse"
+        "200":
+          description: Report recorded; no regeneration will run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskReportResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: Report recorded, but regeneration is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskReportResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
 components:
   securitySchemes:
     bearerAuth:
@@ -1862,7 +1910,38 @@ components:
         grade:
           allOf: [{ $ref: "#/components/schemas/Grade" }]
           x-go-type-skip-optional-pointer: false
+        report:
+          allOf: [{ $ref: "#/components/schemas/TaskReportState" }]
+          x-go-type-skip-optional-pointer: false
       required: [task_id, task_type, content, graded]
+    TaskReportReason:
+      type: string
+      enum: [malformed, wrong_answer_key, nonsensical, too_hard]
+    TaskReportStatus:
+      type: string
+      enum: [none, queued, regenerating, regenerated, failed, answered, cap_reached, unavailable]
+    TaskReportState:
+      type: object
+      description: Latest report/regeneration state for this task, if any.
+      properties:
+        report_id: { type: string }
+        status:
+          $ref: "#/components/schemas/TaskReportStatus"
+        reason:
+          $ref: "#/components/schemas/TaskReportReason"
+        message: { type: string }
+        replacement_task_id:
+          type: string
+          description: Task id containing the regenerated content; same as task_id when replacement is in place.
+        reported_at: { type: number, format: double }
+        updated_at: { type: number, format: double }
+        regeneration_cap:
+          type: integer
+          minimum: 0
+        regenerations_used:
+          type: integer
+          minimum: 0
+      required: [report_id, status, reason, message, reported_at, regeneration_cap, regenerations_used]
     SessionTasks:
       type: object
       properties:
@@ -1885,6 +1964,34 @@ components:
           description: 'property of the response; only "typed" supported today'
           enum: [typed]
       required: [response]
+    TaskReportRequest:
+      type: object
+      properties:
+        reason:
+          $ref: "#/components/schemas/TaskReportReason"
+        note:
+          type: string
+          maxLength: 1000
+          description: Optional learner note explaining the defect.
+      required: [reason]
+    TaskReportResponse:
+      type: object
+      properties:
+        report_id: { type: string }
+        task_id: { type: string }
+        status:
+          $ref: "#/components/schemas/TaskReportStatus"
+        message: { type: string }
+        replacement_task_id:
+          type: string
+          description: Present when regeneration has already produced or will update a task id.
+        regeneration_cap:
+          type: integer
+          minimum: 0
+        regenerations_used:
+          type: integer
+          minimum: 0
+      required: [report_id, task_id, status, message, regeneration_cap, regenerations_used]
     SubmitTaskResponse:
       type: object
       properties:

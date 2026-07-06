@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,6 +31,11 @@ import (
 type (
 	gradeDTO             = oapigen.Grade
 	taskDTO              = oapigen.Task
+	taskReportReasonDTO  = oapigen.TaskReportReason
+	taskReportRequest    = oapigen.TaskReportRequest
+	taskReportResponse   = oapigen.TaskReportResponse
+	taskReportStateDTO   = oapigen.TaskReportState
+	taskReportStatusDTO  = oapigen.TaskReportStatus
 	sessionTasksResponse = oapigen.SessionTasks
 	submitRequest        = oapigen.SubmitTaskRequest
 	submitResponse       = oapigen.SubmitTaskResponse
@@ -61,7 +67,11 @@ func (h *Handler) getSessionTasks(w http.ResponseWriter, r *http.Request) {
 
 	out := sessionTasksResponse{SessionId: id, Total: len(ts), Tasks: make([]taskDTO, 0, len(ts))}
 	for _, t := range ts {
-		dto := h.presentTask(t)
+		dto, err := h.presentTask(r.Context(), t)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
 		if dto.Graded {
 			out.Completed++
 		}
@@ -81,7 +91,12 @@ func (h *Handler) getTask(w http.ResponseWriter, r *http.Request) {
 		h.writeTaskLookupError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, h.presentTask(t))
+	dto, err := h.presentTask(r.Context(), t)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, dto)
 }
 
 // submitTask grades a response, persists it, and folds the outcome into the
@@ -272,7 +287,7 @@ func (h *Handler) fillLLMGradeContext(r *http.Request, gr *tasks.GradeRequest, t
 // presentTask builds the answer-free DTO for a task: content runs through the
 // type's Present view, and the grade is surfaced only once the task is graded. An
 // unregistered type yields empty content rather than risk leaking raw content.
-func (h *Handler) presentTask(t domain.Task) taskDTO {
+func (h *Handler) presentTask(ctx context.Context, t domain.Task) (taskDTO, error) {
 	dto := taskDTO{TaskId: t.TaskID, TaskType: t.TaskType, Content: map[string]any{}}
 	if tt, ok := h.taskTypes.Get(t.TaskType); ok {
 		dto.Content = tt.Present(t.Content)
@@ -281,7 +296,18 @@ func (h *Handler) presentTask(t domain.Task) taskDTO {
 		dto.Graded = true
 		dto.Grade = gradeDTOFromMap(t.Grade, t.GradedBy)
 	}
-	return dto
+	report, err := h.repo.LatestContentReportForTarget(ctx, domain.ContentReportKindTask, t.TaskID)
+	if err != nil && !errors.Is(err, db.ErrNotFound) {
+		return taskDTO{}, err
+	}
+	if err == nil {
+		used, err := h.regenerationsUsed(ctx, t.SessionID)
+		if err != nil {
+			return taskDTO{}, err
+		}
+		dto.Report = contentReportStateDTO(report, h.taskReportRegenerationCap, used)
+	}
+	return dto, nil
 }
 
 func (h *Handler) writeTaskLookupError(w http.ResponseWriter, err error) {

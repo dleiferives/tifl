@@ -27,11 +27,14 @@ type Store interface {
 	Tx(ctx context.Context, fn func(db.Repository) error) error
 
 	CreateSession(ctx context.Context, s domain.Session) (domain.Session, error)
+	CreateContentReport(ctx context.Context, report domain.ContentReport) (domain.ContentReport, error)
+	CountContentReportsByOutcome(ctx context.Context, contextKind, contextID, kind string, outcomes []string) (int, error)
 	DeleteImportedStory(ctx context.Context, userID, storyID string) error
 	DeleteSession(ctx context.Context, userID, sessionID string) error
 	DeleteUserDefinition(ctx context.Context, userID, language, itemKey string) error
 	EnsureLocalUser(ctx context.Context) (domain.User, error)
 	GetLanguage(ctx context.Context, code string) (domain.Language, error)
+	LatestContentReportForTarget(ctx context.Context, kind, targetID string) (domain.ContentReport, error)
 	GetPhraseSet(ctx context.Context, sessionID string) (domain.PhraseSet, error)
 	GetSession(ctx context.Context, sessionID string) (domain.Session, error)
 	GetSessionDetail(ctx context.Context, userID, sessionID string) (domain.SessionDetail, error)
@@ -55,6 +58,7 @@ type Store interface {
 	MarkSessionReading(ctx context.Context, userID, sessionID string) error
 	RecordTaskGrade(ctx context.Context, userID, taskID string, g domain.TaskGrade) error
 	SetSessionArchived(ctx context.Context, userID, sessionID string, archived bool) error
+	UpdateContentReportOutcome(ctx context.Context, reportID, outcome, detail, replacementTaskID string) error
 	UpdateUserProfile(ctx context.Context, userID string, patch domain.UserProfilePatch) (domain.UserProfile, error)
 	UpsertUserDefinition(ctx context.Context, d domain.UserDefinition) (domain.UserDefinition, error)
 }
@@ -76,6 +80,12 @@ type GenerationQueue interface {
 // Satisfied by jobs.Inserter.
 type GenerationTxQueue interface {
 	EnqueueGenerationTx(ctx context.Context, tx *sql.Tx, sessionID, userID string) error
+}
+
+// TaskRegenerationQueue schedules one reported task for in-place replacement.
+// Satisfied by jobs.Client.
+type TaskRegenerationQueue interface {
+	EnqueueTaskRegeneration(ctx context.Context, reportID, taskID, userID string) error
 }
 
 // sqlTxCarrier is how the transactional view exposes its *sql.Tx to the job

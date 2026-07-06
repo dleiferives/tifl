@@ -16,19 +16,23 @@ type Store interface {
 	CreatePhraseSet(ctx context.Context, ps domain.PhraseSet) (domain.PhraseSet, error)
 	CreateStory(ctx context.Context, s domain.Story) (domain.Story, error)
 	CreateTask(ctx context.Context, t domain.Task, targets []string) (domain.Task, error)
+	GetContentReport(ctx context.Context, reportID string) (domain.ContentReport, error)
 	GetKnowledgeItem(ctx context.Context, itemID string) (domain.KnowledgeItem, error)
 	GetPhraseSet(ctx context.Context, sessionID string) (domain.PhraseSet, error)
 	GetSession(ctx context.Context, sessionID string) (domain.Session, error)
 	GetStory(ctx context.Context, storyID string) (domain.Story, error)
 	GetUserProfile(ctx context.Context, userID string) (domain.UserProfile, error)
 	ListStages(ctx context.Context, sessionID string) ([]domain.GenerationStage, error)
+	ListSessionTasks(ctx context.Context, sessionID string) ([]domain.Task, error)
 	RecentSessionTopics(ctx context.Context, userID, language string, limit int) ([]string, error)
+	ReplaceTaskContent(ctx context.Context, userID, taskID string, content map[string]any, targets []string) (domain.Task, error)
 	ReplaceStoryGlossary(ctx context.Context, storyID string, entries []domain.StoryGlossaryEntry) error
 	ReplaceStoryTokens(ctx context.Context, storyID string, tokens []domain.StoryToken) error
 	SetSessionSelection(ctx context.Context, sessionID, storyID string, targets, new []string) error
 	SetSessionTopic(ctx context.Context, sessionID, topic string) error
 	// Tx runs fn in one database transaction (see db.Repository.Tx).
 	Tx(ctx context.Context, fn func(db.Repository) error) error
+	UpdateContentReportOutcome(ctx context.Context, reportID, outcome, detail, replacementTaskID string) error
 	UpdateSessionStatus(ctx context.Context, sessionID string, status domain.SessionStatus) error
 	UpsertStage(ctx context.Context, st domain.GenerationStage) error
 }

@@ -686,6 +686,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Report a malformed task and request replacement
+         * @description Records a generic content report snapshot for the task. For unanswered tasks, the server may also enqueue one-task regeneration in place, bounded by the per-session cap. The report is persisted even when regeneration is refused because the task is already answered, the cap is reached, or task regeneration is unavailable.
+         */
+        post: operations["reportTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1217,6 +1237,26 @@ export interface components {
             };
             graded: boolean;
             grade?: components["schemas"]["Grade"];
+            report?: components["schemas"]["TaskReportState"];
+        };
+        /** @enum {string} */
+        TaskReportReason: "malformed" | "wrong_answer_key" | "nonsensical" | "too_hard";
+        /** @enum {string} */
+        TaskReportStatus: "none" | "queued" | "regenerating" | "regenerated" | "failed" | "answered" | "cap_reached" | "unavailable";
+        /** @description Latest report/regeneration state for this task, if any. */
+        TaskReportState: {
+            report_id: string;
+            status: components["schemas"]["TaskReportStatus"];
+            reason: components["schemas"]["TaskReportReason"];
+            message: string;
+            /** @description Task id containing the regenerated content; same as task_id when replacement is in place. */
+            replacement_task_id?: string;
+            /** Format: double */
+            reported_at: number;
+            /** Format: double */
+            updated_at?: number;
+            regeneration_cap: number;
+            regenerations_used: number;
         };
         SessionTasks: {
             session_id: string;
@@ -1235,6 +1275,21 @@ export interface components {
              * @enum {string}
              */
             input_method?: "typed";
+        };
+        TaskReportRequest: {
+            reason: components["schemas"]["TaskReportReason"];
+            /** @description Optional learner note explaining the defect. */
+            note?: string;
+        };
+        TaskReportResponse: {
+            report_id: string;
+            task_id: string;
+            status: components["schemas"]["TaskReportStatus"];
+            message: string;
+            /** @description Present when regeneration has already produced or will update a task id. */
+            replacement_task_id?: string;
+            regeneration_cap: number;
+            regenerations_used: number;
         };
         SubmitTaskResponse: {
             task_id: string;
@@ -2370,6 +2425,54 @@ export interface operations {
             500: components["responses"]["InternalError"];
             502: components["responses"]["BadGateway"];
             503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    reportTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TaskReportRequest"];
+            };
+        };
+        responses: {
+            /** @description Report recorded; no regeneration will run */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskReportResponse"];
+                };
+            };
+            /** @description Report recorded and regeneration queued */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskReportResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+            /** @description Report recorded, but regeneration is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskReportResponse"];
+                };
+            };
         };
     };
 }

@@ -20,27 +20,29 @@ import (
 // Handler holds the dependencies the HTTP layer needs and registers routes onto
 // a mux. Handlers stay thin: parse, call a repository/domain function, serialize.
 type Handler struct {
-	repo              Store
-	langs             *lang.Registry
-	broker            *story.Broker                   // nil when generation is not configured (no LLM gateway)
-	reader            *reader.Service                 // reader signal ingest + rating writes (#9/#10)
-	defs              *reader.DefinitionService       // definition resolution + cached breakdowns (#10)
-	taskTypes         *tasks.Registry                 // task-type lookup for grading + presentation
-	grader            *tasks.Grader                   // routes rule vs LLM grading
-	acquire           *acquire.Engine                 // folds grades into user_knowledge signals
-	skillAssoc        *skillassoc.Associator          // lazy item -> skill association materializer (#68)
-	skillXP           *skillassoc.XPService           // task grade -> user_skill_xp + audit logs (#70/#71)
-	skillVerify       *skillassoc.VerificationService // tier verification + auto-approve (#49); sync fallback when no queue
-	skillVerifyQueue  SkillVerifyQueue                // durable queue for verifications; nil in tests without jobs
-	generationQueue   GenerationQueue                 // durable queue for generation runs; nil falls back to in-process broker
-	generationTxQueue GenerationTxQueue               // transactional enqueue for generate (#215); nil falls back to generationQueue
-	signalQueue       SignalQueue                     // durable queue for reader signal derivation (#210); nil derives inline
-	llmEnabled        bool                            // false when no LLM client: LLM-graded tasks return 503
-	models            llm.ModelLister                 // nil when the gateway cannot list upstream models
-	frontendDir       string
-	auth              *authn.Service
-	cookieSecure      bool
-	authLimiter       *authn.Limiter
+	repo                      Store
+	langs                     *lang.Registry
+	broker                    *story.Broker                   // nil when generation is not configured (no LLM gateway)
+	reader                    *reader.Service                 // reader signal ingest + rating writes (#9/#10)
+	defs                      *reader.DefinitionService       // definition resolution + cached breakdowns (#10)
+	taskTypes                 *tasks.Registry                 // task-type lookup for grading + presentation
+	grader                    *tasks.Grader                   // routes rule vs LLM grading
+	acquire                   *acquire.Engine                 // folds grades into user_knowledge signals
+	skillAssoc                *skillassoc.Associator          // lazy item -> skill association materializer (#68)
+	skillXP                   *skillassoc.XPService           // task grade -> user_skill_xp + audit logs (#70/#71)
+	skillVerify               *skillassoc.VerificationService // tier verification + auto-approve (#49); sync fallback when no queue
+	skillVerifyQueue          SkillVerifyQueue                // durable queue for verifications; nil in tests without jobs
+	generationQueue           GenerationQueue                 // durable queue for generation runs; nil falls back to in-process broker
+	generationTxQueue         GenerationTxQueue               // transactional enqueue for generate (#215); nil falls back to generationQueue
+	taskRegenQueue            TaskRegenerationQueue           // durable one-task regeneration queue; nil means reports persist without replacement
+	signalQueue               SignalQueue                     // durable queue for reader signal derivation (#210); nil derives inline
+	taskReportRegenerationCap int                             // per-session server-side cap for task report regenerations
+	llmEnabled                bool                            // false when no LLM client: LLM-graded tasks return 503
+	models                    llm.ModelLister                 // nil when the gateway cannot list upstream models
+	frontendDir               string
+	auth                      *authn.Service
+	cookieSecure              bool
+	authLimiter               *authn.Limiter
 }
 
 type Option func(*Handler)
@@ -93,6 +95,7 @@ func currentAPIRoutes() []apiRoute {
 		{Method: http.MethodGet, Path: "/api/v1/sessions/{id}/tasks", Handler: (*Handler).getSessionTasks, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/tasks/{id}", Handler: (*Handler).getTask, RequireUser: true},
 		{Method: http.MethodPost, Path: "/api/v1/tasks/{id}/submit", Handler: (*Handler).submitTask, RequireUser: true},
+		{Method: http.MethodPost, Path: "/api/v1/tasks/{id}/report", Handler: (*Handler).reportTask, RequireUser: true},
 		{Method: http.MethodPost, Path: "/api/v1/auth/register", Handler: (*Handler).register, AuthOnly: true},
 		{Method: http.MethodPost, Path: "/api/v1/auth/login", Handler: (*Handler).login, AuthOnly: true},
 		{Method: http.MethodPost, Path: "/api/v1/auth/refresh", Handler: (*Handler).refresh, AuthOnly: true},
@@ -138,6 +141,19 @@ func WithGenerationQueue(q GenerationQueue) Option {
 	return func(h *Handler) { h.generationQueue = q }
 }
 
+// WithTaskRegenerationQueue routes task reports through the durable one-task
+// regeneration queue. Without it, reports persist and regeneration is reported
+// unavailable.
+func WithTaskRegenerationQueue(q TaskRegenerationQueue) Option {
+	return func(h *Handler) { h.taskRegenQueue = q }
+}
+
+// WithTaskReportRegenerationCap sets the per-session cap enforced by the report
+// endpoint. Negative values are treated as zero by config validation before this.
+func WithTaskReportRegenerationCap(cap int) Option {
+	return func(h *Handler) { h.taskReportRegenerationCap = cap }
+}
+
 func WithAuth(service *authn.Service, secureCookie bool) Option {
 	return func(h *Handler) {
 		h.auth = service
@@ -169,20 +185,21 @@ func New(repo Store, broker *story.Broker, client llm.Client, taskTypes *tasks.R
 		modelLister = lister
 	}
 	h := &Handler{
-		repo:        repo,
-		langs:       langs,
-		broker:      broker,
-		reader:      reader.NewService(repo, engine, reader.WithSkillAssociator(associator)),
-		defs:        reader.NewDefinitionService(repo, client, nil, langs),
-		taskTypes:   taskTypes,
-		grader:      grader,
-		acquire:     engine,
-		skillAssoc:  associator,
-		skillXP:     skillXP,
-		skillVerify: skillassoc.NewVerificationService(repo, client),
-		llmEnabled:  client != nil,
-		models:      modelLister,
-		frontendDir: frontendDir,
+		repo:                      repo,
+		langs:                     langs,
+		broker:                    broker,
+		reader:                    reader.NewService(repo, engine, reader.WithSkillAssociator(associator)),
+		defs:                      reader.NewDefinitionService(repo, client, nil, langs),
+		taskTypes:                 taskTypes,
+		grader:                    grader,
+		acquire:                   engine,
+		skillAssoc:                associator,
+		skillXP:                   skillXP,
+		skillVerify:               skillassoc.NewVerificationService(repo, client),
+		taskReportRegenerationCap: 3,
+		llmEnabled:                client != nil,
+		models:                    modelLister,
+		frontendDir:               frontendDir,
 	}
 	for _, opt := range opts {
 		opt(h)

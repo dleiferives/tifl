@@ -31,6 +31,8 @@ server:
   # Knowledge predictor: "legacy" (hand-tuned formula, default) or "fsrs"
   # (FSRS-6 memory model — better scheduling; state accrues under both). (#209)
   # predictor_mode: fsrs
+  # Maximum unanswered-task regenerations per session after user reports.
+  # task_report_regeneration_cap: 3
 
 # The LLM gateway (cmd/gateway). The example targets a local OpenCode server —
 # a credential-free way to run a real model. Start it with:
