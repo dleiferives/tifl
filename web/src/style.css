@@ -1137,6 +1137,8 @@ select {
   position: fixed;
   z-index: 20;
   width: min(20rem, calc(100vw - 1rem));
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
   padding: 0.85rem 0.95rem;
   border: 1px solid var(--border);
   border-radius: 0.5rem;
@@ -1169,7 +1171,8 @@ select {
 }
 
 .reader-popup-loading,
-.reader-popup-error {
+.reader-popup-error,
+.reader-popup-notice {
   margin: 0.25rem 0;
   color: var(--text-muted);
 }
@@ -1269,6 +1272,108 @@ select {
   margin: 0.5rem 0 0;
   color: var(--text-muted);
   font-size: 0.8rem;
+}
+
+.reader-def-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 1.2rem;
+}
+
+.reader-def-mine {
+  padding: 0.05rem 0.4rem;
+  border-radius: 1rem;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-size: 0.72rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.reader-def-edit {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.reader-notes {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  white-space: pre-wrap;
+}
+
+.reader-popup-notice {
+  color: var(--success);
+  font-size: 0.9rem;
+}
+
+.reader-def-edit-form {
+  display: grid;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.reader-field {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.reader-field-input,
+.reader-field-notes {
+  width: 100%;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 0.3rem;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.95rem;
+}
+
+.reader-field-notes {
+  resize: vertical;
+  max-height: 8rem;
+  overflow: auto;
+}
+
+.reader-field-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.85rem;
+}
+
+.reader-edit-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.reader-edit-cancel {
+  width: auto;
+}
+
+.reader-edit-save,
+.reader-retry-definition {
+  width: auto;
+}
+
+.reader-remove-link {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--danger);
+  font-size: 0.85rem;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .reader-breakdown {

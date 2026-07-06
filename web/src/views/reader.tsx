@@ -3,9 +3,11 @@ import type { JSX } from "solid-js";
 import { createStore } from "solid-js/store";
 import {
   completeSession,
+  deleteDictionaryEntry,
   getDefinition,
   getStory,
   postReaderEvents,
+  putDictionaryEntry,
   setReaderSurfaceKnowledge,
   sentenceBreakdown,
   startReading,
@@ -24,6 +26,7 @@ type Definition = APISchema<"Definition">;
 type ReaderEvent = APISchema<"ReaderEvent">;
 
 type Loadable<T> = "loading" | "error" | T;
+type RemovalNotice = "removed" | "removed-failed";
 type Analysis = { mode: "sentence"; position: number } | { mode: "word"; key: string } | null;
 type SyntaxGraph = {
   version?: string;
@@ -79,6 +82,15 @@ export function ReaderView(props: { storyId: string; sessionId?: string }) {
   const [popupVisible, setPopupVisible] = createSignal(false);
   const [popupPos, setPopupPos] = createSignal<{ top: number; left: number } | null>(null);
   const [definitions, setDefinitions] = createStore<Record<string, Loadable<Definition>>>({});
+  // Personal-dictionary editing. Only one popup (one key) is open at a time, so
+  // a single edit state suffices. `removalNotice` is keyed so the "removed"
+  // message stays scoped to the word it belongs to.
+  const [editing, setEditing] = createSignal(false);
+  const [editGloss, setEditGloss] = createSignal("");
+  const [editNotes, setEditNotes] = createSignal("");
+  const [editError, setEditError] = createSignal("");
+  const [actionError, setActionError] = createStore<Record<string, string | undefined>>({});
+  const [removalNotice, setRemovalNotice] = createStore<Record<string, RemovalNotice | undefined>>({});
   const [analysis, setAnalysis] = createSignal<Analysis>(null);
   const [sentences, setSentences] = createStore<Record<number, Loadable<unknown>>>({});
   const [words, setWords] = createStore<Record<string, Loadable<unknown>>>({});
@@ -86,9 +98,13 @@ export function ReaderView(props: { storyId: string; sessionId?: string }) {
   // One element ref per word token, indexed by token position. Used to move the
   // cursor highlight surgically (two DOM writes) and to anchor the popup.
   const wordEls: (HTMLElement | undefined)[] = [];
+  // The popup element, so reposition can measure its (edit-mode-variable) height.
+  let popupEl: HTMLElement | undefined;
   let pending: ReaderEvent[] = [];
   let flushTimer: number | undefined;
   let readingStart: Promise<void> | null = null;
+  let dictionaryMutationSeq = 0;
+  const dictionaryMutationIds: Record<string, number> = {};
 
   const currentToken = () => tokens()[cursor()];
 
@@ -179,6 +195,9 @@ export function ReaderView(props: { storyId: string; sessionId?: string }) {
   });
 
   function moveCursor(direction: 1 | -1) {
+    if (editing()) {
+      return; // edit mode pins the popup to its word
+    }
     const list = tokens();
     for (let i = cursor() + direction; i >= 0 && i < list.length; i += direction) {
       if (list[i].is_word && list[i].key) {
@@ -189,6 +208,9 @@ export function ReaderView(props: { storyId: string; sessionId?: string }) {
   }
 
   function setReaderCursorPosition(position: number) {
+    if (editing()) {
+      return; // edit mode pins the popup to its word
+    }
     setCursor(resolveCursorIndex(tokens(), position));
   }
 
@@ -214,8 +236,17 @@ export function ReaderView(props: { storyId: string; sessionId?: string }) {
       return;
     }
     const rect = el.getBoundingClientRect();
-    const left = Math.max(8, Math.min(rect.left, window.innerWidth - 328));
-    setPopupPos({ top: rect.bottom + 8, left });
+    const popupWidth = popupEl?.offsetWidth ?? 320;
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - 8 - popupWidth));
+    // Prefer just below the word; if the popup (taller in edit mode) would spill
+    // past the viewport bottom, flip it above the word, then clamp as a last resort.
+    const height = popupEl?.offsetHeight ?? 0;
+    let top = rect.bottom + 8;
+    if (height > 0 && top + height > window.innerHeight - 8) {
+      const above = rect.top - 8 - height;
+      top = above >= 8 ? above : Math.max(8, window.innerHeight - 8 - height);
+    }
+    setPopupPos({ top, left });
   }
 
   const popupStyle = (): JSX.CSSProperties => {
@@ -236,6 +267,243 @@ export function ReaderView(props: { storyId: string; sessionId?: string }) {
     } catch {
       setDefinitions(key, "error");
     }
+  }
+
+  // ---- personal dictionary editing --------------------------------------
+  function loadedDefinition(key: string): Definition | null {
+    const entry = definitions[key];
+    return entry && entry !== "loading" && entry !== "error" ? entry : null;
+  }
+
+  function startEdit(key: string) {
+    const def = loadedDefinition(key);
+    setEditGloss(def?.gloss ?? "");
+    setEditNotes(def?.notes ?? "");
+    setEditError("");
+    setActionError(key, undefined);
+    setRemovalNotice(key, undefined);
+    setEditing(true);
+  }
+
+  function cancelEdit() {
+    setEditing(false);
+    setEditError("");
+  }
+
+  function saveEdit(key: string) {
+    const gloss = editGloss().trim();
+    if (!gloss) {
+      setEditError("empty definition — use Remove instead");
+      return;
+    }
+    const notes = editNotes().trim() || undefined;
+    const previous = snapshotDefinition(definitions[key]);
+    const base = loadedDefinition(key);
+    const mutationID = beginDictionaryMutation(key);
+    const optimistic: Definition = {
+      key,
+      source: "user",
+      gloss,
+      notes,
+      grammatical_note: base?.grammatical_note,
+      example: base?.example,
+      etymology: base?.etymology,
+      trace: {
+        query_key: base?.trace.query_key ?? key,
+        resolved_key: base?.trace.resolved_key ?? key,
+        winning_source: "user",
+        steps: base?.trace.steps ?? [],
+      },
+    };
+    setDefinitions(key, optimistic);
+    setActionError(key, undefined);
+    setRemovalNotice(key, undefined);
+    setEditing(false);
+    setEditError("");
+    void putDictionaryEntry({ language: language(), key, gloss, notes }).catch(() => {
+      if (isCurrentDictionaryMutation(key, mutationID)) {
+        setDefinitions(key, previous);
+        setActionError(key, "Couldn't save — try again.");
+      }
+    });
+  }
+
+  function removeEntry(key: string) {
+    const previous = snapshotDefinition(definitions[key]);
+    const mutationID = beginDictionaryMutation(key);
+    setEditing(false);
+    setEditError("");
+    setActionError(key, undefined);
+    setRemovalNotice(key, "removed");
+    setDefinitions(key, "loading");
+    void deleteDictionaryEntry(language(), key)
+      .then(() => refetchDefinition(key, mutationID))
+      .catch(() => {
+        if (isCurrentDictionaryMutation(key, mutationID)) {
+          setDefinitions(key, previous);
+          setRemovalNotice(key, undefined);
+          setActionError(key, "Couldn't remove your definition — try again.");
+        }
+      });
+  }
+
+  async function refetchDefinition(key: string, mutationID = beginDictionaryMutation(key)) {
+    setActionError(key, undefined);
+    setRemovalNotice(key, "removed");
+    setDefinitions(key, "loading");
+    try {
+      const definition = await getDefinition(props.storyId, key);
+      if (isCurrentDictionaryMutation(key, mutationID)) {
+        setDefinitions(key, definition);
+        setRemovalNotice(key, "removed");
+      }
+    } catch {
+      if (isCurrentDictionaryMutation(key, mutationID)) {
+        setDefinitions(key, "error");
+        setRemovalNotice(key, "removed-failed");
+      }
+    }
+  }
+
+  function beginDictionaryMutation(key: string): number {
+    const mutationID = ++dictionaryMutationSeq;
+    dictionaryMutationIds[key] = mutationID;
+    return mutationID;
+  }
+
+  function isCurrentDictionaryMutation(key: string, mutationID: number): boolean {
+    return dictionaryMutationIds[key] === mutationID;
+  }
+
+  function snapshotDefinition(entry: Loadable<Definition> | undefined): Loadable<Definition> {
+    if (!entry) {
+      return "error";
+    }
+    if (entry === "loading" || entry === "error") {
+      return entry;
+    }
+    return {
+      ...entry,
+      trace: {
+        ...entry.trace,
+        steps: [...entry.trace.steps],
+      },
+    };
+  }
+
+  // Entering edit mode (and validation errors) change the popup's size; re-anchor
+  // so it never spills off the bottom of the viewport.
+  createEffect(() => {
+    editing();
+    editError();
+    editGloss();
+    editNotes();
+    const token = currentToken();
+    if (token?.key) {
+      definitions[token.key];
+      actionError[token.key];
+      removalNotice[token.key];
+    }
+    if (popupVisible()) {
+      window.requestAnimationFrame(repositionPopup);
+    }
+  });
+
+  // Closing the popup drops any half-finished edit so it does not resurface.
+  createEffect(() => {
+    if (!popupVisible()) {
+      setEditing(false);
+      setEditError("");
+    }
+  });
+
+  function definitionArea(key: string): JSX.Element {
+    if (editing()) {
+      const current = loadedDefinition(key);
+      return (
+        <form
+          class="reader-def-edit-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            saveEdit(key);
+          }}
+        >
+          <label class="reader-field">
+            Definition
+            <input
+              class="reader-field-input"
+              value={editGloss()}
+              autocomplete="off"
+              ref={(el) => window.setTimeout(() => el.focus())}
+              onInput={(event) => {
+                setEditGloss(event.currentTarget.value);
+                setEditError("");
+              }}
+            />
+          </label>
+          <label class="reader-field">
+            Notes (optional)
+            <textarea
+              class="reader-field-notes"
+              rows={4}
+              value={editNotes()}
+              onInput={(event) => setEditNotes(event.currentTarget.value)}
+            />
+          </label>
+          <Show when={editError()}>
+            {(message) => <p class="reader-field-error" role="alert">{message()}</p>}
+          </Show>
+          <div class="reader-edit-actions">
+            <button class="primary-button reader-edit-save" type="submit">Save</button>
+            <button class="secondary-button reader-edit-cancel" type="button" onClick={cancelEdit}>Cancel</button>
+          </div>
+          <Show when={current?.source === "user"}>
+            <button class="reader-remove-link" type="button" onClick={() => removeEntry(key)}>
+              Remove my definition
+            </button>
+          </Show>
+        </form>
+      );
+    }
+
+    const entry = definitions[key];
+    const notice = removalNotice[key];
+    const error = actionError[key];
+    if (notice === "removed-failed") {
+      return (
+        <div class="reader-popup-def">
+          <div class="reader-def-head">
+            <button class="reader-def-edit" type="button" aria-label="Edit definition" title="Edit definition" onClick={() => startEdit(key)}>
+              <span aria-hidden="true">✎</span>
+            </button>
+          </div>
+          <p class="reader-popup-notice" role="status">Your definition was removed — couldn't load a definition.</p>
+          <button class="secondary-button reader-retry-definition" type="button" onClick={() => void refetchDefinition(key)}>
+            Retry
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <div class="reader-popup-def">
+        <div class="reader-def-head">
+          <Show when={loadedDefinition(key)?.source === "user"}>
+            <span class="reader-def-mine">Your definition</span>
+          </Show>
+          <button class="reader-def-edit" type="button" aria-label="Edit definition" title="Edit definition" onClick={() => startEdit(key)}>
+            <span aria-hidden="true">✎</span>
+          </button>
+        </div>
+        <Show when={error}>
+          {(message) => <p class="reader-popup-error" role="alert">{message()}</p>}
+        </Show>
+        <Show when={notice === "removed"}>
+          <p class="reader-popup-notice" role="status">Your definition was removed — showing dictionary definition.</p>
+        </Show>
+        {definitionBody(entry, language())}
+      </div>
+    );
   }
 
   function rate(level: KnowledgeLevel, eventValue: string) {
@@ -410,6 +678,16 @@ export function ReaderView(props: { storyId: string; sessionId?: string }) {
     if (status() !== "ready") {
       return;
     }
+    // While editing a dictionary entry every reader shortcut is inert; only
+    // Escape acts (cancel edit first). Returning without preventDefault leaves
+    // native typing in the edit fields untouched.
+    if (editing()) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cancelEdit();
+      }
+      return;
+    }
     const target = event.target as HTMLElement | null;
     if (target?.closest("input, textarea, select")) {
       return;
@@ -530,13 +808,13 @@ export function ReaderView(props: { storyId: string; sessionId?: string }) {
         {(token) => (
           <Show when={token().key}>
             {(key) => (
-              <aside class="reader-popup" style={popupStyle()} role="dialog" aria-label="Word definition">
+              <aside class="reader-popup" style={popupStyle()} role="dialog" aria-label="Word definition" ref={(el) => (popupEl = el)}>
                 <button class="reader-popup-close" type="button" aria-label="Close" onClick={() => setPopupVisible(false)}>
                   ×
                 </button>
                 <p class="reader-popup-surface" lang={language()}>{token().surface}</p>
                 <p class="reader-popup-key" lang={language()}>{key()}</p>
-                {definitionBody(definitions[key()], language())}
+                {definitionArea(key())}
                 <div class="reader-levels" role="group" aria-label="Knowledge level">
                   <For each={LEVELS}>
                     {(level) => (
@@ -692,7 +970,7 @@ function definitionBody(entry: Loadable<Definition> | undefined, lang: string): 
     return <p class="reader-popup-error">No definition available.</p>;
   }
   return (
-    <div class="reader-popup-def">
+    <>
       <p class="reader-gloss">{entry.gloss}</p>
       <Show when={entry.grammatical_note}>
         <p class="reader-grammar">{entry.grammatical_note}</p>
@@ -700,8 +978,13 @@ function definitionBody(entry: Loadable<Definition> | undefined, lang: string): 
       <Show when={entry.example}>
         <p class="reader-example" lang={lang}>{entry.example}</p>
       </Show>
-      <span class="reader-source" data-source={entry.source}>{entry.source}</span>
-    </div>
+      <Show when={entry.notes}>
+        {(notes) => <p class="reader-notes">{notes()}</p>}
+      </Show>
+      <Show when={entry.source !== "user"}>
+        <span class="reader-source" data-source={entry.source}>{entry.source}</span>
+      </Show>
+    </>
   );
 }
 
