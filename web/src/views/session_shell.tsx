@@ -268,12 +268,17 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
     if (readingStartPending || !state.detail || state.detail.status !== "ready") {
       return;
     }
+    const sessionID = state.detail.session_id;
     readingStartPending = true;
     try {
-      await startReading(props.sessionId);
-      noteReadingStarted();
+      await startReading(sessionID);
+      if (isActiveSession(sessionID)) {
+        noteReadingStarted();
+      }
     } catch {
-      appStore.showToast("This session could not be marked as started.", "error");
+      if (isActiveSession(sessionID)) {
+        appStore.showToast("This session could not be marked as started.", "error");
+      }
     } finally {
       readingStartPending = false;
     }
@@ -284,11 +289,16 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
     if (!task) {
       return;
     }
-    const referenceAssisted = !!referencePeeked[task.task_id] || task.reference_assisted;
-    const wasGraded = task.graded;
-    setSubmittingTasks(task.task_id, true);
+    const sessionID = state.detail?.session_id ?? props.sessionId;
+    const taskID = task.task_id;
+    const referenceAssisted = !!referencePeeked[taskID] || task.reference_assisted;
+    setSubmittingTasks(taskID, true);
     try {
-      const result = await submitTask(task.task_id, { ...request, reference_assisted: referenceAssisted });
+      const result = await submitTask(taskID, { ...request, reference_assisted: referenceAssisted });
+      if (!isActiveTask(sessionID, index, taskID)) {
+        return;
+      }
+      const wasGraded = Boolean(state.tasks[index]?.graded);
       const nextCompleted = wasGraded ? completed() : completed() + 1;
       batch(() => {
         setState("tasks", index, "grade", result.grade);
@@ -296,7 +306,7 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
         setState("tasks", index, "reference_assisted", result.reference_assisted);
         setState("tasks", index, "attempt_count", result.attempt_count);
         if (result.reference_assisted) {
-          setReferencePeeked(task.task_id, true);
+          setReferencePeeked(taskID, true);
         }
         if (!wasGraded) {
           updateTaskProgress(total(), nextCompleted);
@@ -304,7 +314,7 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
       });
       announceGrade(result.grade, result.skill_xp);
     } finally {
-      setSubmittingTasks(task.task_id, false);
+      setSubmittingTasks(taskID, false);
     }
   }
 
@@ -368,15 +378,21 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
     if (completing() || state.detail?.status === "complete") {
       return;
     }
+    const sessionID = state.detail?.session_id ?? props.sessionId;
     setActionError("");
     setCompleting(true);
     const finish = appStore.beginOperation();
     try {
-      await completeSession(props.sessionId);
+      await completeSession(sessionID);
+      if (!isActiveSession(sessionID)) {
+        return;
+      }
       noteCompleted();
-      window.location.hash = sessionHref(props.sessionId, "review");
+      window.location.hash = sessionHref(sessionID, "review");
     } catch (error) {
-      setActionError(completeErrorMessage(error));
+      if (isActiveSession(sessionID)) {
+        setActionError(completeErrorMessage(error));
+      }
     } finally {
       finish();
       setCompleting(false);
@@ -430,6 +446,14 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
 
   function isCurrentLoad(seq: number, controller: AbortController): boolean {
     return seq === loadSeq && !controller.signal.aborted;
+  }
+
+  function isActiveSession(sessionID: string): boolean {
+    return props.sessionId === sessionID && activeSessionID === sessionID && state.detail?.session_id === sessionID;
+  }
+
+  function isActiveTask(sessionID: string, index: number, taskID: string): boolean {
+    return isActiveSession(sessionID) && state.tasks[index]?.task_id === taskID;
   }
 
   const completeAction = () => (
