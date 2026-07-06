@@ -27,6 +27,7 @@ type Store interface {
 	Tx(ctx context.Context, fn func(db.Repository) error) error
 
 	CreateSession(ctx context.Context, s domain.Session) (domain.Session, error)
+	DeleteImportedStory(ctx context.Context, userID, storyID string) error
 	DeleteSession(ctx context.Context, userID, sessionID string) error
 	DeleteUserDefinition(ctx context.Context, userID, language, itemKey string) error
 	EnsureLocalUser(ctx context.Context) (domain.User, error)
@@ -40,6 +41,7 @@ type Store interface {
 	IncrementTaskAttempt(ctx context.Context, taskID string) (int, error)
 	InsertAuthSecurityEvent(ctx context.Context, event domain.AuthSecurityEvent) (domain.AuthSecurityEvent, bool, error)
 	ListLanguages(ctx context.Context) ([]domain.Language, error)
+	ListImportedStories(ctx context.Context, userID string, opts domain.ListImportedStoriesOptions) ([]domain.Story, error)
 	ListSessionLLMCalls(ctx context.Context, userID, sessionID string) ([]domain.LLMCall, error)
 	ListSessionTasks(ctx context.Context, sessionID string) ([]domain.Task, error)
 	ListSessions(ctx context.Context, userID string, opts domain.ListSessionsOptions) ([]domain.SessionOverview, error)

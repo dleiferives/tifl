@@ -180,6 +180,8 @@ type Repository interface {
 	// ReplaceStoryGlossary are delete-then-insert so a stage retry is idempotent.
 	CreateStory(ctx context.Context, s domain.Story) (domain.Story, error)
 	GetStory(ctx context.Context, storyID string) (domain.Story, error)
+	ListImportedStories(ctx context.Context, userID string, opts domain.ListImportedStoriesOptions) ([]domain.Story, error)
+	DeleteImportedStory(ctx context.Context, userID, storyID string) error
 	// CountUserStories returns the number of stories generated for the given user
 	// and language. Used to decide onboarding-stage simplicity constraints.
 	CountUserStories(ctx context.Context, userID, language string) (int, error)
@@ -258,6 +260,19 @@ type Repository interface {
 func normalizeListSessionsOptions(opts domain.ListSessionsOptions) domain.ListSessionsOptions {
 	if opts.Limit <= 0 {
 		opts.Limit = 20
+	}
+	if opts.Offset < 0 {
+		opts.Offset = 0
+	}
+	return opts
+}
+
+func normalizeListImportedStoriesOptions(opts domain.ListImportedStoriesOptions) domain.ListImportedStoriesOptions {
+	if opts.Limit <= 0 {
+		opts.Limit = 20
+	}
+	if opts.Limit > 100 {
+		opts.Limit = 100
 	}
 	if opts.Offset < 0 {
 		opts.Offset = 0

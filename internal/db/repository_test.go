@@ -47,6 +47,7 @@ func testRepository(t *testing.T, newRepo repoFactory) {
 	run("Pipeline", testPipeline)
 	run("SessionLifecycle", testSessionLifecycle)
 	run("SessionArchiveDelete", testSessionArchiveDelete)
+	run("ImportedStories", testImportedStories)
 	run("Tx", testTx)
 	run("LLMTokenSpend", testLLMTokenSpend)
 }
@@ -1521,6 +1522,117 @@ func testSessionArchiveDelete(t *testing.T, repo db.Repository) {
 	if _, err := repo.GetStory(ctx, noEventStory.StoryID); !errors.Is(err, db.ErrNotFound) {
 		t.Fatalf("story without reader events should be deleted, got %v", err)
 	}
+}
+
+func testImportedStories(t *testing.T, repo db.Repository) {
+	ctx := context.Background()
+	suffix := strings.NewReplacer("/", "-", " ", "-").Replace(t.Name())
+	primaryLanguage := "imp"
+	otherLanguage := "ipo"
+	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: primaryLanguage, Name: "Import Test", KeyStrategy: "lemma", Enabled: true}))
+	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: otherLanguage, Name: "Import Other", KeyStrategy: "lemma", Enabled: true}))
+	user, err := repo.CreateUser(ctx, domain.User{Email: "imports-" + suffix + "@example.com"})
+	must(t, err)
+	other, err := repo.CreateUser(ctx, domain.User{Email: "imports-other-" + suffix + "@example.com"})
+	must(t, err)
+
+	oldStory, err := repo.CreateStory(ctx, domain.Story{
+		StoryID: "story-import-old-" + suffix,
+		UserID:  user.UserID, Language: primaryLanguage, Level: "beginner",
+		Text: "old text", Topic: "Imported: Old", GeneratedAt: 100,
+	})
+	must(t, err)
+	newStory, err := repo.CreateStory(ctx, domain.Story{
+		StoryID: "story-import-new-" + suffix,
+		UserID:  user.UserID, Language: primaryLanguage, Level: "beginner",
+		Text: "new text", Topic: "Imported: New", GeneratedAt: 300,
+	})
+	must(t, err)
+	otherLanguageStory, err := repo.CreateStory(ctx, domain.Story{
+		StoryID: "story-import-language-" + suffix,
+		UserID:  user.UserID, Language: otherLanguage, Level: "beginner",
+		Text: "language text", Topic: "Imported: Other language", GeneratedAt: 400,
+	})
+	must(t, err)
+	otherUserStory, err := repo.CreateStory(ctx, domain.Story{
+		StoryID: "story-import-other-user-" + suffix,
+		UserID:  other.UserID, Language: primaryLanguage, Level: "beginner",
+		Text: "other user", Topic: "Imported: Other user", GeneratedAt: 500,
+	})
+	must(t, err)
+	session, err := repo.CreateSession(ctx, domain.Session{
+		SessionID: "session-import-list-" + suffix,
+		UserID:    user.UserID, Language: primaryLanguage, Level: "beginner", CreatedAt: 600,
+	})
+	must(t, err)
+	sessionStory, err := repo.CreateStory(ctx, domain.Story{
+		StoryID: "story-session-backed-" + suffix,
+		UserID:  user.UserID, Language: primaryLanguage, Level: "beginner",
+		Text: "session backed", Topic: "Generated", GeneratedAt: 600, SessionID: &session.SessionID,
+	})
+	must(t, err)
+	must(t, repo.SetSessionSelection(ctx, session.SessionID, sessionStory.StoryID, nil, nil))
+
+	page, err := repo.ListImportedStories(ctx, user.UserID, domain.ListImportedStoriesOptions{Limit: 10})
+	must(t, err)
+	if got := storyIDs(page); strings.Join(got, ",") != strings.Join([]string{otherLanguageStory.StoryID, newStory.StoryID, oldStory.StoryID}, ",") {
+		t.Fatalf("imported story list mismatch: got %v", got)
+	}
+	page, err = repo.ListImportedStories(ctx, user.UserID, domain.ListImportedStoriesOptions{Limit: 2, Offset: 1})
+	must(t, err)
+	if got := storyIDs(page); strings.Join(got, ",") != strings.Join([]string{newStory.StoryID, oldStory.StoryID}, ",") {
+		t.Fatalf("imported story page mismatch: got %v", got)
+	}
+	page, err = repo.ListImportedStories(ctx, user.UserID, domain.ListImportedStoriesOptions{Limit: 10, Language: primaryLanguage})
+	must(t, err)
+	if got := storyIDs(page); strings.Join(got, ",") != strings.Join([]string{newStory.StoryID, oldStory.StoryID}, ",") {
+		t.Fatalf("language-scoped imported story list mismatch: got %v", got)
+	}
+	if err := repo.DeleteImportedStory(ctx, user.UserID, sessionStory.StoryID); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("session-backed imported delete: want ErrNotFound, got %v", err)
+	}
+	if err := repo.DeleteImportedStory(ctx, user.UserID, otherUserStory.StoryID); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("cross-tenant imported delete: want ErrNotFound, got %v", err)
+	}
+
+	must(t, repo.ReplaceStoryTokens(ctx, oldStory.StoryID, []domain.StoryToken{
+		{StoryID: oldStory.StoryID, Position: 0, Surface: "old", ItemKey: "old-" + suffix, IsWord: true},
+	}))
+	must(t, repo.ReplaceStoryGlossary(ctx, oldStory.StoryID, []domain.StoryGlossaryEntry{
+		{StoryID: oldStory.StoryID, ItemKey: "old-" + suffix, Gloss: "old"},
+	}))
+	_, err = repo.InsertReaderEvents(ctx, []domain.ReaderEvent{{
+		EventID: "event-import-delete-" + suffix, UserID: user.UserID, StoryID: oldStory.StoryID,
+		EventType: domain.ReaderEventNavigate, OccurredAt: 700,
+	}})
+	must(t, err)
+	must(t, repo.DeleteImportedStory(ctx, user.UserID, oldStory.StoryID))
+	if _, err := repo.GetStory(ctx, oldStory.StoryID); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("deleted imported story lookup: want ErrNotFound, got %v", err)
+	}
+	tokens, err := repo.ListStoryTokens(ctx, oldStory.StoryID)
+	must(t, err)
+	if len(tokens) != 0 {
+		t.Fatalf("imported delete should remove tokens, got %+v", tokens)
+	}
+	glossary, err := repo.ListStoryGlossary(ctx, oldStory.StoryID)
+	must(t, err)
+	if len(glossary) != 0 {
+		t.Fatalf("imported delete should remove glossary, got %+v", glossary)
+	}
+	hasEvents, err := repo.HasReaderEvents(ctx, user.UserID, oldStory.StoryID)
+	must(t, err)
+	if hasEvents {
+		t.Fatal("imported delete should remove reader events")
+	}
+}
+
+func storyIDs(stories []domain.Story) []string {
+	out := make([]string, 0, len(stories))
+	for _, story := range stories {
+		out = append(out, story.StoryID)
+	}
+	return out
 }
 
 // testTx verifies the unit-of-work: commit persists every write, an error

@@ -61,16 +61,23 @@ func (r *SQLRepository) GetSession(ctx context.Context, sessionID string) (domai
 
 func (r *SQLRepository) ListSessions(ctx context.Context, userID string, opts domain.ListSessionsOptions) ([]domain.SessionOverview, error) {
 	opts = normalizeListSessionsOptions(opts)
-	rows, err := r.query(ctx,
-		`SELECT `+sessionColumns+`,
+	query := `SELECT ` + sessionColumns + `,
 		        (SELECT COUNT(*) FROM tasks t WHERE t.session_id = s.session_id AND t.user_id = s.user_id),
 		        (SELECT COUNT(*) FROM tasks t
 		          WHERE t.session_id = s.session_id AND t.user_id = s.user_id
 		            AND (t.graded_at IS NOT NULL OR COALESCE(t.graded_by, '') <> ''))
 		 FROM sessions s
-		 WHERE s.user_id = ? AND ((? = 1 AND s.archived_at IS NOT NULL) OR (? = 0 AND s.archived_at IS NULL))
+		 WHERE s.user_id = ? AND ((? = 1 AND s.archived_at IS NOT NULL) OR (? = 0 AND s.archived_at IS NULL))`
+	args := []any{userID, boolToInt(opts.Archived), boolToInt(opts.Archived)}
+	if opts.Language != "" {
+		query += ` AND s.language = ?`
+		args = append(args, opts.Language)
+	}
+	query += `
 		 ORDER BY s.created_at DESC, s.session_id DESC
-		 LIMIT ? OFFSET ?`, userID, boolToInt(opts.Archived), boolToInt(opts.Archived), opts.Limit, opts.Offset)
+		 LIMIT ? OFFSET ?`
+	args = append(args, opts.Limit, opts.Offset)
+	rows, err := r.query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -362,26 +369,73 @@ func (r *SQLRepository) CreateStory(ctx context.Context, s domain.Story) (domain
 }
 
 func (r *SQLRepository) GetStory(ctx context.Context, storyID string) (domain.Story, error) {
-	var (
-		s        domain.Story
-		topic    sql.NullString
-		coverage sql.NullFloat64
-		sessID   sql.NullString
-	)
-	err := r.queryRow(ctx,
+	row := r.queryRow(ctx,
 		`SELECT story_id, user_id, language, text, level, topic, estimated_coverage, generated_at, session_id
-		 FROM stories WHERE story_id = ?`, storyID).
-		Scan(&s.StoryID, &s.UserID, &s.Language, &s.Text, &s.Level, &topic, &coverage, &s.GeneratedAt, &sessID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return domain.Story{}, ErrNotFound
+		 FROM stories WHERE story_id = ?`, storyID)
+	return scanStory(row)
+}
+
+func (r *SQLRepository) ListImportedStories(ctx context.Context, userID string, opts domain.ListImportedStoriesOptions) ([]domain.Story, error) {
+	opts = normalizeListImportedStoriesOptions(opts)
+	query := `SELECT story_id, user_id, language, text, level, topic, estimated_coverage, generated_at, session_id
+	          FROM stories
+	          WHERE user_id = ? AND session_id IS NULL`
+	args := []any{userID}
+	if opts.Language != "" {
+		query += ` AND language = ?`
+		args = append(args, opts.Language)
 	}
+	query += ` ORDER BY generated_at DESC, story_id DESC LIMIT ? OFFSET ?`
+	args = append(args, opts.Limit, opts.Offset)
+
+	rows, err := r.query(ctx, query, args...)
 	if err != nil {
-		return domain.Story{}, err
+		return nil, err
 	}
-	s.Topic = topic.String
-	s.EstimatedCoverage = floatPtr(coverage)
-	s.SessionID = stringPtr(sessID)
-	return s, nil
+	defer rows.Close()
+
+	var out []domain.Story
+	for rows.Next() {
+		story, err := scanStory(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, story)
+	}
+	return out, rows.Err()
+}
+
+func (r *SQLRepository) DeleteImportedStory(ctx context.Context, userID, storyID string) error {
+	return r.inTx(ctx, func(tx *dtx) error {
+		var existing string
+		err := tx.queryRow(ctx,
+			`SELECT story_id FROM stories WHERE story_id = ? AND user_id = ? AND session_id IS NULL`,
+			storyID, userID).Scan(&existing)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+
+		if _, err := tx.exec(ctx, `DELETE FROM reader_events WHERE story_id = ?`, storyID); err != nil {
+			return err
+		}
+		if _, err := tx.exec(ctx, `DELETE FROM story_glossary WHERE story_id = ?`, storyID); err != nil {
+			return err
+		}
+		if _, err := tx.exec(ctx, `DELETE FROM story_tokens WHERE story_id = ?`, storyID); err != nil {
+			return err
+		}
+		if _, err := tx.exec(ctx, `DELETE FROM story_audio WHERE story_id = ?`, storyID); err != nil {
+			return err
+		}
+		res, err := tx.exec(ctx, `DELETE FROM stories WHERE story_id = ? AND user_id = ? AND session_id IS NULL`, storyID, userID)
+		if err != nil {
+			return err
+		}
+		return requireRow(res)
+	})
 }
 
 func (r *SQLRepository) CountUserStories(ctx context.Context, userID, language string) (int, error) {
@@ -650,6 +704,26 @@ type rowScanner interface {
 
 func scanSession(row rowScanner) (domain.Session, error) {
 	return scanSessionPrefix(row)
+}
+
+func scanStory(row rowScanner) (domain.Story, error) {
+	var (
+		s        domain.Story
+		topic    sql.NullString
+		coverage sql.NullFloat64
+		sessID   sql.NullString
+	)
+	err := row.Scan(&s.StoryID, &s.UserID, &s.Language, &s.Text, &s.Level, &topic, &coverage, &s.GeneratedAt, &sessID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Story{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.Story{}, err
+	}
+	s.Topic = topic.String
+	s.EstimatedCoverage = floatPtr(coverage)
+	s.SessionID = stringPtr(sessID)
+	return s, nil
 }
 
 func scanSessionOverview(row rowScanner) (domain.SessionOverview, error) {

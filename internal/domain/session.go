@@ -58,6 +58,17 @@ type ListSessionsOptions struct {
 	Limit    int
 	Offset   int
 	Archived bool
+	Language string
+}
+
+// ListImportedStoriesOptions controls the newest-first page of a user's
+// standalone imported stories (stories with no generation session). Language is
+// optional: empty lists every language, matching the library's "all languages"
+// toggle.
+type ListImportedStoriesOptions struct {
+	Limit    int
+	Offset   int
+	Language string
 }
 
 // SelectedItemCounts is the persisted selection summary for a session. The

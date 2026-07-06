@@ -391,7 +391,8 @@ func parseSessionListOptions(r *http.Request) (domain.ListSessionsOptions, error
 	if err != nil {
 		return domain.ListSessionsOptions{}, err
 	}
-	return domain.ListSessionsOptions{Limit: limit, Offset: offset, Archived: archived}, nil
+	language := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("language")))
+	return domain.ListSessionsOptions{Limit: limit, Offset: offset, Archived: archived, Language: language}, nil
 }
 
 func parseBoundedQueryInt(r *http.Request, name string, def, min, max int) (int, error) {
