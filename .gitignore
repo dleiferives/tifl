@@ -18,6 +18,9 @@ coverage.txt
 .env
 .env.*
 
+# Agent prompt/patch scratch space — never committed
+/tmp/
+
 # Editors / OS
 .DS_Store
 *.swp
