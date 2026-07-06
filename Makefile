@@ -1,4 +1,4 @@
-.PHONY: help build server gateway kaikki-import kaikki-translate run run-gateway seed-demo import-kaikki web web-install web-api-types web-typecheck test test-live vet fmt tidy clean
+.PHONY: help build server gateway audio kaikki-import kaikki-translate run run-gateway run-audio seed-demo import-kaikki web web-install web-api-types web-typecheck test test-live vet fmt tidy clean
 
 # Live gateway test (opt-in): a real OpenCode server to verify the gateway
 # end-to-end. Override the model with TIFL_LIVE_MODEL.
@@ -9,13 +9,16 @@ help: ## list targets
 
 ## --- Go: API server + LLM gateway ---
 
-build: server gateway kaikki-import kaikki-translate ## build Go binaries into bin/
+build: server gateway audio kaikki-import kaikki-translate ## build Go binaries into bin/
 
 server: ## build the API server
 	go build -o bin/tifl-server ./cmd/server
 
 gateway: ## build the LLM gateway
 	go build -o bin/tifl-gateway ./cmd/gateway
+
+audio: ## build the audio manager
+	go build -o bin/tifl-audio ./audio/cmd/audio
 
 kaikki-import: ## build the Wiktextract/kaikki importer
 	go build -o bin/tifl-kaikki-import ./cmd/kaikki-import
@@ -28,6 +31,9 @@ run: ## run the API server (http://127.0.0.1:8000)
 
 run-gateway: ## run the LLM gateway (http://127.0.0.1:8001)
 	go run ./cmd/gateway
+
+run-audio: ## run the audio manager (http://127.0.0.1:8010)
+	go run ./audio/cmd/audio
 
 seed-demo: ## seed deterministic local demo data for UI/API development
 	go run ./cmd/devseed
