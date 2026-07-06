@@ -10,7 +10,7 @@ import {
   type APIRequest,
 } from "../api";
 import { ConfirmDialog, type ConfirmDialogRequest } from "../components/confirm_dialog";
-import { routeHref } from "../router";
+import { routeHref, sessionHref } from "../router";
 import { appStore } from "../store";
 import { formatLevel, SessionRow, sessionTitle, type SessionOverview, type SessionStatus } from "./session_rows";
 
@@ -119,7 +119,7 @@ export function HomeView() {
         request.level = appStore.currentLevel();
       }
       const next = await generateSession(request);
-      window.location.hash = routeHref(`/generation/${encodeURIComponent(next.session_id)}`);
+      window.location.hash = sessionHref(next.session_id, "read");
     } catch (error) {
       setActionError(startSessionErrorMessage(error));
     } finally {
@@ -134,7 +134,7 @@ export function HomeView() {
     const finish = appStore.beginOperation();
     try {
       const next = await retrySession(sessionID);
-      window.location.hash = routeHref(`/generation/${encodeURIComponent(next.session_id)}`);
+      window.location.hash = sessionHref(next.session_id, "read");
     } catch (error) {
       setActionError(retrySessionErrorMessage(error));
     } finally {

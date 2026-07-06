@@ -1,11 +1,12 @@
-import { createMemo, createSignal, For, Match, onMount, Show, Switch } from "solid-js";
+import { createMemo, createSignal, For, Match, onMount, Show, Switch, type JSX } from "solid-js";
 import { getSessionContent, type APIResponse, type APISchema } from "../api";
-import { routeHref } from "../router";
+import { routeHref, sessionHref } from "../router";
 import { appStore } from "../store";
 
-type SessionContent = APIResponse<"getSessionContent", 200>;
-type PhraseSet = APISchema<"PhraseSet">;
-type PhraseItem = APISchema<"PhraseItem">;
+export type SessionContent = APIResponse<"getSessionContent", 200>;
+export type PhraseSet = APISchema<"PhraseSet">;
+export type PhraseItem = APISchema<"PhraseItem">;
+export type PhraseLoadStatus = "loading" | "ready" | "error";
 
 // PhrasesView renders an expression-guided phrase set: the curated target-language
 // phrases plus their glosses and annotations. It is the phrase-session counterpart
@@ -13,7 +14,7 @@ type PhraseItem = APISchema<"PhraseItem">;
 // GET /sessions/{id}/content rather than the story endpoints. See #74 and
 // context/session-types.md ("Phrase set").
 export function PhrasesView(props: { sessionId: string }) {
-  const [status, setStatus] = createSignal<"loading" | "ready" | "error">("loading");
+  const [status, setStatus] = createSignal<PhraseLoadStatus>("loading");
   const [content, setContent] = createSignal<SessionContent | null>(null);
 
   onMount(() => void load());
@@ -32,39 +33,67 @@ export function PhrasesView(props: { sessionId: string }) {
     }
   }
 
-  const phraseSet = createMemo<PhraseSet | null>(() => content()?.phrase_set ?? null);
+  return (
+    <PhrasesPanel
+      status={status()}
+      content={content()}
+      sessionId={props.sessionId}
+      showHeading
+      actions={
+        <>
+          <a class="button-link secondary-link" href={sessionHref(props.sessionId, "tasks")}>Practice</a>
+          <a class="button-link secondary-link" href={routeHref("/")}>Back home</a>
+        </>
+      }
+      onRetry={() => void load()}
+    />
+  );
+}
+
+export function PhrasesPanel(props: {
+  status: PhraseLoadStatus;
+  content: SessionContent | null;
+  sessionId: string;
+  showHeading?: boolean;
+  actions?: JSX.Element;
+  onRetry?: () => void;
+}) {
+  const phraseSet = createMemo<PhraseSet | null>(() => props.content?.phrase_set ?? null);
   const items = createMemo<PhraseItem[]>(() => phraseSet()?.items ?? []);
   // A story session reached here by mistake (e.g. a stale link): offer the reader.
-  const storyId = createMemo(() => content()?.story?.story_id ?? "");
+  const storyId = createMemo(() => props.content?.story?.story_id ?? "");
 
   return (
     <section class="phrases-view">
-      <header class="view-heading">
-        <div>
-          <h1>Phrases</h1>
-          <p>{summary(items().length, status())}</p>
-        </div>
-        <div class="view-heading-actions">
-          <a class="button-link secondary-link" href={routeHref(`/tasks/${encodeURIComponent(props.sessionId)}`)}>Practice</a>
-          <a class="button-link secondary-link" href={routeHref("/")}>Back home</a>
-        </div>
-      </header>
+      <Show when={props.showHeading}>
+        <header class="view-heading">
+          <div>
+            <h1>Phrases</h1>
+            <p>{summary(items().length, props.status)}</p>
+          </div>
+          <Show when={props.actions}>
+            <div class="view-heading-actions">{props.actions}</div>
+          </Show>
+        </header>
+      </Show>
 
       <Switch>
-        <Match when={status() === "loading"}>
-          <div class="tasks-state" aria-busy="true">Loading phrases…</div>
+        <Match when={props.status === "loading"}>
+          <div class="tasks-state" aria-busy="true">Loading phrases...</div>
         </Match>
-        <Match when={status() === "error"}>
+        <Match when={props.status === "error"}>
           <div class="tasks-state" role="alert">
             <p>This phrase set could not be loaded.</p>
-            <button class="secondary-button" type="button" onClick={() => void load()}>Retry</button>
+            <Show when={props.onRetry}>
+              {(retry) => <button class="secondary-button" type="button" onClick={retry()}>Retry</button>}
+            </Show>
           </div>
         </Match>
         <Match when={storyId() !== ""}>
           <div class="tasks-state empty-state">
             <h2>This session is a story</h2>
             <p>Open it in the reader instead.</p>
-            <a class="button-link" href={routeHref(`/reader/${encodeURIComponent(storyId())}`)}>Start reading</a>
+            <a class="button-link" href={sessionHref(props.sessionId, "read")}>Start reading</a>
           </div>
         </Match>
         <Match when={items().length === 0}>
@@ -123,7 +152,7 @@ function PhraseCard(props: { item: PhraseItem; position: number; lang: string })
   );
 }
 
-function summary(count: number, status: "loading" | "ready" | "error"): string {
+function summary(count: number, status: PhraseLoadStatus): string {
   if (status === "loading") {
     return "Loading your phrase set…";
   }

@@ -19,6 +19,7 @@ import { routeHref } from "../router";
 import { appStore } from "../store";
 
 type StoryToken = APISchema<"StoryToken">;
+type StoryLoad = APISchema<"StoryLoad">;
 type ReaderKnowledge = APISchema<"ReaderKnowledge">;
 type ReaderSurfaceKnowledge = APISchema<"ReaderSurfaceKnowledge">;
 type KnowledgeLevel = ReaderKnowledge["level"];
@@ -71,7 +72,14 @@ const LEVELS: { value: KnowledgeLevel; event: string; label: string; hint: strin
   { value: "ignored", event: "i", label: "i", hint: "ignored" },
 ];
 
-export function ReaderView(props: { storyId: string; sessionId?: string }) {
+export function ReaderView(props: {
+  storyId: string;
+  sessionId?: string;
+  story?: StoryLoad | null;
+  active?: boolean;
+  onReadingStarted?: () => void;
+  onSessionComplete?: () => void;
+}) {
   const [status, setStatus] = createSignal<"loading" | "ready" | "error">("loading");
   const [completeStatus, setCompleteStatus] = createSignal<"idle" | "saving" | "done">("idle");
   const [tokens, setTokens] = createSignal<StoryToken[]>([]);
@@ -129,30 +137,36 @@ export function ReaderView(props: { storyId: string; sessionId?: string }) {
   async function load() {
     try {
       if (props.sessionId) {
-        readingStart = startReading(props.sessionId).catch(() => {
-          appStore.showToast("This session could not be marked as started.", "error");
-        });
+        readingStart = startReading(props.sessionId)
+          .then(() => props.onReadingStarted?.())
+          .catch(() => {
+            appStore.showToast("This session could not be marked as started.", "error");
+          });
       }
-      const story = await getStory(props.storyId);
-      // Seed every canonical key and exact-form key so per-span subscriptions are
-      // fine-grained from the first render; untouched words stay unseen ("").
-      const seeded: Record<string, ReaderKnowledge> = {};
-      const seededSurface: Record<string, ReaderSurfaceKnowledge> = {};
-      for (const token of story.tokens) {
-        if (token.is_word && token.key && token.form_key) {
-          seeded[token.key] = story.knowledge[token.key] ?? { level: "", lookup_count: 0 };
-          seededSurface[token.form_key] = story.surface_knowledge[token.form_key] ?? { level: "" };
-        }
-      }
-      setKnowledge(seeded);
-      setSurfaceKnowledge(seededSurface);
-      setTokens(story.tokens);
-      setLanguage(story.language);
-      setCursor(resolveCursorIndex(story.tokens, readSavedCursor(props.storyId)));
+      const story = props.story?.story_id === props.storyId ? props.story : await getStory(props.storyId);
+      applyStory(story);
       setStatus("ready");
     } catch {
       setStatus("error");
     }
+  }
+
+  function applyStory(story: StoryLoad) {
+    // Seed every canonical key and exact-form key so per-span subscriptions are
+    // fine-grained from the first render; untouched words stay unseen ("").
+    const seeded: Record<string, ReaderKnowledge> = {};
+    const seededSurface: Record<string, ReaderSurfaceKnowledge> = {};
+    for (const token of story.tokens) {
+      if (token.is_word && token.key && token.form_key) {
+        seeded[token.key] = story.knowledge[token.key] ?? { level: "", lookup_count: 0 };
+        seededSurface[token.form_key] = story.surface_knowledge[token.form_key] ?? { level: "" };
+      }
+    }
+    setKnowledge(seeded);
+    setSurfaceKnowledge(seededSurface);
+    setTokens(story.tokens);
+    setLanguage(story.language);
+    setCursor(resolveCursorIndex(story.tokens, readSavedCursor(props.storyId)));
   }
 
   // Cursor highlight: clear the previous word, mark the new one. Two writes.
@@ -604,6 +618,7 @@ export function ReaderView(props: { storyId: string; sessionId?: string }) {
       await completeSession(props.sessionId);
       setCompleteStatus("done");
       appStore.showToast("Session marked complete.");
+      props.onSessionComplete?.();
     } catch {
       setCompleteStatus("idle");
       appStore.showToast("This session could not be completed.", "error");
@@ -675,7 +690,7 @@ export function ReaderView(props: { storyId: string; sessionId?: string }) {
   }
 
   function onKeyDown(event: KeyboardEvent) {
-    if (status() !== "ready") {
+    if (props.active === false || status() !== "ready") {
       return;
     }
     // While editing a dictionary entry every reader shortcut is inert; only

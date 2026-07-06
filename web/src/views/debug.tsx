@@ -1,6 +1,6 @@
 import { createMemo, createSignal, For, Match, onMount, Show, Switch } from "solid-js";
 import { APIError, getSessionDebug, type APISchema } from "../api";
-import { routeHref } from "../router";
+import { routeHref, sessionHref } from "../router";
 import { appStore } from "../store";
 
 type SessionDebug = APISchema<"SessionDebug">;
@@ -46,7 +46,7 @@ export function DebugView(props: { sessionId: string }) {
           <p><code>{props.sessionId}</code></p>
         </div>
         <div class="view-heading-actions">
-          <a class="button-link secondary-link" href={routeHref(`/generation/${encodeURIComponent(props.sessionId)}`)}>Generation</a>
+          <a class="button-link secondary-link" href={sessionHref(props.sessionId, "read")}>Session</a>
           <a class="button-link secondary-link" href={routeHref("/")}>Home</a>
         </div>
       </header>

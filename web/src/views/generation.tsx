@@ -7,7 +7,7 @@ import {
   streamGenerationEvents,
   type GenerationEvent,
 } from "../api";
-import { routeHref } from "../router";
+import { routeHref, sessionHref } from "../router";
 import { appStore } from "../store";
 import { writeStartDraft, type SessionMode } from "./start";
 
@@ -50,7 +50,7 @@ const ERROR_MESSAGES: Record<string, string> = {
 
 const TOKEN_RATE_FULL_SCALE = 80; // tok/s mapped to a full progress bar
 
-export function GenerationView(props: { sessionId: string }) {
+export function GenerationView(props: { sessionId: string; onReady?: () => void }) {
   const [stages, setStages] = createStore<Record<string, StageState>>({});
   const [order, setOrder] = createSignal<string[]>([]);
   const [tokenRate, setTokenRate] = createSignal(0);
@@ -60,9 +60,11 @@ export function GenerationView(props: { sessionId: string }) {
   const [actionError, setActionError] = createSignal("");
 
   let stop: (() => void) | undefined;
+  let readyNotified = false;
 
   const subscribe = () => {
     stop?.();
+    readyNotified = false;
     setStages(reconcile({}));
     setOrder([]);
     setTokenRate(0);
@@ -77,6 +79,10 @@ export function GenerationView(props: { sessionId: string }) {
   const applyEvent = (event: GenerationEvent) => {
     if (event.stage === "done") {
       setResult(event);
+      if (!readyNotified && (event.status === "ready" || event.status === "complete")) {
+        readyNotified = true;
+        props.onReady?.();
+      }
       return;
     }
     if (!(event.stage in stages)) {
@@ -190,17 +196,17 @@ export function GenerationView(props: { sessionId: string }) {
             <p>{readySummary(result())}</p>
             <div class="panel-actions">
               <Show when={result()?.content_type === "phrase_set"}>
-                <a class="button-link" href={routeHref(`/phrases/${encodeURIComponent(props.sessionId)}`)}>
+                <a class="button-link" href={sessionHref(props.sessionId, "read")}>
                   View phrases
                 </a>
               </Show>
               <Show when={result()?.content_type !== "phrase_set" && result()?.story_id}>
-                <a class="button-link" href={routeHref(`/reader/${encodeURIComponent(result()?.story_id ?? "")}?sessionId=${encodeURIComponent(props.sessionId)}`)}>
+                <a class="button-link" href={sessionHref(props.sessionId, "read")}>
                   Start reading
                 </a>
               </Show>
               <Show when={(result()?.tasks?.total ?? 0) > 0}>
-                <a class="button-link secondary-link" href={routeHref(`/tasks/${encodeURIComponent(props.sessionId)}`)}>
+                <a class="button-link secondary-link" href={sessionHref(props.sessionId, "tasks")}>
                   View tasks
                 </a>
               </Show>

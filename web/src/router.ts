@@ -7,6 +7,7 @@ export type Route =
   | { name: "import"; path: "/import" }
   | { name: "library"; path: "/library" }
   | { name: "settings"; path: "/settings" }
+  | { name: "session"; path: string; sessionId: string; step: SessionStep }
   | { name: "generation"; path: string; sessionId: string }
   | { name: "debug"; path: string; sessionId: string }
   | { name: "reader"; path: string; storyId: string; sessionId?: string }
@@ -14,6 +15,8 @@ export type Route =
   | { name: "tasks"; path: string; sessionId: string }
   | { name: "skills"; path: "/skills" }
   | { name: "not-found"; path: string };
+
+export type SessionStep = "read" | "tasks" | "review";
 
 export function createHashRouter(): Accessor<Route> {
   const [route, setRoute] = createSignal(parseHash(window.location.hash));
@@ -52,6 +55,12 @@ export function parseHash(hash: string): Route {
   if (segments.length === 1 && segments[0] === "skills") {
     return { name: "skills", path: "/skills" };
   }
+  if (segments.length >= 2 && segments.length <= 3 && segments[0] === "session") {
+    const step = segments[2] ?? "read";
+    if (isSessionStep(step)) {
+      return { name: "session", path, sessionId: segments[1], step };
+    }
+  }
   if (segments.length === 2 && segments[0] === "generation") {
     return { name: "generation", path, sessionId: segments[1] };
   }
@@ -74,6 +83,10 @@ export function routeHref(path: string): string {
   return `#${normalizePath(path)}`;
 }
 
+export function sessionHref(sessionID: string, step: SessionStep = "read"): string {
+  return routeHref(`/session/${encodeURIComponent(sessionID)}/${step}`);
+}
+
 function normalizePath(path: string): string {
   const withLeadingSlash = path.startsWith("/") ? path : `/${path}`;
   const withoutTrailingSlash = withLeadingSlash.replace(/\/+$/, "");
@@ -86,4 +99,8 @@ function decodeSegment(segment: string): string {
   } catch {
     return segment;
   }
+}
+
+function isSessionStep(value: string): value is SessionStep {
+  return value === "read" || value === "tasks" || value === "review";
 }

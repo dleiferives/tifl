@@ -1,5 +1,6 @@
 import {
   APIError,
+  getAccessToken,
   getProfile,
   login,
   logout,
@@ -16,18 +17,24 @@ type AuthResponse = APIResponse<"login", 200>;
 
 export async function initializeAuthentication() {
   try {
+    const profile = await getProfile();
+    if (getAccessToken()) {
+      appStore.setProfile(profile);
+    } else {
+      appStore.setLocalMode(profile);
+    }
+    return;
+  } catch {
+    // In JWT mode, the profile request may still fail before a refresh cookie is
+    // accepted; fall through to an explicit refresh attempt.
+  }
+  try {
     await acceptAuthentication(await refresh());
     return;
   } catch (error) {
     if (error instanceof APIError && (error.status === 404 || error.status === 405)) {
-      try {
-        const profile = await getProfile();
-        appStore.setLocalMode(profile);
-        return;
-      } catch {
-        // A missing auth route only means local mode when the protected profile
-        // endpoint succeeds without a bearer token.
-      }
+      appStore.clearAuthentication();
+      return;
     }
   }
   appStore.clearAuthentication();
