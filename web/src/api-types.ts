@@ -1246,6 +1246,29 @@ export interface components {
             session: components["schemas"]["SessionDetail"];
             llm_calls: components["schemas"]["LLMCall"][];
             cost: components["schemas"]["CostSummary"];
+            reader_traces: components["schemas"]["ReaderTrace"][];
+        };
+        /** @description One reader-side trace row included in the session debug payload. Rows are derived from stored data only; debug reads do not trigger new lookup, breakdown, Wiktionary, or LLM work. */
+        ReaderTrace: {
+            /** @enum {string} */
+            kind: "definition_lookup" | "sentence_breakdown" | "word_breakdown";
+            story_id: string;
+            language: string;
+            /** @description Word/item key for definition and word-breakdown rows. */
+            key?: string;
+            /** @description Token position for the row's story context. */
+            position: number;
+            /** @description Winning definition source, or breakdown source such as cache/llm. */
+            source: string;
+            /** @enum {string} */
+            status: "hit" | "miss" | "skipped";
+            /**
+             * Format: double
+             * @description Unix seconds for cached breakdown rows, when available.
+             */
+            created_at?: number;
+            definition_trace?: components["schemas"]["DefinitionTrace"];
+            breakdown_trace?: components["schemas"]["BreakdownTrace"];
         };
         /** @description The current caller's admin capability. Only admins reach this endpoint (non-admins get 404 like every /admin route), so is_admin is always true in a 200 response; the client treats a 404 as "not an admin" (#24). */
         AdminContext: {
@@ -1398,6 +1421,33 @@ export interface components {
             end_position: number;
             /** @description Readable sentence text reconstructed from story tokens. */
             text: string;
+        };
+        /** @description Debug-safe source trace for a reader breakdown lookup. */
+        BreakdownTrace: {
+            /** @enum {string} */
+            scope: "sentence" | "word";
+            language: string;
+            cache_key: string;
+            /** @enum {string} */
+            source: "cache" | "llm";
+            cache_hit: boolean;
+            sentence?: components["schemas"]["SentenceBreakdownTrace"];
+            word?: components["schemas"]["WordBreakdownTrace"];
+            /** Format: double */
+            created_at?: number;
+        };
+        /** @description Sentence-specific breakdown trace metadata. */
+        SentenceBreakdownTrace: {
+            span: components["schemas"]["SentenceSpan"];
+            structure_key?: string;
+            structure_template?: string;
+            /** @enum {string} */
+            structure_hint: "hit" | "miss" | "not_consulted";
+            phrase_cache_match_count: number;
+        };
+        /** @description Word-specific breakdown trace metadata. */
+        WordBreakdownTrace: {
+            canonical_key: string;
         };
         /** @description Everything the reader needs at load time, in one response. */
         StoryLoad: {

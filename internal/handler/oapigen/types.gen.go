@@ -11,6 +11,42 @@ const (
 	BearerAuthScopes bearerAuthContextKey = "bearerAuth.Scopes"
 )
 
+// Defines values for BreakdownTraceScope.
+const (
+	BreakdownTraceScopeSentence BreakdownTraceScope = "sentence"
+	BreakdownTraceScopeWord     BreakdownTraceScope = "word"
+)
+
+// Valid indicates whether the value is a known member of the BreakdownTraceScope enum.
+func (e BreakdownTraceScope) Valid() bool {
+	switch e {
+	case BreakdownTraceScopeSentence:
+		return true
+	case BreakdownTraceScopeWord:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BreakdownTraceSource.
+const (
+	BreakdownTraceSourceCache BreakdownTraceSource = "cache"
+	BreakdownTraceSourceLLM   BreakdownTraceSource = "llm"
+)
+
+// Valid indicates whether the value is a known member of the BreakdownTraceSource enum.
+func (e BreakdownTraceSource) Valid() bool {
+	switch e {
+	case BreakdownTraceSourceCache:
+		return true
+	case BreakdownTraceSourceLLM:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DefinitionSource.
 const (
 	DefinitionSourceGlossary             DefinitionSource = "glossary"
@@ -554,6 +590,69 @@ func (e ReaderSurfaceKnowledgeRequestLevel) Valid() bool {
 	}
 }
 
+// Defines values for ReaderTraceKind.
+const (
+	ReaderTraceKindDefinitionLookup  ReaderTraceKind = "definition_lookup"
+	ReaderTraceKindSentenceBreakdown ReaderTraceKind = "sentence_breakdown"
+	ReaderTraceKindWordBreakdown     ReaderTraceKind = "word_breakdown"
+)
+
+// Valid indicates whether the value is a known member of the ReaderTraceKind enum.
+func (e ReaderTraceKind) Valid() bool {
+	switch e {
+	case ReaderTraceKindDefinitionLookup:
+		return true
+	case ReaderTraceKindSentenceBreakdown:
+		return true
+	case ReaderTraceKindWordBreakdown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReaderTraceStatus.
+const (
+	ReaderTraceStatusHit     ReaderTraceStatus = "hit"
+	ReaderTraceStatusMiss    ReaderTraceStatus = "miss"
+	ReaderTraceStatusSkipped ReaderTraceStatus = "skipped"
+)
+
+// Valid indicates whether the value is a known member of the ReaderTraceStatus enum.
+func (e ReaderTraceStatus) Valid() bool {
+	switch e {
+	case ReaderTraceStatusHit:
+		return true
+	case ReaderTraceStatusMiss:
+		return true
+	case ReaderTraceStatusSkipped:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SentenceBreakdownTraceStructureHint.
+const (
+	SentenceBreakdownTraceStructureHintHit          SentenceBreakdownTraceStructureHint = "hit"
+	SentenceBreakdownTraceStructureHintMiss         SentenceBreakdownTraceStructureHint = "miss"
+	SentenceBreakdownTraceStructureHintNotConsulted SentenceBreakdownTraceStructureHint = "not_consulted"
+)
+
+// Valid indicates whether the value is a known member of the SentenceBreakdownTraceStructureHint enum.
+func (e SentenceBreakdownTraceStructureHint) Valid() bool {
+	switch e {
+	case SentenceBreakdownTraceStructureHintHit:
+		return true
+	case SentenceBreakdownTraceStructureHintMiss:
+		return true
+	case SentenceBreakdownTraceStructureHintNotConsulted:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SessionContentContentType.
 const (
 	SessionContentContentTypePhraseSet SessionContentContentType = "phrase_set"
@@ -934,6 +1033,24 @@ type AuthResponse struct {
 	TokenType   string `json:"token_type"`
 	User        User   `json:"user"`
 }
+
+// BreakdownTrace Debug-safe source trace for a reader breakdown lookup.
+type BreakdownTrace struct {
+	CacheHit  bool                    `json:"cache_hit"`
+	CacheKey  string                  `json:"cache_key"`
+	CreatedAt float64                 `json:"created_at,omitempty"`
+	Language  string                  `json:"language"`
+	Scope     BreakdownTraceScope     `json:"scope"`
+	Sentence  *SentenceBreakdownTrace `json:"sentence,omitempty"`
+	Source    BreakdownTraceSource    `json:"source"`
+	Word      *WordBreakdownTrace     `json:"word,omitempty"`
+}
+
+// BreakdownTraceScope defines model for BreakdownTrace.Scope.
+type BreakdownTraceScope string
+
+// BreakdownTraceSource defines model for BreakdownTrace.Source.
+type BreakdownTraceSource string
 
 // CostBucket One aggregation bucket of LLM spend. day and/or model are set depending on how the rollup was grouped. cost_usd is present only when every call in the bucket had known pricing (cost_known true); a bucket for an unpriced model reports cost_known false rather than a misleading zero.
 type CostBucket struct {
@@ -1433,11 +1550,53 @@ type ReaderSurfaceKnowledgeRequest struct {
 // ReaderSurfaceKnowledgeRequestLevel ” clears to unseen for this exact form
 type ReaderSurfaceKnowledgeRequestLevel string
 
+// ReaderTrace One reader-side trace row included in the session debug payload. Rows are derived from stored data only; debug reads do not trigger new lookup, breakdown, Wiktionary, or LLM work.
+type ReaderTrace struct {
+	BreakdownTrace *BreakdownTrace `json:"breakdown_trace,omitempty"`
+
+	// CreatedAt Unix seconds for cached breakdown rows, when available.
+	CreatedAt       float64          `json:"created_at,omitempty"`
+	DefinitionTrace *DefinitionTrace `json:"definition_trace,omitempty"`
+
+	// Key Word/item key for definition and word-breakdown rows.
+	Key      string          `json:"key,omitempty"`
+	Kind     ReaderTraceKind `json:"kind"`
+	Language string          `json:"language"`
+
+	// Position Token position for the row's story context.
+	Position int `json:"position"`
+
+	// Source Winning definition source, or breakdown source such as cache/llm.
+	Source  string            `json:"source"`
+	Status  ReaderTraceStatus `json:"status"`
+	StoryId string            `json:"story_id"`
+}
+
+// ReaderTraceKind defines model for ReaderTrace.Kind.
+type ReaderTraceKind string
+
+// ReaderTraceStatus defines model for ReaderTrace.Status.
+type ReaderTraceStatus string
+
 // SelectedItemCounts Persisted SelectedItems counts; background items are not currently stored.
 type SelectedItemCounts struct {
 	New     int `json:"new"`
 	Targets int `json:"targets"`
 }
+
+// SentenceBreakdownTrace Sentence-specific breakdown trace metadata.
+type SentenceBreakdownTrace struct {
+	PhraseCacheMatchCount int `json:"phrase_cache_match_count"`
+
+	// Span Authoritative sentence boundary over story token positions. Positions are half-open: tokens with position >= start_position and < end_position are part of the sentence. Text is exactly the sentence text used by the sentence-breakdown cache key.
+	Span              SentenceSpan                        `json:"span"`
+	StructureHint     SentenceBreakdownTraceStructureHint `json:"structure_hint"`
+	StructureKey      string                              `json:"structure_key,omitempty"`
+	StructureTemplate string                              `json:"structure_template,omitempty"`
+}
+
+// SentenceBreakdownTraceStructureHint defines model for SentenceBreakdownTrace.StructureHint.
+type SentenceBreakdownTraceStructureHint string
 
 // SentenceSpan Authoritative sentence boundary over story token positions. Positions are half-open: tokens with position >= start_position and < end_position are part of the sentence. Text is exactly the sentence text used by the sentence-breakdown cache key.
 type SentenceSpan struct {
@@ -1468,9 +1627,10 @@ type SessionContentContentType string
 // SessionDebug defines model for SessionDebug.
 type SessionDebug struct {
 	// Cost Aggregate cost of a set of calls, deriving unknown pricing honestly.
-	Cost     CostSummary   `json:"cost"`
-	LlmCalls []LLMCall     `json:"llm_calls"`
-	Session  SessionDetail `json:"session"`
+	Cost         CostSummary   `json:"cost"`
+	LlmCalls     []LLMCall     `json:"llm_calls"`
+	ReaderTraces []ReaderTrace `json:"reader_traces"`
+	Session      SessionDetail `json:"session"`
 }
 
 // SessionDetail defines model for SessionDetail.
@@ -1824,6 +1984,11 @@ type User struct {
 	Email     string  `json:"email"`
 	LastLogin float64 `json:"last_login,omitempty"`
 	UserId    string  `json:"user_id"`
+}
+
+// WordBreakdownTrace Word-specific breakdown trace metadata.
+type WordBreakdownTrace struct {
+	CanonicalKey string `json:"canonical_key"`
 }
 
 // WordKnowledgeRequest defines model for WordKnowledgeRequest.
