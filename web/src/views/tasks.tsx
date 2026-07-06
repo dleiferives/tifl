@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, Match, onMount, Show, Switch, type Accessor, type JSX } from "solid-js";
+import { createMemo, createSignal, For, Match, onCleanup, onMount, Show, Switch, type Accessor, type JSX } from "solid-js";
 import { createStore, type SetStoreFunction } from "solid-js/store";
 import { APIError, getSessionTasks, getTask, reportTask, submitTask, type APIRequest, type APISchema } from "../api";
 import { routeHref } from "../router";
@@ -129,12 +129,18 @@ const RENDERERS: Record<string, Renderer> = {
 export function TasksView(props: { sessionId: string }) {
   const [status, setStatus] = createSignal<"loading" | "ready" | "error">("loading");
   const [tasks, setTasks] = createStore<Task[]>([]);
+  const pollingTasks = new Set<string>();
+  let disposed = false;
 
   const total = createMemo(() => tasks.length);
   const completed = createMemo(() => tasks.filter((task) => task.graded).length);
   const allDone = createMemo(() => total() > 0 && completed() === total());
 
   onMount(() => void load());
+  onCleanup(() => {
+    disposed = true;
+    pollingTasks.clear();
+  });
 
   async function load() {
     setStatus("loading");
@@ -142,6 +148,7 @@ export function TasksView(props: { sessionId: string }) {
     try {
       const data = await getSessionTasks(props.sessionId);
       setTasks(data.tasks);
+      pollTaskReports(data.tasks);
       setStatus("ready");
     } catch {
       setStatus("error");
@@ -169,29 +176,50 @@ export function TasksView(props: { sessionId: string }) {
       const fresh = await getTask(task.task_id);
       setTasks(index, fresh);
       if (isPollingReport(fresh.report)) {
-        void pollTaskReport(index, task.task_id);
+        void pollTaskReport(task.task_id);
       }
     } catch {
-      setTasks(index, "report", reportFallbackState(result, request.reason));
+      const fallback = reportFallbackState(result, request.reason);
+      setTasks(index, "report", fallback);
+      if (isPollingReport(fallback)) {
+        void pollTaskReport(task.task_id);
+      }
     }
     return result;
   }
 
-  async function pollTaskReport(index: number, taskID: string) {
-    for (let attempt = 0; attempt < 20; attempt++) {
-      await delay(1500);
-      if (tasks[index]?.task_id !== taskID || !isPollingReport(tasks[index]?.report)) {
-        return;
+  function pollTaskReports(nextTasks: Task[]) {
+    nextTasks.forEach((task) => {
+      if (isPollingReport(task.report)) {
+        void pollTaskReport(task.task_id);
       }
-      try {
-        const fresh = await getTask(taskID);
-        setTasks(index, fresh);
-        if (!isPollingReport(fresh.report)) {
+    });
+  }
+
+  async function pollTaskReport(taskID: string) {
+    if (pollingTasks.has(taskID)) {
+      return;
+    }
+    pollingTasks.add(taskID);
+    try {
+      while (!disposed) {
+        await delay(2000);
+        const index = tasks.findIndex((task) => task.task_id === taskID);
+        if (disposed || index < 0 || !isPollingReport(tasks[index]?.report)) {
           return;
         }
-      } catch {
-        return;
+        try {
+          const fresh = await getTask(taskID);
+          setTasks(index, fresh);
+          if (!isPollingReport(fresh.report)) {
+            return;
+          }
+        } catch {
+          await delay(5000);
+        }
       }
+    } finally {
+      pollingTasks.delete(taskID);
     }
   }
 

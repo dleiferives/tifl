@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/dleiferives/tifl/internal/db"
@@ -20,6 +21,8 @@ var taskRegenerationOutcomes = []string{
 	domain.ContentReportOutcomeRegenerated,
 	domain.ContentReportOutcomeFailed,
 }
+
+const taskReportPostCommitTimeout = 10 * time.Second
 
 func (h *Handler) reportTask(w http.ResponseWriter, r *http.Request) {
 	taskID := r.PathValue("id")
@@ -84,11 +87,17 @@ func (h *Handler) reportTask(w http.ResponseWriter, r *http.Request) {
 	responseUsed := used
 	if outcome == domain.ContentReportOutcomeQueued {
 		responseUsed++
-		if err := h.taskRegenQueue.EnqueueTaskRegeneration(r.Context(), report.ReportID, task.TaskID, userID); err != nil {
+		enqueueCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), taskReportPostCommitTimeout)
+		err := h.taskRegenQueue.EnqueueTaskRegeneration(enqueueCtx, report.ReportID, task.TaskID, userID)
+		cancel()
+		if err != nil {
 			outcome = domain.ContentReportOutcomeUnavailable
 			code = http.StatusServiceUnavailable
 			detail := "Task regeneration could not be queued. The report was saved and the original task is still usable."
-			if updateErr := h.repo.UpdateContentReportOutcome(r.Context(), report.ReportID, outcome, detail, ""); updateErr != nil {
+			updateCtx, updateCancel := context.WithTimeout(context.WithoutCancel(r.Context()), taskReportPostCommitTimeout)
+			updateErr := h.repo.UpdateContentReportOutcome(updateCtx, report.ReportID, outcome, detail, "")
+			updateCancel()
+			if updateErr != nil {
 				writeError(w, http.StatusInternalServerError, fmt.Errorf("recording queue failure: %w", updateErr))
 				return
 			}

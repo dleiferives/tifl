@@ -28,6 +28,9 @@ func TestLoad_DefaultsWhenNoFile(t *testing.T) {
 	if cfg.LLMBaseURL != "http://127.0.0.1:8001" {
 		t.Fatalf("llm_base_url default wrong: %q", cfg.LLMBaseURL)
 	}
+	if cfg.TaskReportRegenerationCap != 3 {
+		t.Fatalf("task_report_regeneration_cap default = %d, want 3", cfg.TaskReportRegenerationCap)
+	}
 }
 
 func TestLoad_FileValues(t *testing.T) {
@@ -52,6 +55,29 @@ server:
 	// Unset key falls back to default.
 	if cfg.DBPath != "data/tifl.db" {
 		t.Fatalf("unset key should default: %q", cfg.DBPath)
+	}
+}
+
+func TestLoad_TaskReportRegenerationCapZeroFromFile(t *testing.T) {
+	path := writeCfg(t, `
+server:
+  task_report_regeneration_cap: 0
+`)
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.TaskReportRegenerationCap != 0 {
+		t.Fatalf("task_report_regeneration_cap = %d, want 0", cfg.TaskReportRegenerationCap)
+	}
+
+	t.Setenv("TASK_REPORT_REGENERATION_CAP", "2")
+	cfg, err = config.Load(path)
+	if err != nil {
+		t.Fatalf("Load with env: %v", err)
+	}
+	if cfg.TaskReportRegenerationCap != 2 {
+		t.Fatalf("env should override file cap: %d", cfg.TaskReportRegenerationCap)
 	}
 }
 

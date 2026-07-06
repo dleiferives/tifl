@@ -22,6 +22,8 @@ import (
 // history convention in context/prompting-system.md.
 const topicHistoryWindow = 5
 
+const taskRegenerationOutcomeUpdateTimeout = 10 * time.Second
+
 // Stable, admin-inspectable error codes written to session_generation_stages and
 // surfaced to the client in SSE failure events. They identify the stage and the
 // failure class, not the underlying message (that goes in error_detail). See
@@ -746,14 +748,20 @@ func (p *Pipeline) RegenerateTaskAttempt(ctx context.Context, reportID, taskID, 
 	if _, err := p.deps.Repo.ReplaceTaskContent(ctx, userID, taskID, content, tt.Targets(content)); err != nil {
 		return p.failTaskRegeneration(ctx, reportID, "Regeneration finished but the task could not be replaced.", finalAttempt, err)
 	}
-	return p.deps.Repo.UpdateContentReportOutcome(ctx, reportID, domain.ContentReportOutcomeRegenerated, "Report saved. The task was replaced.", taskID)
+	return p.updateTaskRegenerationOutcome(ctx, reportID, domain.ContentReportOutcomeRegenerated, "Report saved. The task was replaced.", taskID)
 }
 
 func (p *Pipeline) failTaskRegeneration(ctx context.Context, reportID, detail string, finalAttempt bool, cause error) error {
 	if finalAttempt {
-		_ = p.deps.Repo.UpdateContentReportOutcome(ctx, reportID, domain.ContentReportOutcomeFailed, detail, "")
+		_ = p.updateTaskRegenerationOutcome(ctx, reportID, domain.ContentReportOutcomeFailed, detail, "")
 	}
 	return cause
+}
+
+func (p *Pipeline) updateTaskRegenerationOutcome(ctx context.Context, reportID, outcome, detail, replacementTaskID string) error {
+	updateCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), taskRegenerationOutcomeUpdateTimeout)
+	defer cancel()
+	return p.deps.Repo.UpdateContentReportOutcome(updateCtx, reportID, outcome, detail, replacementTaskID)
 }
 
 func (p *Pipeline) sourceTextForTaskRegeneration(ctx context.Context, sess domain.Session) (string, error) {

@@ -81,7 +81,7 @@ type file struct {
 		LLMBudgetTokens           int64  `yaml:"llm_budget_tokens"`
 		LLMBudgetWindowHours      int    `yaml:"llm_budget_window_hours"`
 		PredictorMode             string `yaml:"predictor_mode"`
-		TaskReportRegenerationCap int    `yaml:"task_report_regeneration_cap"`
+		TaskReportRegenerationCap *int   `yaml:"task_report_regeneration_cap"`
 	} `yaml:"server"`
 	Gateway struct {
 		Addr        string `yaml:"addr"`
@@ -121,7 +121,7 @@ func Load(path string) (Config, error) {
 		LLMBudgetTokens:           pickInt64("LLM_BUDGET_TOKENS", s.LLMBudgetTokens, 0),
 		LLMBudgetWindowHours:      pickIntDefault("LLM_BUDGET_WINDOW_HOURS", s.LLMBudgetWindowHours, 24),
 		PredictorMode:             pick("PREDICTOR_MODE", s.PredictorMode, "legacy"),
-		TaskReportRegenerationCap: pickIntDefault("TASK_REPORT_REGENERATION_CAP", s.TaskReportRegenerationCap, 3),
+		TaskReportRegenerationCap: pickOptionalIntDefault("TASK_REPORT_REGENERATION_CAP", s.TaskReportRegenerationCap, 3),
 	}
 	if cfg.PredictorMode != "legacy" && cfg.PredictorMode != "fsrs" {
 		return Config{}, fmt.Errorf("config: unknown predictor_mode %q", cfg.PredictorMode)
@@ -205,6 +205,19 @@ func pickIntDefault(envKey string, fileVal int, def int) int {
 	}
 	if fileVal != 0 {
 		return fileVal
+	}
+	return def
+}
+
+// pickOptionalIntDefault resolves an int whose YAML value may deliberately be 0.
+func pickOptionalIntDefault(envKey string, fileVal *int, def int) int {
+	if v := os.Getenv(envKey); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	if fileVal != nil {
+		return *fileVal
 	}
 	return def
 }
