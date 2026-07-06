@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	authn "github.com/dleiferives/tifl/internal/auth"
@@ -118,6 +119,45 @@ func exhaustRegisterLimiter(t *testing.T, client *http.Client, baseURL, email st
 	return got
 }
 
+type authSuccessResponse struct {
+	AccessToken string `json:"access_token"`
+	User        struct {
+		UserID string `json:"user_id"`
+		Email  string `json:"email"`
+	} `json:"user"`
+}
+
+func postAuthSuccess(t *testing.T, client *http.Client, url, email, password string, wantStatus int) authSuccessResponse {
+	t.Helper()
+	body, err := json.Marshal(map[string]string{"email": email, "password": password})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != wantStatus {
+		t.Fatalf("%s = %d body=%s", url, resp.StatusCode, data)
+	}
+	if strings.Contains(string(data), "email_canonical") {
+		t.Fatalf("auth response leaked canonical email field: %s", data)
+	}
+	var out authSuccessResponse
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.AccessToken == "" || out.User.UserID == "" {
+		t.Fatalf("incomplete auth response: %+v", out)
+	}
+	return out
+}
+
 func TestJWTModeProtectsAPIAndAuthFlow(t *testing.T) {
 	srv, _ := newAuthServer(t)
 	resp, err := http.Get(srv.URL + "/api/v1/ping")
@@ -172,6 +212,103 @@ func TestJWTModeProtectsAPIAndAuthFlow(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("refresh = %d", resp.StatusCode)
+	}
+}
+
+func TestAuthHTTPPreservesDisplayEmail(t *testing.T) {
+	srv, _ := newAuthServer(t)
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	const (
+		displayEmail = "Alice@bücher.Example"
+		loginEmail   = "alice@xn--bcher-kva.example"
+		password     = "correct horse battery staple"
+	)
+	tokens, err := authn.NewTokenManager(authTestSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	registered := postAuthSuccess(t, client, srv.URL+"/api/v1/auth/register", displayEmail, password, http.StatusCreated)
+	if registered.User.Email != displayEmail {
+		t.Fatalf("register email = %q, want display email %q", registered.User.Email, displayEmail)
+	}
+	claims, err := tokens.Validate(registered.AccessToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claims.Email != displayEmail {
+		t.Fatalf("register token email = %q, want display email %q", claims.Email, displayEmail)
+	}
+
+	loggedIn := postAuthSuccess(t, client, srv.URL+"/api/v1/auth/login", loginEmail, password, http.StatusOK)
+	if loggedIn.User.UserID != registered.User.UserID || loggedIn.User.Email != displayEmail {
+		t.Fatalf("login user = %+v, want id %q display email %q", loggedIn.User, registered.User.UserID, displayEmail)
+	}
+	claims, err = tokens.Validate(loggedIn.AccessToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claims.Email != displayEmail {
+		t.Fatalf("login token email = %q, want display email %q", claims.Email, displayEmail)
+	}
+
+	resp, err := client.Post(srv.URL+"/api/v1/auth/refresh", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("refresh = %d body=%s", resp.StatusCode, data)
+	}
+	if strings.Contains(string(data), "email_canonical") {
+		t.Fatalf("refresh response leaked canonical email field: %s", data)
+	}
+	var refreshed authSuccessResponse
+	if err := json.Unmarshal(data, &refreshed); err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.User.UserID != registered.User.UserID || refreshed.User.Email != displayEmail {
+		t.Fatalf("refresh user = %+v, want id %q display email %q", refreshed.User, registered.User.UserID, displayEmail)
+	}
+	claims, err = tokens.Validate(refreshed.AccessToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claims.Email != displayEmail {
+		t.Fatalf("refresh token email = %q, want display email %q", claims.Email, displayEmail)
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/auth/me", nil)
+	req.Header.Set("Authorization", "Bearer "+refreshed.AccessToken)
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, err = io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("me = %d body=%s", resp.StatusCode, data)
+	}
+	if strings.Contains(string(data), "email_canonical") {
+		t.Fatalf("me response leaked canonical email field: %s", data)
+	}
+	var me struct {
+		UserID string `json:"user_id"`
+		Email  string `json:"email"`
+	}
+	if err := json.Unmarshal(data, &me); err != nil {
+		t.Fatal(err)
+	}
+	if me.UserID != registered.User.UserID || me.Email != displayEmail {
+		t.Fatalf("me user = %+v, want id %q display email %q", me, registered.User.UserID, displayEmail)
 	}
 }
 
