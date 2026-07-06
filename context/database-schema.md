@@ -261,12 +261,18 @@ Audio generated for a story, with word-level alignment data.
 story_audio
   audio_id      TEXT  PK
   story_id      TEXT  NOT NULL    FK → stories.story_id
-  file_path     TEXT  NOT NULL    S3 key or local filesystem path
+  file_path     TEXT  NOT NULL    legacy column name; stores object key/ref
   duration_ms   INT               total duration
   alignment     JSON              [{position, start_ms, end_ms}, ...]
                                   position matches story_tokens.position
   generated_at  REAL  NOT NULL
 ```
+
+`file_path` should be interpreted as a media object key such as
+`story_audio/{story_id}/{audio_id}.mp3`. It must not store an absolute local
+path, a public URL, or an S3 provider-specific URL. The configured media
+`ObjectStore` maps that key to local filesystem storage or future S3-compatible
+storage.
 
 `alignment` maps each word token to a time range in the audio file. The reader
 uses this to highlight the currently-playing word during playback, and listening
@@ -315,12 +321,16 @@ tasks
   content          JSON  NOT NULL    task question/prompt; schema owned by task type
   response         JSON              user's answer; schema owned by task type; null until submitted
   input_method     TEXT              "typed" | "scanned_image" | "audio_recording"
-  media_path       TEXT              path to scanned image or recorded audio, if applicable
+  media_path       TEXT              legacy column name; media object key/ref, if applicable
   grade            JSON              grading result; schema owned by task type; null until graded
   graded_by        TEXT              "rule" | "llm"
   graded_at        REAL
   created_at       REAL  NOT NULL
 ```
+
+`media_path` stores the same object-key shape as `story_audio.file_path`, for
+example `task_media/{task_id}/{upload_id}.jpg` or
+`conversation_audio/{conversation_id}/{upload_id}.webm`.
 
 **Example content blobs by task type:**
 
@@ -397,12 +407,15 @@ conversations
   language        TEXT  NOT NULL
   prompt_text     TEXT  NOT NULL    what the system asked the user to discuss
   prompt_item_ids JSON              item_ids the system wanted the user to use
-  audio_path      TEXT              recording of user's speech
+  audio_path      TEXT              media object key/ref for user's speech recording
   transcript      TEXT              STT output
   analysis        JSON              {used_correctly: [...], struggled_with: [...],
                                      gaps: [...]}
   created_at      REAL  NOT NULL
 ```
+
+`audio_path` follows the same media object-key convention, for example
+`conversation_audio/{conversation_id}/{upload_id}.webm`.
 
 ---
 

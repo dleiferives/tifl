@@ -2,14 +2,19 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/url"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/dleiferives/tifl/internal/config"
 	"github.com/dleiferives/tifl/internal/db/dbtest"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/lang"
 	greekplugin "github.com/dleiferives/tifl/internal/lang/el"
+	"github.com/dleiferives/tifl/internal/objectstore"
 	"github.com/dleiferives/tifl/internal/skills"
 )
 
@@ -26,6 +31,30 @@ func TestHTTPURLIncludesRandomPort(t *testing.T) {
 	}
 	if u.Scheme != "http" || u.Hostname() != "127.0.0.1" || u.Port() == "" || u.Port() == "0" {
 		t.Fatalf("httpURL(%q) = %q", ln.Addr().String(), u.String())
+	}
+}
+
+func TestOpenMediaStoreLocal(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "media")
+	store, err := openMediaStore(config.Config{
+		MediaStorageMode: config.MediaStorageLocal,
+		MediaLocalRoot:   root,
+	})
+	if err != nil {
+		t.Fatalf("openMediaStore local: %v", err)
+	}
+	if closer, ok := store.(interface{ Close() error }); ok {
+		defer closer.Close()
+	}
+	if _, err := os.Stat(root); err != nil {
+		t.Fatalf("expected local media root to exist: %v", err)
+	}
+}
+
+func TestOpenMediaStoreRejectsReservedS3(t *testing.T) {
+	_, err := openMediaStore(config.Config{MediaStorageMode: config.MediaStorageS3})
+	if !errors.Is(err, objectstore.ErrUnsupported) {
+		t.Fatalf("openMediaStore s3: want ErrUnsupported, got %v", err)
 	}
 }
 

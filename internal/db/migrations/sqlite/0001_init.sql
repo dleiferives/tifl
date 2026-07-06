@@ -101,7 +101,7 @@ CREATE TABLE story_tokens (
 CREATE TABLE story_audio (
     audio_id     TEXT PRIMARY KEY,
     story_id     TEXT NOT NULL REFERENCES stories(story_id),
-    file_path    TEXT NOT NULL,            -- S3 key or local path
+    file_path    TEXT NOT NULL,            -- media object key/ref
     duration_ms  INTEGER,
     alignment    TEXT,                     -- JSON: [{position,start_ms,end_ms}, ...]
     generated_at REAL NOT NULL
@@ -151,7 +151,7 @@ CREATE TABLE tasks (
     content      TEXT NOT NULL,            -- JSON, owned by the task type
     response     TEXT,                     -- JSON, owned by the task type; null until submitted
     input_method TEXT,                     -- typed | scanned_image | audio_recording
-    media_path   TEXT,
+    media_path   TEXT,                     -- media object key/ref
     grade        TEXT,                     -- JSON, owned by the task type; null until graded
     graded_by    TEXT,                     -- rule | llm
     graded_at    REAL,
@@ -189,7 +189,7 @@ CREATE TABLE conversations (
     language        TEXT NOT NULL REFERENCES languages(code),
     prompt_text     TEXT NOT NULL,
     prompt_item_ids TEXT,                  -- JSON
-    audio_path      TEXT,
+    audio_path      TEXT,                  -- media object key/ref
     transcript      TEXT,
     analysis        TEXT,                  -- JSON: {used_correctly, struggled_with, gaps}
     created_at      REAL NOT NULL

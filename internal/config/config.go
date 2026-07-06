@@ -27,6 +27,13 @@ const (
 	StoragePostgres StorageMode = "postgres"
 )
 
+type MediaStorageMode string
+
+const (
+	MediaStorageLocal MediaStorageMode = "local"
+	MediaStorageS3    MediaStorageMode = "s3"
+)
+
 type AuthMode string
 
 const (
@@ -51,6 +58,15 @@ type Config struct {
 	LLMBudgetWindowHours      int         // rolling budget window (default 24h)
 	PredictorMode             string      // "legacy" (default) | "fsrs" (#209)
 	TaskReportRegenerationCap int         // per-session task regenerations allowed (default 3)
+	MediaStorageMode          MediaStorageMode
+	MediaLocalRoot            string
+	MediaPublicBaseURL        string
+	MediaS3Bucket             string
+	MediaS3Endpoint           string
+	MediaS3Region             string
+	MediaS3AccessKeyEnv       string
+	MediaS3SecretKeyEnv       string
+	MediaS3SignedURLs         bool
 }
 
 // GatewayConfig is the fully-resolved LLM-gateway configuration.
@@ -100,6 +116,15 @@ type file struct {
 		LLMBudgetWindowHours      int    `yaml:"llm_budget_window_hours"`
 		PredictorMode             string `yaml:"predictor_mode"`
 		TaskReportRegenerationCap *int   `yaml:"task_report_regeneration_cap"`
+		MediaStorageMode          string `yaml:"media_storage_mode"`
+		MediaLocalRoot            string `yaml:"media_local_root"`
+		MediaPublicBaseURL        string `yaml:"media_public_base_url"`
+		MediaS3Bucket             string `yaml:"media_s3_bucket"`
+		MediaS3Endpoint           string `yaml:"media_s3_endpoint"`
+		MediaS3Region             string `yaml:"media_s3_region"`
+		MediaS3AccessKeyEnv       string `yaml:"media_s3_access_key_env"`
+		MediaS3SecretKeyEnv       string `yaml:"media_s3_secret_key_env"`
+		MediaS3SignedURLs         *bool  `yaml:"media_s3_signed_urls"`
 	} `yaml:"server"`
 	Gateway struct {
 		Addr        string   `yaml:"addr"`
@@ -138,6 +163,10 @@ func Load(path string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	mediaS3SignedURLs, err := pickOptionalBoolDefault("MEDIA_S3_SIGNED_URLS", s.MediaS3SignedURLs, true)
+	if err != nil {
+		return Config{}, err
+	}
 	cfg := Config{
 		Addr:                      pick("TIFL_ADDR", s.Addr, "127.0.0.1:8000"),
 		StorageMode:               StorageMode(pick("STORAGE_MODE", s.StorageMode, string(StorageSQLite))),
@@ -154,6 +183,15 @@ func Load(path string) (Config, error) {
 		LLMBudgetWindowHours:      pickIntDefault("LLM_BUDGET_WINDOW_HOURS", s.LLMBudgetWindowHours, 24),
 		PredictorMode:             pick("PREDICTOR_MODE", s.PredictorMode, "legacy"),
 		TaskReportRegenerationCap: pickOptionalIntDefault("TASK_REPORT_REGENERATION_CAP", s.TaskReportRegenerationCap, 3),
+		MediaStorageMode:          MediaStorageMode(pick("MEDIA_STORAGE_MODE", s.MediaStorageMode, string(MediaStorageLocal))),
+		MediaLocalRoot:            pick("MEDIA_LOCAL_ROOT", s.MediaLocalRoot, "data/media"),
+		MediaPublicBaseURL:        pick("MEDIA_PUBLIC_BASE_URL", s.MediaPublicBaseURL, ""),
+		MediaS3Bucket:             pick("MEDIA_S3_BUCKET", s.MediaS3Bucket, ""),
+		MediaS3Endpoint:           pick("MEDIA_S3_ENDPOINT", s.MediaS3Endpoint, ""),
+		MediaS3Region:             pick("MEDIA_S3_REGION", s.MediaS3Region, ""),
+		MediaS3AccessKeyEnv:       pick("MEDIA_S3_ACCESS_KEY_ENV", s.MediaS3AccessKeyEnv, "AWS_ACCESS_KEY_ID"),
+		MediaS3SecretKeyEnv:       pick("MEDIA_S3_SECRET_KEY_ENV", s.MediaS3SecretKeyEnv, "AWS_SECRET_ACCESS_KEY"),
+		MediaS3SignedURLs:         mediaS3SignedURLs,
 	}
 	if cfg.PredictorMode != "legacy" && cfg.PredictorMode != "fsrs" {
 		return Config{}, fmt.Errorf("config: unknown predictor_mode %q", cfg.PredictorMode)
@@ -163,6 +201,9 @@ func Load(path string) (Config, error) {
 	}
 	if cfg.AuthMode != AuthNone && cfg.AuthMode != AuthJWT {
 		return Config{}, fmt.Errorf("config: unknown auth_mode %q", cfg.AuthMode)
+	}
+	if cfg.MediaStorageMode != MediaStorageLocal && cfg.MediaStorageMode != MediaStorageS3 {
+		return Config{}, fmt.Errorf("config: unknown media_storage_mode %q", cfg.MediaStorageMode)
 	}
 	if cfg.AuthMode == AuthJWT && len([]byte(cfg.JWTSecret)) < 32 {
 		return Config{}, fmt.Errorf("config: jwt_secret must be at least 32 bytes when auth_mode is jwt")
@@ -317,4 +358,18 @@ func pickBool(envKey string, fileVal bool) (bool, error) {
 		return value, nil
 	}
 	return fileVal, nil
+}
+
+func pickOptionalBoolDefault(envKey string, fileVal *bool, def bool) (bool, error) {
+	if raw, ok := os.LookupEnv(envKey); ok && raw != "" {
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			return false, fmt.Errorf("config: %s must be true or false", envKey)
+		}
+		return value, nil
+	}
+	if fileVal != nil {
+		return *fileVal, nil
+	}
+	return def, nil
 }

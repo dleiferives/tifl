@@ -44,6 +44,9 @@ server:   # cmd/server
   jwt_secret: ""
   allow_insecure_auth_cookie: false
   frontend_dir: web/dist
+  media_storage_mode: local
+  media_local_root: data/media
+  media_public_base_url: ""
 
 gateway:  # cmd/gateway
   addr: 127.0.0.1:8001
@@ -89,9 +92,23 @@ only, the `-addr` command-line flag is a final one-off override.
 | `jwt_secret` | `JWT_SECRET` | — | JWT signing key (required when `auth_mode: jwt`) |
 | `allow_insecure_auth_cookie` | `ALLOW_INSECURE_AUTH_COOKIE` | `false` | development-only: allow the refresh cookie over HTTP |
 | `frontend_dir` | `FRONTEND_DIR` | `web/dist` | compiled SolidJS assets to serve |
+| `media_storage_mode` | `MEDIA_STORAGE_MODE` | `local` | binary media storage mode: `local` now, `s3` reserved |
+| `media_local_root` | `MEDIA_LOCAL_ROOT` | `data/media` | local object root for audio/scans/uploads |
+| `media_public_base_url` | `MEDIA_PUBLIC_BASE_URL` | — | optional URL prefix for served local media |
+| `media_s3_bucket` | `MEDIA_S3_BUCKET` | — | future S3-compatible bucket |
+| `media_s3_endpoint` | `MEDIA_S3_ENDPOINT` | — | future S3-compatible endpoint, e.g. R2/MinIO |
+| `media_s3_region` | `MEDIA_S3_REGION` | — | future S3 region |
+| `media_s3_access_key_env` | `MEDIA_S3_ACCESS_KEY_ENV` | `AWS_ACCESS_KEY_ID` | env var name for future S3 access key |
+| `media_s3_secret_key_env` | `MEDIA_S3_SECRET_KEY_ENV` | `AWS_SECRET_ACCESS_KEY` | env var name for future S3 secret key |
+| `media_s3_signed_urls` | `MEDIA_S3_SIGNED_URLS` | `true` | future S3 URLs should be presigned by default |
 
 The server never calls a model provider directly — only the gateway at
 `llm_base_url`. See [backend-server](../context/backend-server.md).
+
+Media object rows should store stable object keys such as
+`story_audio/{story_id}/{audio_id}.mp3`, not absolute filesystem paths or
+provider URLs. The local store maps those keys under `media_local_root`; future
+S3-compatible storage will map the same keys into a bucket.
 
 In JWT mode, `jwt_secret` must contain at least 32 bytes or startup fails.
 Production deployments must leave `allow_insecure_auth_cookie` false and expose

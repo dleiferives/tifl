@@ -103,7 +103,7 @@ CREATE TABLE story_tokens (
 CREATE TABLE story_audio (
     audio_id     TEXT PRIMARY KEY,
     story_id     TEXT NOT NULL REFERENCES stories(story_id),
-    file_path    TEXT NOT NULL,
+    file_path    TEXT NOT NULL,            -- media object key/ref
     duration_ms  INTEGER,
     alignment    JSONB,
     generated_at DOUBLE PRECISION NOT NULL
@@ -152,7 +152,7 @@ CREATE TABLE tasks (
     content      JSONB NOT NULL,
     response     JSONB,
     input_method TEXT,
-    media_path   TEXT,
+    media_path   TEXT,                     -- media object key/ref
     grade        JSONB,
     graded_by    TEXT,
     graded_at    DOUBLE PRECISION,
@@ -198,7 +198,7 @@ CREATE TABLE conversations (
     language        TEXT NOT NULL REFERENCES languages(code),
     prompt_text     TEXT NOT NULL,
     prompt_item_ids JSONB,
-    audio_path      TEXT,
+    audio_path      TEXT,                  -- media object key/ref
     transcript      TEXT,
     analysis        JSONB,
     created_at      DOUBLE PRECISION NOT NULL

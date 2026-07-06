@@ -135,3 +135,5 @@ Quick map of the common API-server keys (`server:` section / env override):
 | `llm_base_url` | `LLM_BASE_URL` | `http://127.0.0.1:8001` | where the gateway listens |
 | `auth_mode` | `AUTH_MODE` | `none` | `jwt` (cloud) or `none` (desktop-local) |
 | `frontend_dir` | `FRONTEND_DIR` | `web/dist` | compiled client assets |
+| `media_storage_mode` | `MEDIA_STORAGE_MODE` | `local` | media/object storage: `local` now, `s3` reserved |
+| `media_local_root` | `MEDIA_LOCAL_ROOT` | `data/media` | local object root for audio/scans/uploads |

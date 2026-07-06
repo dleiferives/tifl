@@ -31,6 +31,9 @@ func TestLoad_DefaultsWhenNoFile(t *testing.T) {
 	if cfg.TaskReportRegenerationCap != 3 {
 		t.Fatalf("task_report_regeneration_cap default = %d, want 3", cfg.TaskReportRegenerationCap)
 	}
+	if cfg.MediaStorageMode != config.MediaStorageLocal || cfg.MediaLocalRoot != "data/media" || !cfg.MediaS3SignedURLs {
+		t.Fatalf("media storage defaults not applied: %+v", cfg)
+	}
 }
 
 func TestLoad_FileValues(t *testing.T) {
@@ -41,6 +44,13 @@ server:
   database_url: postgres://x
   auth_mode: jwt
   jwt_secret: 01234567890123456789012345678901
+  media_storage_mode: s3
+  media_s3_bucket: tifl-media
+  media_s3_endpoint: https://r2.example.test
+  media_s3_region: auto
+  media_s3_access_key_env: TIFL_R2_ACCESS_KEY_ID
+  media_s3_secret_key_env: TIFL_R2_SECRET_ACCESS_KEY
+  media_s3_signed_urls: false
 `)
 	cfg, err := config.Load(path)
 	if err != nil {
@@ -51,6 +61,15 @@ server:
 	}
 	if cfg.DatabaseURL != "postgres://x" {
 		t.Fatalf("database_url not read: %q", cfg.DatabaseURL)
+	}
+	if cfg.MediaStorageMode != config.MediaStorageS3 ||
+		cfg.MediaS3Bucket != "tifl-media" ||
+		cfg.MediaS3Endpoint != "https://r2.example.test" ||
+		cfg.MediaS3Region != "auto" ||
+		cfg.MediaS3AccessKeyEnv != "TIFL_R2_ACCESS_KEY_ID" ||
+		cfg.MediaS3SecretKeyEnv != "TIFL_R2_SECRET_ACCESS_KEY" ||
+		cfg.MediaS3SignedURLs {
+		t.Fatalf("media storage file values not applied: %+v", cfg)
 	}
 	// Unset key falls back to default.
 	if cfg.DBPath != "data/tifl.db" {
@@ -88,6 +107,13 @@ func TestLoad_JWTRequiresStrongSecret(t *testing.T) {
 	}
 }
 
+func TestLoad_RejectsUnknownMediaStorageMode(t *testing.T) {
+	path := writeCfg(t, "server:\n  media_storage_mode: ftp\n")
+	if _, err := config.Load(path); err == nil {
+		t.Fatal("expected unknown media_storage_mode to fail")
+	}
+}
+
 func TestLoad_InsecureCookieEnv(t *testing.T) {
 	t.Setenv("ALLOW_INSECURE_AUTH_COOKIE", "true")
 	cfg, err := config.Load(filepath.Join(t.TempDir(), "absent.yaml"))
@@ -102,12 +128,17 @@ func TestLoad_InsecureCookieEnv(t *testing.T) {
 func TestLoad_EnvOverridesFile(t *testing.T) {
 	path := writeCfg(t, "server:\n  addr: 1.1.1.1:1\n")
 	t.Setenv("TIFL_ADDR", "2.2.2.2:2")
+	t.Setenv("MEDIA_STORAGE_MODE", "s3")
+	t.Setenv("MEDIA_S3_SIGNED_URLS", "false")
 	cfg, err := config.Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if cfg.Addr != "2.2.2.2:2" {
 		t.Fatalf("env should override file: %q", cfg.Addr)
+	}
+	if cfg.MediaStorageMode != config.MediaStorageS3 || cfg.MediaS3SignedURLs {
+		t.Fatalf("media env should override file/default: %+v", cfg)
 	}
 }
 

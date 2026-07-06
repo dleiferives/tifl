@@ -29,6 +29,7 @@ import (
 	"github.com/dleiferives/tifl/internal/lang"
 	greekplugin "github.com/dleiferives/tifl/internal/lang/el"
 	"github.com/dleiferives/tifl/internal/llm"
+	"github.com/dleiferives/tifl/internal/objectstore"
 	"github.com/dleiferives/tifl/internal/predictor"
 	"github.com/dleiferives/tifl/internal/reader"
 	"github.com/dleiferives/tifl/internal/selector"
@@ -51,6 +52,14 @@ func main() {
 	}
 
 	ctx := context.Background()
+
+	mediaStore, err := openMediaStore(cfg)
+	if err != nil {
+		log.Fatalf("media storage: %v", err)
+	}
+	if closer, ok := mediaStore.(interface{ Close() error }); ok {
+		defer closer.Close()
+	}
 
 	repo, err := openRepo(ctx, cfg)
 	if err != nil {
@@ -266,6 +275,10 @@ func openJobs(ctx context.Context, cfg config.Config, workers *jobs.Workers) (jo
 	default:
 		return nil, fmt.Errorf("unknown storage mode %q", cfg.StorageMode)
 	}
+}
+
+func openMediaStore(cfg config.Config) (objectstore.ObjectStore, error) {
+	return objectstore.NewFromConfig(cfg)
 }
 
 func openRepo(ctx context.Context, cfg config.Config) (db.Repository, error) {

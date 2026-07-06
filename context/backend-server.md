@@ -155,6 +155,33 @@ by middleware instead. The repository code is identical in both cases.
 
 ---
 
+## Media/Object Storage
+
+Large binary files do not belong in the SQL repository. Generated story audio,
+uploaded scan images, speech recordings, and future sidecar files go through the
+`ObjectStore` interface in `internal/objectstore`.
+
+Database rows store stable object keys, not provider-specific paths:
+
+```
+story_audio/{story_id}/{audio_id}.mp3
+task_media/{task_id}/{upload_id}.jpg
+conversation_audio/{conversation_id}/{upload_id}.webm
+```
+
+The configured object store maps those keys to a backend:
+
+- `local`: files below `media_local_root`, with traversal-resistant key
+  resolution.
+- `s3`: reserved config seam for S3-compatible storage and signed URLs.
+
+Handlers and domain code should validate upload size/type before writing, then
+store only the object key in SQL columns such as `story_audio.file_path` or
+`tasks.media_path`. API responses should not expose arbitrary local filesystem
+paths; cloud/public media access should go through explicit URLs or signed URLs.
+
+---
+
 ## Handler Structure
 
 Handlers are intentionally thin. A handler's job is:

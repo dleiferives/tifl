@@ -33,6 +33,18 @@ server:
   # predictor_mode: fsrs
   # Maximum unanswered-task regenerations per session after user reports.
   # task_report_regeneration_cap: 3
+  # Binary media/object storage for future audio, scan/OCR, and uploads. Local
+  # mode stores objects below media_local_root using stable object keys. S3 mode
+  # is reserved for hosted object storage and not wired into runtime flows yet.
+  media_storage_mode: local        # local | s3                           (default local)
+  media_local_root: data/media     # local media root                     (default data/media)
+  media_public_base_url: ""        # optional URL prefix for served local media
+  media_s3_bucket: ""              # future S3-compatible bucket
+  media_s3_endpoint: ""            # future S3-compatible endpoint, e.g. R2/MinIO
+  media_s3_region: ""              # future S3 region
+  media_s3_access_key_env: AWS_ACCESS_KEY_ID      # env var name for future S3 access key
+  media_s3_secret_key_env: AWS_SECRET_ACCESS_KEY  # env var name for future S3 secret
+  media_s3_signed_urls: true       # future S3 URLs should be presigned by default
 
 # The LLM gateway (cmd/gateway). The example targets a local OpenCode server —
 # a credential-free way to run a real model. Start it with:

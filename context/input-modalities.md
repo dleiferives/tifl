@@ -90,7 +90,7 @@ conversations
     language            TEXT
     prompt_text         TEXT        what the system asked
     prompt_item_ids     JSON        knowledge item IDs the system wanted used
-    audio_path          TEXT        stored recording (for reanalysis/training)
+    audio_path          TEXT        media object key/ref for stored recording
     transcript          TEXT        STT output
     analysis            JSON        {used_correctly, struggled_with, gaps, notes}
     created_at          REAL
@@ -186,12 +186,15 @@ questions).
 story_audio
     audio_id        TEXT PK
     story_id        TEXT
-    file_path       TEXT        S3 key or local filesystem path
+    file_path       TEXT        media object key/ref
     duration_ms     INTEGER
     alignment       JSON        [{position, start_ms, end_ms}]
     generated_at    REAL
     tts_model       TEXT        which TTS model/voice was used
 ```
+
+`file_path` is a legacy column name. It should store an object key such as
+`story_audio/{story_id}/{audio_id}.mp3`, not an absolute path or provider URL.
 
 `stories.audio_id` is null until audio is generated. The reader client checks this
 and shows/hides audio controls accordingly.
@@ -238,7 +241,7 @@ Server:
     2. Vision model extracts handwritten text
     3. Extracted text treated identically to a typed response
     4. Grading proceeds normally
-    5. task.input_method = "scanned_image", task.media_path = stored image path
+    5. task.input_method = "scanned_image", task.media_path = stored object key
 ```
 
 The original image is stored for training data — eventually this can be used to
@@ -296,5 +299,6 @@ training data purposes, not for routing logic.
 - Alignment quality: word-level timestamps from TTS are often approximate. How much
   drift is acceptable before the reader sync feels broken?
 - Scan upload UX: camera capture in the browser (mobile) vs file upload (desktop)
-- Storage for audio and scan images: local filesystem for desktop mode, object
-  storage (S3-compatible) for cloud mode — same abstraction needed as DB storage
+- Media storage lifecycle: `internal/objectstore` now defines the key/ref
+  abstraction and local filesystem implementation. Future work should add the
+  S3-compatible implementation, signed URL policy, and account-deletion cleanup.
