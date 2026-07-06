@@ -298,19 +298,40 @@ func (e GradeGradedBy) Valid() bool {
 
 // Defines values for LLMCallStatus.
 const (
-	Error   LLMCallStatus = "error"
-	Success LLMCallStatus = "success"
-	Timeout LLMCallStatus = "timeout"
+	LLMCallStatusError   LLMCallStatus = "error"
+	LLMCallStatusSuccess LLMCallStatus = "success"
+	LLMCallStatusTimeout LLMCallStatus = "timeout"
 )
 
 // Valid indicates whether the value is a known member of the LLMCallStatus enum.
 func (e LLMCallStatus) Valid() bool {
 	switch e {
-	case Error:
+	case LLMCallStatusError:
 		return true
-	case Success:
+	case LLMCallStatusSuccess:
 		return true
-	case Timeout:
+	case LLMCallStatusTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LLMCallLogRowStatus.
+const (
+	LLMCallLogRowStatusError   LLMCallLogRowStatus = "error"
+	LLMCallLogRowStatusSuccess LLMCallLogRowStatus = "success"
+	LLMCallLogRowStatusTimeout LLMCallLogRowStatus = "timeout"
+)
+
+// Valid indicates whether the value is a known member of the LLMCallLogRowStatus enum.
+func (e LLMCallLogRowStatus) Valid() bool {
+	switch e {
+	case LLMCallLogRowStatusError:
+		return true
+	case LLMCallLogRowStatusSuccess:
+		return true
+	case LLMCallLogRowStatusTimeout:
 		return true
 	default:
 		return false
@@ -854,12 +875,88 @@ func (e WordKnowledgeRequestLevel) Valid() bool {
 	}
 }
 
+// Defines values for AdminListCallsParamsStatus.
+const (
+	Error   AdminListCallsParamsStatus = "error"
+	Success AdminListCallsParamsStatus = "success"
+	Timeout AdminListCallsParamsStatus = "timeout"
+)
+
+// Valid indicates whether the value is a known member of the AdminListCallsParamsStatus enum.
+func (e AdminListCallsParamsStatus) Valid() bool {
+	switch e {
+	case Error:
+		return true
+	case Success:
+		return true
+	case Timeout:
+		return true
+	default:
+		return false
+	}
+}
+
+// AdminCallLog A page of the global call log, filtered and paginated.
+type AdminCallLog struct {
+	Calls   []LLMCallLogRow `json:"calls"`
+	HasMore bool            `json:"has_more"`
+	Limit   int             `json:"limit"`
+	Offset  int             `json:"offset"`
+}
+
+// AdminContext The current caller's admin capability. Only admins reach this endpoint (non-admins get 404 like every /admin route), so is_admin is always true in a 200 response; the client treats a 404 as "not an admin" (#24).
+type AdminContext struct {
+	IsAdmin bool `json:"is_admin"`
+}
+
+// AdminCostRollup Global spend for a time window, grouped by day × model.
+type AdminCostRollup struct {
+	Buckets []CostBucket `json:"buckets"`
+
+	// Total Aggregate cost of a set of calls, deriving unknown pricing honestly.
+	Total      CostSummary `json:"total"`
+	WindowFrom float64     `json:"window_from,omitempty"`
+	WindowTo   float64     `json:"window_to,omitempty"`
+}
+
+// AdminUserDetail Admin lookup of one user — their sessions plus cost rollups.
+type AdminUserDetail struct {
+	CostByDay   []CostBucket      `json:"cost_by_day"`
+	CostByModel []CostBucket      `json:"cost_by_model"`
+	Sessions    []SessionOverview `json:"sessions"`
+	User        User              `json:"user"`
+}
+
 // AuthResponse defines model for AuthResponse.
 type AuthResponse struct {
 	AccessToken string `json:"access_token"`
 	ExpiresIn   int    `json:"expires_in"`
 	TokenType   string `json:"token_type"`
 	User        User   `json:"user"`
+}
+
+// CostBucket One aggregation bucket of LLM spend. day and/or model are set depending on how the rollup was grouped. cost_usd is present only when every call in the bucket had known pricing (cost_known true); a bucket for an unpriced model reports cost_known false rather than a misleading zero.
+type CostBucket struct {
+	Calls     int     `json:"calls"`
+	CostKnown bool    `json:"cost_known"`
+	CostUsd   float64 `json:"cost_usd,omitempty"`
+
+	// Day UTC calendar day (YYYY-MM-DD); present for day-grouped buckets.
+	Day         string `json:"day,omitempty"`
+	InputTokens int64  `json:"input_tokens"`
+
+	// Model Model name; present for model-grouped buckets.
+	Model        string `json:"model,omitempty"`
+	OutputTokens int64  `json:"output_tokens"`
+}
+
+// CostSummary Aggregate cost of a set of calls, deriving unknown pricing honestly.
+type CostSummary struct {
+	// HasUnknown True when at least one call's model lacked pricing, so total_usd understates spend.
+	HasUnknown bool `json:"has_unknown"`
+
+	// TotalUsd Sum of costs over calls whose model had configured pricing.
+	TotalUsd float64 `json:"total_usd"`
 }
 
 // Credentials defines model for Credentials.
@@ -1095,8 +1192,14 @@ type ImportedStoryList struct {
 
 // LLMCall One llm_calls audit row scoped to a session and current user.
 type LLMCall struct {
-	CallId      string  `json:"call_id"`
-	CalledAt    float64 `json:"called_at"`
+	CallId   string  `json:"call_id"`
+	CalledAt float64 `json:"called_at"`
+
+	// CostKnown Whether this call's model has configured pricing. When false the cost is unknown (not zero) and clients render it as such (#24).
+	CostKnown bool `json:"cost_known"`
+
+	// CostUsd Derived USD cost (input+output tokens × configured model pricing). Present only when cost_known is true.
+	CostUsd     float64 `json:"cost_usd,omitempty"`
 	ErrorDetail string  `json:"error_detail,omitempty"`
 
 	// ErrorPayload Raw gateway error response body when available.
@@ -1126,6 +1229,27 @@ type LLMCall struct {
 
 // LLMCallStatus defines model for LLMCall.Status.
 type LLMCallStatus string
+
+// LLMCallLogRow One row of the admin global call log (#24/#134). Deliberately omits the prompt/response payload columns so the list stays cheap and logs do not leak into casual scrolling; fetch full payloads per call via GET /admin/calls/{id}.
+type LLMCallLogRow struct {
+	CallId        string              `json:"call_id"`
+	CalledAt      float64             `json:"called_at"`
+	CostKnown     bool                `json:"cost_known"`
+	CostUsd       float64             `json:"cost_usd,omitempty"`
+	ErrorDetail   string              `json:"error_detail,omitempty"`
+	InputTokens   int                 `json:"input_tokens,omitempty"`
+	Kind          string              `json:"kind"`
+	LatencyMs     int                 `json:"latency_ms,omitempty"`
+	Model         string              `json:"model"`
+	OutputTokens  int                 `json:"output_tokens,omitempty"`
+	PromptVersion string              `json:"prompt_version"`
+	SessionId     string              `json:"session_id,omitempty"`
+	Status        LLMCallLogRowStatus `json:"status"`
+	UserId        string              `json:"user_id,omitempty"`
+}
+
+// LLMCallLogRowStatus defines model for LLMCallLogRow.Status.
+type LLMCallLogRowStatus string
 
 // LLMModel defines model for LLMModel.
 type LLMModel struct {
@@ -1331,6 +1455,8 @@ type SessionContentContentType string
 
 // SessionDebug defines model for SessionDebug.
 type SessionDebug struct {
+	// Cost Aggregate cost of a set of calls, deriving unknown pricing honestly.
+	Cost     CostSummary   `json:"cost"`
 	LlmCalls []LLMCall     `json:"llm_calls"`
 	Session  SessionDetail `json:"session"`
 }
@@ -1728,6 +1854,36 @@ type Unauthorized = ErrorResponse
 
 // bearerAuthContextKey is the context key for bearerAuth security scheme
 type bearerAuthContextKey string
+
+// AdminListCallsParams defines parameters for AdminListCalls.
+type AdminListCallsParams struct {
+	UserId        string                     `form:"user_id,omitempty" json:"user_id,omitempty"`
+	Model         string                     `form:"model,omitempty" json:"model,omitempty"`
+	Kind          string                     `form:"kind,omitempty" json:"kind,omitempty"`
+	Status        AdminListCallsParamsStatus `form:"status,omitempty" json:"status,omitempty"`
+	PromptVersion string                     `form:"prompt_version,omitempty" json:"prompt_version,omitempty"`
+	SessionId     string                     `form:"session_id,omitempty" json:"session_id,omitempty"`
+
+	// From Lower bound (inclusive) on called_at, Unix seconds.
+	From float64 `form:"from,omitempty" json:"from,omitempty"`
+
+	// To Upper bound (exclusive) on called_at, Unix seconds.
+	To     float64 `form:"to,omitempty" json:"to,omitempty"`
+	Limit  int     `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset int     `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// AdminListCallsParamsStatus defines parameters for AdminListCalls.
+type AdminListCallsParamsStatus string
+
+// AdminCostRollupParams defines parameters for AdminCostRollup.
+type AdminCostRollupParams struct {
+	// From Lower bound (inclusive) on called_at, Unix seconds.
+	From float64 `form:"from,omitempty" json:"from,omitempty"`
+
+	// To Upper bound (exclusive) on called_at, Unix seconds.
+	To float64 `form:"to,omitempty" json:"to,omitempty"`
+}
 
 // DeleteDictionaryEntryParams defines parameters for DeleteDictionaryEntry.
 type DeleteDictionaryEntryParams struct {

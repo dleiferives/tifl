@@ -176,6 +176,18 @@ func (t *dtx) prepare(ctx context.Context, query string) (*sql.Stmt, error) {
 	return t.Tx.PrepareContext(ctx, t.d.rebind(query))
 }
 
+// dayBucketExpr returns a SQL expression that maps a Unix-second timestamp
+// column to its UTC day number (days since the epoch). called_at is always
+// positive, so truncation toward zero and floor agree; both engines therefore
+// bucket identically. Postgres CAST(float AS integer) rounds rather than
+// truncates, so floor() is used there explicitly.
+func (d dialect) dayBucketExpr(col string) string {
+	if d == dialectPostgres {
+		return "floor(" + col + " / 86400)"
+	}
+	return "CAST(" + col + " / 86400 AS INTEGER)"
+}
+
 // readerEventsConflict is the one per-dialect SQL fragment: the reader_events
 // primary key differs by engine (sqlite: event_id; postgres: composite
 // (event_id, occurred_at) because the partition key must be in the PK). A

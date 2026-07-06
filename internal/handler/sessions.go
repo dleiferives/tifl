@@ -141,7 +141,8 @@ func (h *Handler) getSessionDebug(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, sessionDebugDTO{
 		Session:  toSessionDetailDTO(detail),
-		LlmCalls: toLLMCallDTOs(calls),
+		LlmCalls: h.toLLMCallDTOsWithCost(calls),
+		Cost:     h.costSummary(calls),
 	})
 }
 

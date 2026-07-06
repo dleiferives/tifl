@@ -30,6 +30,7 @@ import (
 	greekplugin "github.com/dleiferives/tifl/internal/lang/el"
 	"github.com/dleiferives/tifl/internal/llm"
 	"github.com/dleiferives/tifl/internal/predictor"
+	"github.com/dleiferives/tifl/internal/pricing"
 	"github.com/dleiferives/tifl/internal/reader"
 	"github.com/dleiferives/tifl/internal/selector"
 	"github.com/dleiferives/tifl/internal/skills"
@@ -177,6 +178,8 @@ func main() {
 		handlerOpts = append(handlerOpts, handler.WithFSRSScoring())
 	}
 	handlerOpts = append(handlerOpts, handler.WithTaskReportRegenerationCap(cfg.TaskReportRegenerationCap))
+	handlerOpts = append(handlerOpts, handler.WithModelPricing(modelPricingTable(cfg)))
+	handlerOpts = append(handlerOpts, handler.WithAdminEmails(cfg.AdminEmails))
 	if jobsClient != nil {
 		handlerOpts = append(handlerOpts, handler.WithSignalQueue(jobsClient))
 	}
@@ -280,6 +283,23 @@ func openRepo(ctx context.Context, cfg config.Config) (db.Repository, error) {
 	default:
 		return nil, fmt.Errorf("unknown storage mode %q", cfg.StorageMode)
 	}
+}
+
+// modelPricingTable builds the query-time cost table from configured pricing
+// (#24). Empty config yields an empty table — every cost then reports unknown.
+func modelPricingTable(cfg config.Config) *pricing.Table {
+	byModel := make(map[string]pricing.Price, len(cfg.ModelPricing))
+	for model, p := range cfg.ModelPricing {
+		byModel[model] = pricing.Price{InputPerMillion: p.InputPerMillion, OutputPerMillion: p.OutputPerMillion}
+	}
+	var def *pricing.Price
+	if cfg.DefaultModelPricing != nil {
+		def = &pricing.Price{
+			InputPerMillion:  cfg.DefaultModelPricing.InputPerMillion,
+			OutputPerMillion: cfg.DefaultModelPricing.OutputPerMillion,
+		}
+	}
+	return pricing.New(byModel, def)
 }
 
 // verifyTaskTypes fails startup if any language advertises a task type id that

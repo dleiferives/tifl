@@ -124,6 +124,14 @@ type Repository interface {
 	// outbound model call. Append-only; the call_id is the caller's idempotency key.
 	InsertLLMCall(ctx context.Context, c domain.LLMCall) error
 	ListSessionLLMCalls(ctx context.Context, userID, sessionID string) ([]domain.LLMCall, error)
+	// Observability (#24) — admin-scoped, cross-user reads over the same rows.
+	// ListLLMCalls is the filterable global call log (no payloads); GetLLMCall
+	// and ListSessionLLMCallsAll return full payloads for per-call/session
+	// detail; AggregateLLMTokens is the GROUP BY behind cost rollups.
+	ListLLMCalls(ctx context.Context, f domain.LLMCallFilter) ([]domain.LLMCall, error)
+	GetLLMCall(ctx context.Context, callID string) (domain.LLMCall, error)
+	ListSessionLLMCallsAll(ctx context.Context, sessionID string) ([]domain.LLMCall, error)
+	AggregateLLMTokens(ctx context.Context, f domain.LLMCallFilter, group domain.LLMTokenGroup) ([]domain.LLMTokenAggregate, error)
 	// UserLLMTokensSince sums recorded input+output tokens for a user since the
 	// given Unix time — the spend measure behind per-user budgets (#208). Uses
 	// the (user_id, called_at) index.

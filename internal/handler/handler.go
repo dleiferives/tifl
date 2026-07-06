@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/dleiferives/tifl/internal/acquire"
@@ -11,6 +12,7 @@ import (
 	"github.com/dleiferives/tifl/internal/lang"
 	"github.com/dleiferives/tifl/internal/llm"
 	"github.com/dleiferives/tifl/internal/predictor"
+	"github.com/dleiferives/tifl/internal/pricing"
 	"github.com/dleiferives/tifl/internal/reader"
 	skillassoc "github.com/dleiferives/tifl/internal/skills"
 	"github.com/dleiferives/tifl/internal/story"
@@ -43,6 +45,8 @@ type Handler struct {
 	auth                      *authn.Service
 	cookieSecure              bool
 	authLimiter               *authn.Limiter
+	pricing                   *pricing.Table      // model -> price for derived call cost (#24); never nil
+	adminEmails               map[string]struct{} // canonical emails granted the admin surface (#24)
 }
 
 type Option func(*Handler)
@@ -53,6 +57,7 @@ type apiRoute struct {
 	Handler     func(*Handler, http.ResponseWriter, *http.Request)
 	RequireUser bool
 	AuthOnly    bool
+	AdminOnly   bool // gated behind requireAdmin (implies RequireUser); 404 for non-admins (#24)
 }
 
 func (r apiRoute) pattern() string {
@@ -103,6 +108,12 @@ func currentAPIRoutes() []apiRoute {
 		{Method: http.MethodPost, Path: "/api/v1/auth/logout", Handler: (*Handler).logout, AuthOnly: true},
 		{Method: http.MethodPost, Path: "/api/v1/auth/logout-all", Handler: (*Handler).logoutAll, RequireUser: true, AuthOnly: true},
 		{Method: http.MethodGet, Path: "/api/v1/auth/me", Handler: (*Handler).me, RequireUser: true, AuthOnly: true},
+		{Method: http.MethodGet, Path: "/api/v1/admin/context", Handler: (*Handler).getAdminContext, AdminOnly: true},
+		{Method: http.MethodGet, Path: "/api/v1/admin/sessions/{id}", Handler: (*Handler).adminGetSession, AdminOnly: true},
+		{Method: http.MethodGet, Path: "/api/v1/admin/users/{id}", Handler: (*Handler).adminGetUser, AdminOnly: true},
+		{Method: http.MethodGet, Path: "/api/v1/admin/calls", Handler: (*Handler).adminListCalls, AdminOnly: true},
+		{Method: http.MethodGet, Path: "/api/v1/admin/calls/{id}", Handler: (*Handler).adminGetCall, AdminOnly: true},
+		{Method: http.MethodGet, Path: "/api/v1/admin/cost", Handler: (*Handler).adminCostRollup, AdminOnly: true},
 	}
 }
 
@@ -163,6 +174,39 @@ func WithAuth(service *authn.Service, secureCookie bool) Option {
 	}
 }
 
+// WithModelPricing installs the per-model price table used to derive call cost
+// at query time (#24). Without it costs are always reported unknown.
+func WithModelPricing(table *pricing.Table) Option {
+	return func(h *Handler) {
+		if table != nil {
+			h.pricing = table
+		}
+	}
+}
+
+// WithAdminEmails grants the read-only admin surface to the listed emails. Each
+// is canonicalized the same way login canonicalizes, so a user is admin iff
+// their stored email_canonical is in this set. In local/no-auth mode the check
+// is bypassed entirely (the single local user is always admin), so this only
+// matters under JWT auth.
+func WithAdminEmails(emails []string) Option {
+	return func(h *Handler) {
+		set := make(map[string]struct{}, len(emails))
+		for _, raw := range emails {
+			canonical, err := authn.CanonicalizeEmail(raw)
+			if err != nil {
+				// A malformed configured email should still be usable; fall back
+				// to a lowercased trim so an unparsable-but-intended entry works.
+				canonical = strings.ToLower(strings.TrimSpace(raw))
+			}
+			if canonical != "" {
+				set[canonical] = struct{}{}
+			}
+		}
+		h.adminEmails = set
+	}
+}
+
 // New builds a Handler over the given repository, generation broker (may be nil),
 // LLM client (may be nil — live definition/breakdown and LLM-graded task paths
 // then return 503), task-type registry, language registry (for the per-language
@@ -201,6 +245,8 @@ func New(repo Store, broker *story.Broker, client llm.Client, taskTypes *tasks.R
 		llmEnabled:                client != nil,
 		models:                    modelLister,
 		frontendDir:               frontendDir,
+		pricing:                   pricing.New(nil, nil),
+		adminEmails:               map[string]struct{}{},
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -218,6 +264,12 @@ func (h *Handler) Register(mux *http.ServeMux) {
 		route := route
 		fn := func(w http.ResponseWriter, r *http.Request) {
 			route.Handler(h, w, r)
+		}
+		if route.AdminOnly {
+			// requireUser resolves the caller (or the local user); requireAdmin
+			// then 404s non-admins so the surface is never advertised.
+			mux.Handle(route.pattern(), h.requireUser(h.requireAdmin(http.HandlerFunc(fn))))
+			continue
 		}
 		if route.RequireUser {
 			h.registerAPI(mux, route.pattern(), fn)
