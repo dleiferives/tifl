@@ -54,14 +54,14 @@ jobs:
           POSTGRES_PASSWORD: tifl
           POSTGRES_DB: tifl_test
         ports:
-          - 5432/tcp
+          - 5432:5432
         options: >-
           --health-cmd "pg_isready -U tifl -d tifl_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
     env:
-      TIFL_TEST_DATABASE_URL: postgres://tifl:tifl@localhost:${{ job.services.postgres.ports[5432] }}/tifl_test?sslmode=disable
+      TIFL_TEST_DATABASE_URL: postgres://tifl:tifl@localhost:5432/tifl_test?sslmode=disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
