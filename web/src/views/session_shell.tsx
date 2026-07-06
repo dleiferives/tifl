@@ -547,11 +547,14 @@ function ReadPanel(props: {
   }
   if (props.detail.content_type === "phrase_set") {
     return (
-      <PhrasesPanel
-        status={props.contentStatus === "error" ? "error" : props.contentStatus === "ready" ? "ready" : "loading"}
-        content={props.content}
-        sessionId={props.detail.session_id}
-      />
+      <>
+        <TargetPreviewHandoff detail={props.detail} />
+        <PhrasesPanel
+          status={props.contentStatus === "error" ? "error" : props.contentStatus === "ready" ? "ready" : "loading"}
+          content={props.content}
+          sessionId={props.detail.session_id}
+        />
+      </>
     );
   }
   return (
@@ -564,14 +567,17 @@ function ReadPanel(props: {
       </Match>
       <Match when={props.story && (props.content?.story?.story_id || props.detail.story_id)}>
         {(storyID) => (
-          <ReaderView
-            storyId={storyID()}
-            sessionId={props.detail.session_id}
-            story={props.story}
-            active={props.active}
-            onReadingStarted={props.onReadingStarted}
-            onSessionComplete={props.onCompleted}
-          />
+          <>
+            <TargetPreviewHandoff detail={props.detail} />
+            <ReaderView
+              storyId={storyID()}
+              sessionId={props.detail.session_id}
+              story={props.story}
+              active={props.active}
+              onReadingStarted={props.onReadingStarted}
+              onSessionComplete={props.onCompleted}
+            />
+          </>
         )}
       </Match>
       <Match when={!props.detail.story_id}>
@@ -581,6 +587,20 @@ function ReadPanel(props: {
         </div>
       </Match>
     </Switch>
+  );
+}
+
+function TargetPreviewHandoff(props: { detail: SessionDetail }) {
+  const attempted = createMemo(() => new Set((props.detail.target_preview?.attempts ?? []).map((attempt) => attempt.item_id)));
+  const displays = createMemo(() =>
+    (props.detail.target_preview?.items ?? [])
+      .filter((item) => attempted().has(item.item_id))
+      .map((item) => item.display),
+  );
+  return (
+    <Show when={displays().length > 0}>
+      <p class="target-preview-handoff">Look for: {displays().join(", ")}.</p>
+    </Show>
   );
 }
 

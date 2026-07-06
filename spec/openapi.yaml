@@ -491,6 +491,38 @@ paths:
           $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
+  /sessions/{id}/target-preview/guesses:
+    post:
+      summary: Record an ungraded target-preview guess
+      description: >
+        Stores one warm-up attempt for a selected target item in this session.
+        Attempts are ungraded learning-prep data: they do not update knowledge
+        state and may be replaced by re-submitting the same item. The item must
+        be one of the session's selected targets.
+      operationId: recordTargetPreviewGuess
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TargetPreviewGuessRequest"
+      responses:
+        "200":
+          description: Guess recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TargetPreviewAttempt"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /sessions/{id}/events:
     get:
       summary: Stream generation progress (SSE)
@@ -1435,6 +1467,56 @@ components:
         completed: { type: integer, description: number of tasks already graded }
         pending: { type: integer }
       required: [total, completed, pending]
+    TargetPreviewGuessKind:
+      type: string
+      enum: [text, no_idea]
+    TargetPreviewAttempt:
+      type: object
+      description: One ungraded warm-up attempt for a selected target item.
+      properties:
+        item_id: { type: string }
+        guess_kind:
+          $ref: "#/components/schemas/TargetPreviewGuessKind"
+        guess_text: { type: string }
+        correct:
+          type: boolean
+          description: Present only when correctness is computable without an LLM call.
+        created_at: { type: number, format: double }
+        updated_at: { type: number, format: double }
+      required: [item_id, guess_kind, created_at]
+    TargetPreviewItem:
+      type: object
+      description: A selected target item suitable for the generation warm-up.
+      properties:
+        item_id: { type: string }
+        language: { type: string }
+        item_type: { type: string }
+        key: { type: string }
+        display: { type: string }
+      required: [item_id, language, item_type, key, display]
+    TargetPreview:
+      type: object
+      description: Selected targets and any ungraded preview attempts for this session.
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TargetPreviewItem"
+        attempts:
+          type: array
+          items:
+            $ref: "#/components/schemas/TargetPreviewAttempt"
+      required: [items, attempts]
+    TargetPreviewGuessRequest:
+      type: object
+      properties:
+        item_id: { type: string }
+        guess_kind:
+          $ref: "#/components/schemas/TargetPreviewGuessKind"
+        guess_text:
+          type: string
+          description: Required when guess_kind is text; ignored for no_idea.
+      required: [item_id, guess_kind]
     SessionOverview:
       type: object
       description: One home/resume row for the current user.
@@ -1528,6 +1610,8 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/GenerationStageRecord"
+            target_preview:
+              $ref: "#/components/schemas/TargetPreview"
           required: [stage_summary, stages]
     LLMCall:
       type: object

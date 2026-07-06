@@ -211,6 +211,16 @@ export async function getSessionContent(
   );
 }
 
+export async function recordTargetPreviewGuess(
+  sessionID: string,
+  request: APIRequest<"recordTargetPreviewGuess">,
+): Promise<APIResponse<"recordTargetPreviewGuess", 200>> {
+  return apiFetch<APIResponse<"recordTargetPreviewGuess", 200>>(
+    `/sessions/${encodeURIComponent(sessionID)}/target-preview/guesses`,
+    jsonRequest("POST", request),
+  );
+}
+
 export async function retrySession(sessionID: string): Promise<APIResponse<"retrySession", 202>> {
   return apiFetch<APIResponse<"retrySession", 202>>(
     `/sessions/${encodeURIComponent(sessionID)}/retry`,

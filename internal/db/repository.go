@@ -33,6 +33,10 @@ var ErrRefreshTokenReuse = errors.New("db: refresh token reuse detected")
 // repository-required metadata.
 var ErrInvalidAuthSecurityEvent = errors.New("db: invalid auth security event")
 
+// ErrInvalidTargetPreviewGuess is returned when a warm-up attempt targets an
+// item outside the session's selected target list or has an invalid shape.
+var ErrInvalidTargetPreviewGuess = errors.New("db: invalid target preview guess")
+
 // errNestedTx is returned when Tx is called from inside a Tx callback.
 var errNestedTx = errors.New("db: nested Tx is not supported")
 
@@ -150,6 +154,8 @@ type Repository interface {
 	GetSession(ctx context.Context, sessionID string) (domain.Session, error)
 	ListSessions(ctx context.Context, userID string, opts domain.ListSessionsOptions) ([]domain.SessionOverview, error)
 	GetSessionDetail(ctx context.Context, userID, sessionID string) (domain.SessionDetail, error)
+	ListTargetPreviewGuesses(ctx context.Context, userID, sessionID string) ([]domain.TargetPreviewGuess, error)
+	UpsertTargetPreviewGuess(ctx context.Context, userID, sessionID string, guess domain.TargetPreviewGuess) (domain.TargetPreviewGuess, error)
 	UpdateSessionStatus(ctx context.Context, sessionID string, status domain.SessionStatus) error
 	SetSessionArchived(ctx context.Context, userID, sessionID string, archived bool) error
 	DeleteSession(ctx context.Context, userID, sessionID string) error

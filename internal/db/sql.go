@@ -1496,6 +1496,13 @@ func nullString(p *string) any {
 	return *p
 }
 
+func nullBool(p *bool) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
 // nullLevel maps the empty reader level ("unseen") to SQL NULL so an unrated item
 // stores as NULL rather than an empty string.
 func nullLevel(l domain.ReaderLevel) any {
@@ -1526,6 +1533,14 @@ func intPtrFromNull(n sql.NullInt64) *int {
 		return nil
 	}
 	v := int(n.Int64)
+	return &v
+}
+
+func boolPtr(n sql.NullBool) *bool {
+	if !n.Valid {
+		return nil
+	}
+	v := n.Bool
 	return &v
 }
 

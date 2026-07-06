@@ -170,6 +170,14 @@ func (p *Pipeline) Generate(ctx context.Context, sessionID string, emit emitter)
 		emit.emit(Event{Stage: "selection", Status: string(domain.StageFailed), ErrorCode: ErrCodeSelection})
 		return fail(ErrCodeSelection, err)
 	}
+	if err := p.deps.Repo.SetSessionSelection(ctx, sess.SessionID, derefString(sess.StoryID),
+		itemIDs(lc.Selected.Targets), itemIDs(lc.Selected.New)); err != nil {
+		p.markSession(ctx, sess.SessionID, domain.StatusFailed)
+		emit.emit(Event{Stage: "selection", Status: string(domain.StageFailed), ErrorCode: ErrCodePersist})
+		return fail(ErrCodePersist, err)
+	}
+	sess.SelectedTargets = itemIDs(lc.Selected.Targets)
+	sess.SelectedNew = itemIDs(lc.Selected.New)
 	emit.emit(Event{Stage: "selection", Status: string(domain.StageComplete)})
 
 	// Stages 2+3 — content generation: a story (with coverage retry) and its
@@ -1073,6 +1081,13 @@ func itemIDs(items []domain.KnowledgeItem) []string {
 		out[i] = it.ItemID
 	}
 	return out
+}
+
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // toPhraseItems converts the model's phrases into stored phrase items, assigning
