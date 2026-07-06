@@ -106,15 +106,22 @@ func (b StoryBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
 // builders. ContentSchema is the task type's declared JSON schema string injected
 // into the system prompt so the model knows exactly what to produce.
 type TaskBuilder struct {
-	Story          string
-	TaskTypeID     string
-	ContentSchema  string   // from TaskType.ContentSchema()
-	PriorQuestions []string // already-generated question texts to avoid repeating
-	Assets         LangAssets
+	Story           string
+	TaskTypeID      string
+	ContentSchema   string   // from TaskType.ContentSchema()
+	PriorQuestions  []string // already-generated question texts to avoid repeating
+	RejectedExample *TaskRejectedExample
+	Assets          LangAssets
 }
 
 func (b TaskBuilder) Kind() string  { return "task_" + b.TaskTypeID }
 func (TaskBuilder) Version() string { return "task/v2" }
+
+type TaskRejectedExample struct {
+	Reason  string
+	Note    string
+	Content map[string]any
+}
 
 func (b TaskBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
 	var sys strings.Builder
@@ -131,6 +138,16 @@ func (b TaskBuilder) Build(ctx domain.LearnerCtx) LLMRequest {
 		for _, q := range b.PriorQuestions {
 			fmt.Fprintf(&sys, "- %s\n", q)
 		}
+	}
+	if b.RejectedExample != nil {
+		sys.WriteString("A learner reported this generated task as defective. Do NOT produce this task again, and avoid the reported defect.\n")
+		if b.RejectedExample.Reason != "" {
+			fmt.Fprintf(&sys, "Report reason: %s\n", b.RejectedExample.Reason)
+		}
+		if b.RejectedExample.Note != "" {
+			fmt.Fprintf(&sys, "Learner note: %s\n", b.RejectedExample.Note)
+		}
+		fmt.Fprintf(&sys, "Rejected task content: %s\n", compactJSON(b.RejectedExample.Content))
 	}
 	sys.WriteString("Return JSON only — no prose, no markdown.")
 

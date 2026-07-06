@@ -623,20 +623,7 @@ func (p *Pipeline) runTaskType(ctx context.Context, sess domain.Session, lc doma
 	p.beginStage(ctx, sess.SessionID, stage)
 	emit.emit(Event{Stage: stage, Status: string(domain.StageInProgress)})
 
-	// Look up the LP's DAG task step; nil falls back to the generic builder.
-	var taskStep *llm.StepDef
-	if plugin, ok := p.deps.Langs.Get(sess.Language); ok {
-		if cp, ok := plugin.(lang.StoryContractProvider); ok {
-			dag := cp.StorySessionDAG()
-			if err := dag.Validate([]llm.OutputKind{llm.OutputStory, llm.OutputMCTask, llm.OutputFillTask}); err == nil {
-				if outputKind := tasks.OutputKindOf(tt); outputKind != "" {
-					if s, ok := dag.StepByOutput(outputKind); ok {
-						taskStep = &s
-					}
-				}
-			}
-		}
-	}
+	taskStep := p.taskStep(sess, tt)
 
 	count := spec.Count
 	if count < 1 {
@@ -645,7 +632,7 @@ func (p *Pipeline) runTaskType(ctx context.Context, sess domain.Session, lc doma
 	var priorQuestions []string
 	contents := make([]map[string]any, 0, count)
 	for i := 0; i < count; i++ {
-		content, err := p.generateValidTaskContent(ctx, tt, spec.TaskTypeID, sourceText, lc, priorQuestions, taskStep)
+		content, err := p.generateValidTaskContent(ctx, tt, spec.TaskTypeID, sourceText, lc, priorQuestions, taskStep, nil)
 		if err != nil {
 			se := fail(ErrCodeTaskGenerate, err)
 			p.failStage(ctx, sess.SessionID, stage, se)
@@ -662,7 +649,7 @@ func (p *Pipeline) runTaskType(ctx context.Context, sess domain.Session, lc doma
 				}
 			}
 			if dup {
-				content, err = p.generateValidTaskContent(ctx, tt, spec.TaskTypeID, sourceText, lc, priorQuestions, taskStep)
+				content, err = p.generateValidTaskContent(ctx, tt, spec.TaskTypeID, sourceText, lc, priorQuestions, taskStep, nil)
 				if err != nil {
 					se := fail(ErrCodeTaskGenerate, err)
 					p.failStage(ctx, sess.SessionID, stage, se)
@@ -693,10 +680,142 @@ func (p *Pipeline) runTaskType(ctx context.Context, sess domain.Session, lc doma
 	return nil
 }
 
-func (p *Pipeline) generateValidTaskContent(ctx context.Context, tt tasks.TaskType, taskTypeID, storyText string, lc domain.LearnerCtx, priorQuestions []string, step *llm.StepDef) (map[string]any, error) {
+// RegenerateTask replaces one reported, still-unanswered task in place. It never
+// deletes the original row before valid replacement content exists, so a failed
+// generation leaves the task set whole.
+func (p *Pipeline) RegenerateTask(ctx context.Context, reportID, taskID, userID string) error {
+	report, err := p.deps.Repo.GetContentReport(ctx, reportID)
+	if err != nil {
+		return err
+	}
+	if report.Kind != domain.ContentReportKindTask || report.TargetID != taskID || report.ReporterUserID != userID {
+		return fmt.Errorf("content report %q does not match task regeneration args", reportID)
+	}
+	task, err := p.deps.Repo.GetTask(ctx, userID, taskID)
+	if err != nil {
+		_ = p.deps.Repo.UpdateContentReportOutcome(ctx, reportID, domain.ContentReportOutcomeFailed, "Task could not be loaded for regeneration.", "")
+		return err
+	}
+	if task.GradedAt != nil || task.GradedBy != "" {
+		return p.deps.Repo.UpdateContentReportOutcome(ctx, reportID, domain.ContentReportOutcomeAnswered, "Report saved. Answered tasks are not regenerated.", "")
+	}
+	if err := p.deps.Repo.UpdateContentReportOutcome(ctx, reportID, domain.ContentReportOutcomeRegenerating, "Report saved. This task is regenerating.", taskID); err != nil {
+		return err
+	}
+
+	sess, err := p.deps.Repo.GetSession(ctx, task.SessionID)
+	if err != nil {
+		_ = p.deps.Repo.UpdateContentReportOutcome(ctx, reportID, domain.ContentReportOutcomeFailed, "Regeneration failed while loading the session.", "")
+		return err
+	}
+	ctx = p.callContext(ctx, sess)
+	sourceText, err := p.sourceTextForTaskRegeneration(ctx, sess)
+	if err != nil {
+		_ = p.deps.Repo.UpdateContentReportOutcome(ctx, reportID, domain.ContentReportOutcomeFailed, "Regeneration failed while loading the session content.", "")
+		return err
+	}
+	lc, err := p.rebuildTaskCtx(ctx, sess)
+	if err != nil {
+		_ = p.deps.Repo.UpdateContentReportOutcome(ctx, reportID, domain.ContentReportOutcomeFailed, "Regeneration failed while rebuilding learner context.", "")
+		return err
+	}
+	tt, ok := p.deps.Tasks.Get(task.TaskType)
+	if !ok {
+		err := fmt.Errorf("task type %q not registered", task.TaskType)
+		_ = p.deps.Repo.UpdateContentReportOutcome(ctx, reportID, domain.ContentReportOutcomeFailed, "Regeneration failed because the task type is not registered.", "")
+		return err
+	}
+	rejected := &llm.TaskRejectedExample{
+		Reason:  report.ReasonCategory,
+		Note:    report.Note,
+		Content: rejectedContentFromReport(report),
+	}
+	priorQuestions, err := p.priorTaskQuestions(ctx, task)
+	if err != nil {
+		_ = p.deps.Repo.UpdateContentReportOutcome(ctx, reportID, domain.ContentReportOutcomeFailed, "Regeneration failed while loading sibling tasks.", "")
+		return err
+	}
+	if qt := tasks.PrimaryTextOf(tt, task.Content); qt != "" {
+		priorQuestions = append(priorQuestions, qt)
+	}
+	content, err := p.generateValidTaskContent(ctx, tt, task.TaskType, sourceText, lc, priorQuestions, p.taskStep(sess, tt), rejected)
+	if err != nil {
+		_ = p.deps.Repo.UpdateContentReportOutcome(ctx, reportID, domain.ContentReportOutcomeFailed, "Regeneration failed. The original task is still usable.", "")
+		return err
+	}
+	if _, err := p.deps.Repo.ReplaceTaskContent(ctx, userID, taskID, content, tt.Targets(content)); err != nil {
+		_ = p.deps.Repo.UpdateContentReportOutcome(ctx, reportID, domain.ContentReportOutcomeFailed, "Regeneration finished but the task could not be replaced.", "")
+		return err
+	}
+	return p.deps.Repo.UpdateContentReportOutcome(ctx, reportID, domain.ContentReportOutcomeRegenerated, "Report saved. The task was replaced.", taskID)
+}
+
+func (p *Pipeline) sourceTextForTaskRegeneration(ctx context.Context, sess domain.Session) (string, error) {
+	if sess.ContentType() == domain.ContentPhraseSet {
+		ps, err := p.deps.Repo.GetPhraseSet(ctx, sess.SessionID)
+		if err != nil {
+			return "", err
+		}
+		return joinPhraseTexts(ps.Items, func(it domain.PhraseItem) string { return it.TargetText }), nil
+	}
+	if sess.StoryID == nil {
+		return "", fmt.Errorf("session %q has no story", sess.SessionID)
+	}
+	story, err := p.deps.Repo.GetStory(ctx, *sess.StoryID)
+	if err != nil {
+		return "", err
+	}
+	return story.Text, nil
+}
+
+func (p *Pipeline) priorTaskQuestions(ctx context.Context, rejected domain.Task) ([]string, error) {
+	siblings, err := p.deps.Repo.ListSessionTasks(ctx, rejected.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	tt, ok := p.deps.Tasks.Get(rejected.TaskType)
+	if !ok {
+		return nil, nil
+	}
+	var out []string
+	for _, sibling := range siblings {
+		if sibling.TaskID == rejected.TaskID || sibling.TaskType != rejected.TaskType {
+			continue
+		}
+		if qt := tasks.PrimaryTextOf(tt, sibling.Content); qt != "" {
+			out = append(out, qt)
+		}
+	}
+	return out, nil
+}
+
+func rejectedContentFromReport(report domain.ContentReport) map[string]any {
+	if content, ok := report.Snapshot["content"].(map[string]any); ok {
+		return content
+	}
+	return report.Snapshot
+}
+
+func (p *Pipeline) taskStep(sess domain.Session, tt tasks.TaskType) *llm.StepDef {
+	if plugin, ok := p.deps.Langs.Get(sess.Language); ok {
+		if cp, ok := plugin.(lang.StoryContractProvider); ok {
+			dag := cp.StorySessionDAG()
+			if err := dag.Validate([]llm.OutputKind{llm.OutputStory, llm.OutputMCTask, llm.OutputFillTask}); err == nil {
+				if outputKind := tasks.OutputKindOf(tt); outputKind != "" {
+					if s, ok := dag.StepByOutput(outputKind); ok {
+						return &s
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (p *Pipeline) generateValidTaskContent(ctx context.Context, tt tasks.TaskType, taskTypeID, storyText string, lc domain.LearnerCtx, priorQuestions []string, step *llm.StepDef, rejected *llm.TaskRejectedExample) (map[string]any, error) {
 	var lastErr error
 	for range 2 {
-		content, err := p.generateTaskContent(ctx, taskTypeID, storyText, lc, priorQuestions, step)
+		content, err := p.generateTaskContent(ctx, taskTypeID, storyText, lc, priorQuestions, step, rejected)
 		if err != nil {
 			return nil, err
 		}
@@ -714,12 +833,12 @@ func (p *Pipeline) generateValidTaskContent(ctx context.Context, tt tasks.TaskTy
 // prior step outputs, prior questions, and content schemas. It is the bridge
 // between the pipeline's LearnerCtx world and the DAG runner's StepInputs
 // contract.
-func (p *Pipeline) buildStepInputs(lc domain.LearnerCtx, priorSteps map[string]any, priorQuestions []string, contentSchemas map[string]string) llm.StepInputs {
+func (p *Pipeline) buildStepInputs(lc domain.LearnerCtx, priorSteps map[string]any, priorQuestions []string, contentSchemas map[string]string, rejected ...*llm.TaskRejectedExample) llm.StepInputs {
 	topic := ""
 	if lc.Guidance != nil {
 		topic = lc.Guidance.Topic
 	}
-	return llm.StepInputs{
+	inputs := llm.StepInputs{
 		Targets:        lc.Selected.Targets,
 		Background:     lc.Selected.Background,
 		New:            lc.Selected.New,
@@ -731,6 +850,10 @@ func (p *Pipeline) buildStepInputs(lc domain.LearnerCtx, priorSteps map[string]a
 		ContentSchemas: contentSchemas,
 		Steps:          priorSteps,
 	}
+	if len(rejected) > 0 {
+		inputs.RejectedTask = rejected[0]
+	}
+	return inputs
 }
 
 // generateStory runs the story builder through CompleteJSON (which stamps the
@@ -789,14 +912,14 @@ func (p *Pipeline) generatePhrases(ctx context.Context, lc domain.LearnerCtx) (l
 // priorQuestions are question texts already generated this session, passed to
 // the builder so the model avoids repeating them. When step is non-nil the
 // LP's DAG step is used instead of the generic TaskBuilder.
-func (p *Pipeline) generateTaskContent(ctx context.Context, taskTypeID, storyText string, lc domain.LearnerCtx, priorQuestions []string, step *llm.StepDef) (map[string]any, error) {
+func (p *Pipeline) generateTaskContent(ctx context.Context, taskTypeID, storyText string, lc domain.LearnerCtx, priorQuestions []string, step *llm.StepDef, rejected *llm.TaskRejectedExample) (map[string]any, error) {
 	if step != nil {
 		schemas := make(map[string]string)
 		if tt, ok := p.deps.Tasks.Get(taskTypeID); ok {
 			schemas[taskTypeID] = tt.ContentSchema()
 		}
 		priorSteps := map[string]any{"story": llm.StoryResult{Story: storyText}}
-		inputs := p.buildStepInputs(lc, priorSteps, priorQuestions, schemas)
+		inputs := p.buildStepInputs(lc, priorSteps, priorQuestions, schemas, rejected)
 		out, err := llm.RunDAGStep(ctx, *step, inputs, p.deps.Client)
 		if err != nil {
 			return nil, err
@@ -806,7 +929,7 @@ func (p *Pipeline) generateTaskContent(ctx context.Context, taskTypeID, storyTex
 		}
 		return nil, fmt.Errorf("task step %q returned unexpected type %T", taskTypeID, out)
 	}
-	b := llm.TaskBuilder{Story: storyText, TaskTypeID: taskTypeID, PriorQuestions: priorQuestions}
+	b := llm.TaskBuilder{Story: storyText, TaskTypeID: taskTypeID, PriorQuestions: priorQuestions, RejectedExample: rejected}
 	if tt, ok := p.deps.Tasks.Get(taskTypeID); ok {
 		b.ContentSchema = tt.ContentSchema()
 	}

@@ -81,6 +81,9 @@ type Client interface {
 	// EnqueueGeneration schedules a generation run, unique per session while
 	// one is pending/running (#204).
 	EnqueueGeneration(ctx context.Context, sessionID, userID string) error
+	// EnqueueTaskRegeneration schedules one reported task for in-place
+	// replacement. It runs on the generation queue because it spends LLM tokens.
+	EnqueueTaskRegeneration(ctx context.Context, reportID, taskID, userID string) error
 	// EnqueueReaderSignals schedules acquisition-signal derivation for a
 	// (user, story)'s pending reader events (#210).
 	EnqueueReaderSignals(ctx context.Context, userID, storyID string) error

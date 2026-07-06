@@ -21,6 +21,7 @@ type Store interface {
 	GetPhraseSet(ctx context.Context, sessionID string) (domain.PhraseSet, error)
 	GetSession(ctx context.Context, sessionID string) (domain.Session, error)
 	GetStory(ctx context.Context, storyID string) (domain.Story, error)
+	GetTask(ctx context.Context, userID, taskID string) (domain.Task, error)
 	GetUserProfile(ctx context.Context, userID string) (domain.UserProfile, error)
 	ListStages(ctx context.Context, sessionID string) ([]domain.GenerationStage, error)
 	ListSessionTasks(ctx context.Context, sessionID string) ([]domain.Task, error)

@@ -52,6 +52,7 @@ type StepInputs struct {
 	History        []domain.SessionSummary
 	ContentSchemas map[string]string
 	PriorQuestions []string
+	RejectedTask   *TaskRejectedExample
 	Steps          map[string]any // step outputs keyed by step ID
 	// OnboardingHint, when non-empty, is a language-specific simplicity
 	// constraint for early-session learners. DAG story steps must honour it

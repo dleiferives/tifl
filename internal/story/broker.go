@@ -141,6 +141,12 @@ func (b *Broker) RunGeneration(ctx context.Context, sessionID string) error {
 	return runErr
 }
 
+// RunTaskRegeneration executes one reported task replacement synchronously for
+// the job worker. The pipeline owns idempotency and report outcome updates.
+func (b *Broker) RunTaskRegeneration(ctx context.Context, reportID, taskID, userID string) error {
+	return b.pipeline.RegenerateTask(ctx, reportID, taskID, userID)
+}
+
 func (b *Broker) claim(sessionID string) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()

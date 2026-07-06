@@ -159,6 +159,7 @@ func main() {
 				return false, nil
 			}
 			workers.RegisterGeneration(broker, gate)
+			workers.RegisterTaskRegeneration(broker)
 		}
 		jc, err := openJobs(ctx, cfg, workers)
 		if err != nil {
@@ -175,6 +176,7 @@ func main() {
 	if cfg.PredictorMode == "fsrs" {
 		handlerOpts = append(handlerOpts, handler.WithFSRSScoring())
 	}
+	handlerOpts = append(handlerOpts, handler.WithTaskReportRegenerationCap(cfg.TaskReportRegenerationCap))
 	if jobsClient != nil {
 		handlerOpts = append(handlerOpts, handler.WithSignalQueue(jobsClient))
 	}
@@ -182,6 +184,7 @@ func main() {
 		handlerOpts = append(handlerOpts, handler.WithSkillVerifyQueue(jobsClient))
 		if broker != nil {
 			handlerOpts = append(handlerOpts, handler.WithGenerationQueue(jobsClient))
+			handlerOpts = append(handlerOpts, handler.WithTaskRegenerationQueue(jobsClient))
 			// Transactional enqueue (#215): the inserter shares the
 			// repository's pool so session row + job commit atomically.
 			if sqlRepo, ok := repo.(interface{ SQLDB() *sql.DB }); ok {

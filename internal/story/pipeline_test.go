@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/db/dbtest"
 	"github.com/dleiferives/tifl/internal/domain"
+	"github.com/dleiferives/tifl/internal/handler"
 	"github.com/dleiferives/tifl/internal/lang"
 	"github.com/dleiferives/tifl/internal/llm"
 	"github.com/dleiferives/tifl/internal/selector"
@@ -580,6 +583,106 @@ func TestPipeline_TaskTargetsPopulated(t *testing.T) {
 		if n != 2 {
 			t.Fatalf("task content missing injected target ids: %+v", task.Content)
 		}
+	}
+}
+
+func TestPipeline_RegenerateTaskReplacesInPlaceAndStaysGradeable(t *testing.T) {
+	ctx := context.Background()
+	repo := dbtest.NewRepo(t)
+	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "Testish", Enabled: true}))
+	if _, err := repo.EnsureLocalUser(ctx); err != nil {
+		t.Fatal(err)
+	}
+	target, err := repo.UpsertKnowledgeItem(ctx, domain.KnowledgeItem{Language: "xx", ItemType: "word", Key: "alpha"})
+	must(t, err)
+
+	sess, err := repo.CreateSession(ctx, domain.Session{
+		UserID: domain.LocalUserID, Language: "xx", Level: "beginner", SelectedTargets: []string{target},
+	})
+	must(t, err)
+	st, err := repo.CreateStory(ctx, domain.Story{
+		UserID: domain.LocalUserID, Language: "xx", Level: "beginner",
+		Text: "alpha beta gamma", SessionID: &sess.SessionID,
+	})
+	must(t, err)
+	must(t, repo.SetSessionSelection(ctx, sess.SessionID, st.StoryID, []string{target}, nil))
+	oldTask, err := repo.CreateTask(ctx, domain.Task{
+		SessionID: sess.SessionID, UserID: domain.LocalUserID, TaskType: tasks.TypeComprehensionMC, Language: "xx",
+		Content: map[string]any{
+			"question": "old question", "options": []any{"x", "y"},
+			"correct_index": float64(0), "target_item_ids": []any{target},
+		},
+	}, []string{target})
+	must(t, err)
+	sibling, err := repo.CreateTask(ctx, domain.Task{
+		SessionID: sess.SessionID, UserID: domain.LocalUserID, TaskType: tasks.TypeComprehensionMC, Language: "xx",
+		Content: map[string]any{
+			"question": "sibling question", "options": []any{"x", "y"},
+			"correct_index": float64(1), "target_item_ids": []any{target},
+		},
+	}, []string{target})
+	must(t, err)
+	report, err := repo.CreateContentReport(ctx, domain.ContentReport{
+		ReporterUserID: domain.LocalUserID,
+		Kind:           domain.ContentReportKindTask,
+		TargetID:       oldTask.TaskID,
+		ContextKind:    domain.ContentReportContextSession,
+		ContextID:      sess.SessionID,
+		ReasonCategory: "malformed",
+		Note:           "the options do not match",
+		Snapshot:       map[string]any{"content": oldTask.Content},
+		Outcome:        domain.ContentReportOutcomeQueued,
+	})
+	must(t, err)
+
+	client := &llm.FakeClient{Response: llm.LLMResponse{Text: `{"question":"new question","options":["x","y"],"correct_index":1}`}}
+	langs := lang.NewRegistry()
+	langs.Register(fakeLang{taskTypes: []string{tasks.TypeComprehensionMC}})
+	p := story.New(story.Deps{
+		Repo:     repo,
+		Selector: fixedSelector{},
+		Client:   client,
+		Langs:    langs,
+		Tasks:    tasks.DefaultRegistry(),
+	}, story.Config{})
+
+	must(t, p.RegenerateTask(ctx, report.ReportID, oldTask.TaskID, domain.LocalUserID))
+	replaced, err := repo.GetTask(ctx, domain.LocalUserID, oldTask.TaskID)
+	must(t, err)
+	if replaced.TaskID != oldTask.TaskID || replaced.Content["question"] != "new question" || replaced.GradedAt != nil || replaced.GradedBy != "" {
+		t.Fatalf("replacement mismatch: %+v", replaced)
+	}
+	unchanged, err := repo.GetTask(ctx, domain.LocalUserID, sibling.TaskID)
+	must(t, err)
+	if unchanged.Content["question"] != "sibling question" {
+		t.Fatalf("sibling was touched: %+v", unchanged.Content)
+	}
+	gotReport, err := repo.GetContentReport(ctx, report.ReportID)
+	must(t, err)
+	if gotReport.Outcome != domain.ContentReportOutcomeRegenerated || gotReport.ReplacementTaskID != oldTask.TaskID {
+		t.Fatalf("report outcome mismatch: %+v", gotReport)
+	}
+	if len(client.Calls) != 1 || !strings.Contains(client.Calls[0].Req.System, "Rejected task content") ||
+		!strings.Contains(client.Calls[0].Req.System, "malformed") {
+		t.Fatalf("replacement prompt missing negative example: %+v", client.Calls)
+	}
+
+	mux := http.NewServeMux()
+	handler.New(repo, nil, nil, tasks.DefaultRegistry(), langs, "").Register(mux)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	resp, err := http.Post(srv.URL+"/api/v1/tasks/"+oldTask.TaskID+"/submit", "application/json", strings.NewReader(`{"response":{"selected_index":1}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("submit regenerated task status = %d, want 200", resp.StatusCode)
+	}
+	uk, err := repo.GetUserKnowledgeItem(ctx, domain.LocalUserID, target)
+	must(t, err)
+	if uk.TaskTotal != 1 || uk.TaskCorrect != 1 {
+		t.Fatalf("regenerated task did not apply learning signal: %+v", uk)
 	}
 }
 

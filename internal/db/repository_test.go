@@ -45,6 +45,7 @@ func testRepository(t *testing.T, newRepo repoFactory) {
 	run("ReaderEvents", testReaderEvents)
 	run("DefinitionsBreakdowns", testDefinitionsBreakdowns)
 	run("Pipeline", testPipeline)
+	run("ContentReports", testContentReports)
 	run("SessionLifecycle", testSessionLifecycle)
 	run("SessionArchiveDelete", testSessionArchiveDelete)
 	run("ImportedStories", testImportedStories)
@@ -822,6 +823,80 @@ func testLLMCalls(t *testing.T, repo db.Repository) {
 		got[0].RawResponse == nil || *got[0].RawResponse != rawResponse ||
 		got[0].ParsedOutput == nil || *got[0].ParsedOutput != parsedOutput {
 		t.Fatalf("ListSessionLLMCalls did not round-trip payloads: %+v", got[0])
+	}
+}
+
+func testContentReports(t *testing.T, repo db.Repository) {
+	ctx := context.Background()
+	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "Testish", Enabled: true}))
+	user, err := repo.CreateUser(ctx, domain.User{Email: "reports@example.com"})
+	must(t, err)
+	item, err := repo.UpsertKnowledgeItem(ctx, domain.KnowledgeItem{Language: "xx", ItemType: "word", Key: "alpha"})
+	must(t, err)
+	sess, err := repo.CreateSession(ctx, domain.Session{
+		UserID: user.UserID, Language: "xx", Level: "beginner", SelectedTargets: []string{item},
+	})
+	must(t, err)
+	task, err := repo.CreateTask(ctx, domain.Task{
+		SessionID: sess.SessionID, UserID: user.UserID, TaskType: "comprehension_mc", Language: "xx",
+		Content: map[string]any{"question": "old", "options": []any{"a", "b"}, "correct_index": float64(0)},
+	}, []string{item})
+	must(t, err)
+
+	report, err := repo.CreateContentReport(ctx, domain.ContentReport{
+		ReporterUserID: user.UserID,
+		Kind:           domain.ContentReportKindTask,
+		TargetID:       task.TaskID,
+		ContextKind:    domain.ContentReportContextSession,
+		ContextID:      sess.SessionID,
+		ReasonCategory: "malformed",
+		Note:           "bad stem",
+		Snapshot:       map[string]any{"content": task.Content},
+		Outcome:        domain.ContentReportOutcomeQueued,
+		CreatedAt:      10,
+	})
+	must(t, err)
+	got, err := repo.GetContentReport(ctx, report.ReportID)
+	must(t, err)
+	if got.ReporterUserID != user.UserID || got.Kind != domain.ContentReportKindTask ||
+		got.TargetID != task.TaskID || got.Note != "bad stem" || got.Outcome != domain.ContentReportOutcomeQueued {
+		t.Fatalf("content report round-trip mismatch: %+v", got)
+	}
+	if snap, ok := got.Snapshot["content"].(map[string]any); !ok || snap["question"] != "old" {
+		t.Fatalf("snapshot did not round-trip: %+v", got.Snapshot)
+	}
+	count, err := repo.CountContentReportsByOutcome(ctx, domain.ContentReportContextSession, sess.SessionID,
+		domain.ContentReportKindTask, []string{domain.ContentReportOutcomeQueued})
+	must(t, err)
+	if count != 1 {
+		t.Fatalf("queued count = %d, want 1", count)
+	}
+
+	replaced, err := repo.ReplaceTaskContent(ctx, user.UserID, task.TaskID,
+		map[string]any{"question": "new", "options": []any{"c", "d"}, "correct_index": float64(1)}, []string{item})
+	must(t, err)
+	if replaced.TaskID != task.TaskID || replaced.Content["question"] != "new" || replaced.GradedBy != "" || replaced.GradedAt != nil {
+		t.Fatalf("task replacement mismatch: %+v", replaced)
+	}
+	got, err = repo.GetContentReport(ctx, report.ReportID)
+	must(t, err)
+	if snap, ok := got.Snapshot["content"].(map[string]any); !ok || snap["question"] != "old" {
+		t.Fatalf("report snapshot mutated after task replacement: %+v", got.Snapshot)
+	}
+	must(t, repo.UpdateContentReportOutcome(ctx, report.ReportID, domain.ContentReportOutcomeRegenerated, "done", task.TaskID))
+	latest, err := repo.LatestContentReportForTarget(ctx, domain.ContentReportKindTask, task.TaskID)
+	must(t, err)
+	if latest.ReportID != report.ReportID || latest.Outcome != domain.ContentReportOutcomeRegenerated ||
+		latest.ReplacementTaskID != task.TaskID || latest.UpdatedAt == nil {
+		t.Fatalf("latest/update mismatch: %+v", latest)
+	}
+
+	must(t, repo.RecordTaskGrade(ctx, user.UserID, task.TaskID, domain.TaskGrade{
+		Response: map[string]any{"selected_index": float64(1)}, InputMethod: "typed",
+		Grade: map[string]any{"correct": true, "score": float64(1)}, GradedBy: "rule", GradedAt: 20,
+	}))
+	if _, err := repo.ReplaceTaskContent(ctx, user.UserID, task.TaskID, map[string]any{"question": "after-grade"}, nil); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("ReplaceTaskContent answered guard: want ErrNotFound, got %v", err)
 	}
 }
 

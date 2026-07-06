@@ -2,6 +2,7 @@ package el
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -213,6 +214,7 @@ func mcTaskStep() llm.StepDef {
 					fmt.Fprintf(&sys, "- %s\n", q)
 				}
 			}
+			writeRejectedTaskHint(&sys, in.RejectedTask)
 
 			storyText := ""
 			if sr, ok := in.Steps["story"].(llm.StoryResult); ok {
@@ -263,6 +265,13 @@ func fillTaskStep() llm.StepDef {
 			if schema, ok := in.ContentSchemas["fill_blank"]; ok && schema != "" {
 				fmt.Fprintf(&sys, "\nΑπάντησε ακριβώς με αυτό το JSON: %s\nΜόνο JSON, χωρίς κείμενο.", schema)
 			}
+			if len(in.PriorQuestions) > 0 {
+				sys.WriteString("\nΜΗΝ επαναλάβεις καμία από αυτές τις ασκήσεις που έχουν ήδη δημιουργηθεί:\n")
+				for _, q := range in.PriorQuestions {
+					fmt.Fprintf(&sys, "- %s\n", q)
+				}
+			}
+			writeRejectedTaskHint(&sys, in.RejectedTask)
 
 			storyText := ""
 			if sr, ok := in.Steps["story"].(llm.StoryResult); ok {
@@ -286,4 +295,26 @@ func fillTaskStep() llm.StepDef {
 		},
 		Parse: llm.ParseMapResult,
 	}
+}
+
+func writeRejectedTaskHint(sys *strings.Builder, rejected *llm.TaskRejectedExample) {
+	if rejected == nil {
+		return
+	}
+	sys.WriteString("\nΟ μαθητής ανέφερε την παρακάτω άσκηση ως προβληματική. ΜΗΝ δημιουργήσεις ξανά την ίδια άσκηση και απόφυγε το ίδιο ελάττωμα.\n")
+	if rejected.Reason != "" {
+		fmt.Fprintf(sys, "Κατηγορία αναφοράς: %s\n", rejected.Reason)
+	}
+	if rejected.Note != "" {
+		fmt.Fprintf(sys, "Σημείωση μαθητή: %s\n", rejected.Note)
+	}
+	fmt.Fprintf(sys, "Προβληματικό περιεχόμενο: %s\n", compactPromptJSON(rejected.Content))
+}
+
+func compactPromptJSON(v any) string {
+	out, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprintf("%v", v)
+	}
+	return string(out)
 }
