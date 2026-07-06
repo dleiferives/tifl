@@ -97,9 +97,11 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req ChatRequest) (Chat
 
 	if resp.StatusCode >= 400 {
 		return ChatResponse{}, &Error{
-			Status:    resp.StatusCode,
-			Transient: isTransientStatus(resp.StatusCode),
-			Err:       fmt.Errorf("anthropic upstream %d: %s", resp.StatusCode, strings.TrimSpace(string(raw))),
+			Status:     resp.StatusCode,
+			Transient:  isTransientStatus(resp.StatusCode),
+			RetryAfter: retryAfter(resp),
+			RequestID:  headerAny(resp.Header, "request-id", "x-request-id"),
+			Err:        fmt.Errorf("anthropic upstream %d: %s", resp.StatusCode, strings.TrimSpace(string(raw))),
 		}
 	}
 

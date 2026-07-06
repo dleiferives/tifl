@@ -99,6 +99,26 @@ func TestOpenAIProvider_ListModelsPassthrough(t *testing.T) {
 	}
 }
 
+func TestOpenAIProvider_ErrorMetadata(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "2")
+		w.Header().Set("X-Request-ID", "req-openai")
+		http.Error(w, "rate limited", http.StatusTooManyRequests)
+	}))
+	defer up.Close()
+
+	p := gateway.NewOpenAIProvider("openrouter", up.URL, "sk-or", nil)
+	_, gerr := p.Complete(context.Background(), gateway.ChatRequest{
+		Model: "m", Messages: []gateway.Message{{Role: "user", Content: "hi"}},
+	})
+	if gerr == nil {
+		t.Fatal("want upstream error")
+	}
+	if gerr.Status != http.StatusTooManyRequests || !gerr.Transient || gerr.RetryAfter != 2*time.Second || gerr.RequestID != "req-openai" {
+		t.Fatalf("metadata not captured: %+v", gerr)
+	}
+}
+
 func TestDefaultModelApplied(t *testing.T) {
 	var gotModel string
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -119,6 +139,73 @@ func TestDefaultModelApplied(t *testing.T) {
 	if gotModel != "fallback-model" {
 		t.Fatalf("default model not applied upstream: %q", gotModel)
 	}
+}
+
+func TestBalancedProvider_RateLimitedKeyFallsThroughToNextKey(t *testing.T) {
+	var keyA, keyB int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Header.Get("Authorization") {
+		case "Bearer key-a":
+			atomic.AddInt32(&keyA, 1)
+			w.Header().Set("Retry-After", "60")
+			http.Error(w, "rate limited", http.StatusTooManyRequests)
+		case "Bearer key-b":
+			atomic.AddInt32(&keyB, 1)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"model":   "m",
+				"choices": []map[string]any{{"message": map[string]string{"content": "ok"}}},
+			})
+		default:
+			t.Errorf("unexpected auth %q", r.Header.Get("Authorization"))
+			http.Error(w, "bad auth", http.StatusUnauthorized)
+		}
+	}))
+	defer up.Close()
+
+	p, err := gateway.NewBalancedProvider(gateway.BalanceRoundRobin, []gateway.EndpointConfig{
+		{Name: "a", KeyLabel: "key0", Client: gateway.NewOpenAIProvider("openrouter", up.URL, "key-a", nil)},
+		{Name: "b", KeyLabel: "key1", Client: gateway.NewOpenAIProvider("openrouter", up.URL, "key-b", nil)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := gateway.NewHandler(p, gateway.Config{MaxRetries: 1, BaseDelay: time.Millisecond})
+	resp, status, _ := postChat(t, h, `{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
+	if status != http.StatusOK || resp.Choices[0].Message.Content != "ok" {
+		t.Fatalf("want retry on second key, status=%d resp=%+v", status, resp)
+	}
+	if atomic.LoadInt32(&keyA) != 1 || atomic.LoadInt32(&keyB) != 1 {
+		t.Fatalf("unexpected key hits: key-a=%d key-b=%d", keyA, keyB)
+	}
+}
+
+func TestBalancedProvider_LeastInFlightPrefersIdleEndpoint(t *testing.T) {
+	slow := &blockingProvider{name: "slow", started: make(chan struct{}), release: make(chan struct{})}
+	fast := &blockingProvider{name: "fast"}
+	p, err := gateway.NewBalancedProvider(gateway.BalanceLeastInFlight, []gateway.EndpointConfig{
+		{Name: "slow", KeyLabel: "keyless", Client: slow},
+		{Name: "fast", KeyLabel: "keyless", Client: fast},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		_, _ = p.Complete(context.Background(), gateway.ChatRequest{Model: "m", Messages: []gateway.Message{{Role: "user", Content: "first"}}})
+		close(done)
+	}()
+	<-slow.started
+
+	resp, gerr := p.Complete(context.Background(), gateway.ChatRequest{Model: "m", Messages: []gateway.Message{{Role: "user", Content: "second"}}})
+	if gerr != nil {
+		t.Fatalf("second complete: %v", gerr)
+	}
+	if resp.Model != "fast" {
+		t.Fatalf("least-in-flight picked %q, want fast", resp.Model)
+	}
+	close(slow.release)
+	<-done
 }
 
 func TestRetryThenSuccess(t *testing.T) {
@@ -237,4 +324,28 @@ func TestNewProvider(t *testing.T) {
 	if _, err := gateway.NewProvider(gateway.ProviderConfig{Kind: "bogus"}); err == nil {
 		t.Fatal("want error for unknown provider")
 	}
+}
+
+type blockingProvider struct {
+	name    string
+	started chan struct{}
+	release chan struct{}
+}
+
+func (p *blockingProvider) Name() string { return p.name }
+
+func (p *blockingProvider) Complete(context.Context, gateway.ChatRequest) (gateway.ChatResponse, *gateway.Error) {
+	if p.started != nil {
+		close(p.started)
+		p.started = nil
+	}
+	if p.release != nil {
+		<-p.release
+	}
+	return gateway.ChatResponse{
+		Model: p.name,
+		Choices: []gateway.Choice{{
+			Message: gateway.Message{Role: "assistant", Content: "ok"},
+		}},
+	}, nil
 }

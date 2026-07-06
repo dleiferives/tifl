@@ -64,9 +64,11 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req ChatRequest) (ChatRes
 
 	if resp.StatusCode >= 400 {
 		return ChatResponse{}, &Error{
-			Status:    resp.StatusCode,
-			Transient: isTransientStatus(resp.StatusCode),
-			Err:       fmt.Errorf("%s upstream %d: %s", p.name, resp.StatusCode, strings.TrimSpace(string(raw))),
+			Status:     resp.StatusCode,
+			Transient:  isTransientStatus(resp.StatusCode),
+			RetryAfter: retryAfter(resp),
+			RequestID:  headerAny(resp.Header, "x-request-id", "request-id"),
+			Err:        fmt.Errorf("%s upstream %d: %s", p.name, resp.StatusCode, strings.TrimSpace(string(raw))),
 		}
 	}
 
@@ -97,9 +99,11 @@ func (p *OpenAIProvider) ListModels(ctx context.Context) (json.RawMessage, *Erro
 
 	if resp.StatusCode >= 400 {
 		return nil, &Error{
-			Status:    resp.StatusCode,
-			Transient: isTransientStatus(resp.StatusCode),
-			Err:       fmt.Errorf("%s upstream %d: %s", p.name, resp.StatusCode, strings.TrimSpace(string(raw))),
+			Status:     resp.StatusCode,
+			Transient:  isTransientStatus(resp.StatusCode),
+			RetryAfter: retryAfter(resp),
+			RequestID:  headerAny(resp.Header, "x-request-id", "request-id"),
+			Err:        fmt.Errorf("%s upstream %d: %s", p.name, resp.StatusCode, strings.TrimSpace(string(raw))),
 		}
 	}
 	return json.RawMessage(raw), nil

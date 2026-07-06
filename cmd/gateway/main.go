@@ -11,9 +11,11 @@ package main
 import (
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/dleiferives/tifl/internal/config"
@@ -33,17 +35,16 @@ func main() {
 		cfg.Addr = *addrFlag
 	}
 
-	provider, err := gateway.NewProvider(gateway.ProviderConfig{
-		Kind:        cfg.Provider,
-		UpstreamURL: cfg.UpstreamURL,
-		APIKey:      cfg.APIKey,
-		Agent:       cfg.Agent,
-	})
+	provider, defaultModel, err := buildProvider(cfg)
 	if err != nil {
 		log.Fatalf("gateway: %v", err)
 	}
 
-	h := gateway.NewHandler(provider, gateway.Config{DefaultModel: cfg.Model})
+	gatewayCfg := gateway.Config{DefaultModel: defaultModel, MaxRetries: cfg.MaxRetries}
+	if cfg.BaseDelayMS > 0 {
+		gatewayCfg.BaseDelay = time.Duration(cfg.BaseDelayMS) * time.Millisecond
+	}
+	h := gateway.NewHandler(provider, gatewayCfg)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -66,6 +67,79 @@ func main() {
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
+}
+
+func buildProvider(cfg config.GatewayConfig) (gateway.Provider, string, error) {
+	entries := cfg.Gateways
+	if len(entries) == 0 {
+		entries = []config.GatewayEntry{{
+			Name:        strings.TrimSpace(cfg.Provider),
+			Provider:    cfg.Provider,
+			UpstreamURL: cfg.UpstreamURL,
+			APIKey:      cfg.APIKey,
+			APIKeys:     cfg.APIKeys,
+			Model:       cfg.Model,
+			Agent:       cfg.Agent,
+		}}
+	}
+
+	var endpoints []gateway.EndpointConfig
+	for _, entry := range entries {
+		keys := keysFor(entry.APIKey, entry.APIKeys)
+		for i, key := range keys {
+			p, err := gateway.NewProvider(gateway.ProviderConfig{
+				Kind:        entry.Provider,
+				UpstreamURL: entry.UpstreamURL,
+				APIKey:      key,
+				Agent:       entry.Agent,
+			})
+			if err != nil {
+				return nil, "", err
+			}
+			name := entry.Name
+			if name == "" {
+				name = p.Name()
+			}
+			endpoints = append(endpoints, gateway.EndpointConfig{
+				Name:         name,
+				KeyLabel:     keyLabel(i, key),
+				DefaultModel: entry.Model,
+				Models:       entry.Models,
+				Client:       p,
+			})
+		}
+	}
+	if len(endpoints) == 0 {
+		return nil, "", fmt.Errorf("no gateway endpoints configured")
+	}
+	if len(endpoints) == 1 {
+		return endpoints[0].Client, endpoints[0].DefaultModel, nil
+	}
+	p, err := gateway.NewBalancedProvider(cfg.Balance, endpoints)
+	return p, "", err
+}
+
+func keysFor(apiKey string, apiKeys []string) []string {
+	var keys []string
+	if strings.TrimSpace(apiKey) != "" {
+		keys = append(keys, strings.TrimSpace(apiKey))
+	}
+	for _, key := range apiKeys {
+		if strings.TrimSpace(key) != "" {
+			keys = append(keys, strings.TrimSpace(key))
+		}
+	}
+	if len(keys) == 0 {
+		keys = append(keys, "")
+	}
+	return keys
+}
+
+func keyLabel(i int, key string) string {
+	if key == "" {
+		return "keyless"
+	}
+	return fmt.Sprintf("key%d", i)
 }
 
 func httpURL(addr net.Addr) string {

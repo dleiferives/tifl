@@ -210,9 +210,11 @@ func (p *OpenCodeProvider) post(ctx context.Context, path string, body []byte, o
 
 	if resp.StatusCode >= 400 {
 		return &Error{
-			Status:    resp.StatusCode,
-			Transient: isTransientStatus(resp.StatusCode),
-			Err:       fmt.Errorf("opencode %s: upstream %d: %s", path, resp.StatusCode, strings.TrimSpace(string(raw))),
+			Status:     resp.StatusCode,
+			Transient:  isTransientStatus(resp.StatusCode),
+			RetryAfter: retryAfter(resp),
+			RequestID:  headerAny(resp.Header, "x-request-id", "request-id"),
+			Err:        fmt.Errorf("opencode %s: upstream %d: %s", path, resp.StatusCode, strings.TrimSpace(string(raw))),
 		}
 	}
 	if err := json.Unmarshal(raw, out); err != nil {

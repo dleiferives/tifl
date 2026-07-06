@@ -14,6 +14,8 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -65,9 +67,11 @@ type Usage struct {
 // Error is a provider failure carrying the HTTP status the gateway should return
 // and whether the gateway should retry before giving up.
 type Error struct {
-	Status    int  // HTTP status to surface to the caller
-	Transient bool // retryable (rate limit / upstream 5xx / network)
-	Err       error
+	Status     int  // HTTP status to surface to the caller
+	Transient  bool // retryable (rate limit / upstream 5xx / network)
+	Err        error
+	RetryAfter time.Duration // upstream Retry-After, when present
+	RequestID  string        // upstream request id, when present
 }
 
 func (e *Error) Error() string { return e.Err.Error() }
@@ -134,6 +138,12 @@ func (h *Handler) models(w http.ResponseWriter, r *http.Request) {
 		if status == 0 {
 			status = http.StatusBadGateway
 		}
+		if gerr.RetryAfter > 0 {
+			w.Header().Set("Retry-After", retryAfterSeconds(gerr.RetryAfter))
+		}
+		if gerr.RequestID != "" {
+			w.Header().Set("X-Upstream-Request-ID", gerr.RequestID)
+		}
 		writeError(w, status, "upstream_error", gerr.Err.Error())
 		return
 	}
@@ -164,6 +174,12 @@ func (h *Handler) completions(w http.ResponseWriter, r *http.Request) {
 		if status == 0 {
 			status = http.StatusBadGateway
 		}
+		if gerr.RetryAfter > 0 {
+			w.Header().Set("Retry-After", retryAfterSeconds(gerr.RetryAfter))
+		}
+		if gerr.RequestID != "" {
+			w.Header().Set("X-Upstream-Request-ID", gerr.RequestID)
+		}
 		log.Printf("gateway: provider=%s model=%s status=error http=%d latency=%s err=%v",
 			h.provider.Name(), req.Model, status, latency.Round(time.Millisecond), gerr.Err)
 		writeError(w, status, "upstream_error", gerr.Err.Error())
@@ -185,7 +201,11 @@ func (h *Handler) complete(ctx context.Context, req ChatRequest) (ChatResponse, 
 	var last *Error
 	for attempt := 0; attempt <= h.cfg.MaxRetries; attempt++ {
 		if attempt > 0 {
-			if err := sleep(ctx, backoff(h.cfg.BaseDelay, attempt)); err != nil {
+			delay := backoff(h.cfg.BaseDelay, attempt)
+			if last != nil && last.RetryAfter > 0 {
+				delay = last.RetryAfter
+			}
+			if err := sleep(ctx, delay); err != nil {
 				return ChatResponse{}, &Error{Status: http.StatusGatewayTimeout, Err: err}
 			}
 		}
@@ -237,8 +257,55 @@ func sleep(ctx context.Context, d time.Duration) error {
 	}
 }
 
+func retryAfter(resp *http.Response) time.Duration {
+	if resp == nil {
+		return 0
+	}
+	return parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+}
+
+func parseRetryAfter(raw string, now time.Time) time.Duration {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(raw); err == nil {
+		if seconds <= 0 {
+			return 0
+		}
+		return time.Duration(seconds) * time.Second
+	}
+	t, err := http.ParseTime(raw)
+	if err != nil {
+		return 0
+	}
+	if d := t.Sub(now); d > 0 {
+		return d
+	}
+	return 0
+}
+
+func retryAfterSeconds(d time.Duration) string {
+	seconds := int((d + time.Second - 1) / time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+	return strconv.Itoa(seconds)
+}
+
+func headerAny(h http.Header, keys ...string) string {
+	for _, key := range keys {
+		if v := h.Get(key); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // isTransientStatus reports whether an upstream HTTP status is worth retrying.
-func isTransientStatus(code int) bool { return code == http.StatusTooManyRequests || code >= 500 }
+func isTransientStatus(code int) bool {
+	return code == http.StatusRequestTimeout || code == http.StatusTooManyRequests || code >= 500
+}
 
 // statusForErr classifies a transport error for retry/timeout reporting.
 func statusForErr(err error) (status int, transient bool) {
