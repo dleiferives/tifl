@@ -414,6 +414,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/stories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the current user's imported (standalone) stories
+         * @description Newest-first page of the current user's standalone imported stories — rows in the stories table with no generation session. Generated (session-backed) stories are listed via GET /sessions, not here. The title is a clean display label (the "Imported: " topic prefix is stripped; untitled imports fall back to the first words of the text). By default all languages are included; pass language to scope the page to one language.
+         */
+        get: operations["listImportedStories"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/stories/import": {
         parameters: {
             query?: never;
@@ -448,7 +468,11 @@ export interface paths {
         get: operations["getStory"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete a story (imported or generated)
+         * @description Deletes the owner's story. One endpoint, two meanings: a standalone imported story deletes the story row and its tokens/glossary/audio and the caller's reader events for it; a generated (session-backed) story deletes the whole session via the existing session-delete cascade (story, tasks, phrases, generation stages). Ownership is enforced — another user's story returns 404.
+         */
+        delete: operations["deleteStory"];
         options?: never;
         head?: never;
         patch?: never;
@@ -740,6 +764,22 @@ export interface components {
             story_id: string;
             language: string;
             title?: string;
+        };
+        /** @description One row in the imported-story (standalone reader content) list. */
+        ImportedStory: {
+            story_id: string;
+            /** @description clean display title — the "Imported: " topic prefix is stripped and untitled imports fall back to the first words of the text. */
+            title: string;
+            language: string;
+            level: string;
+            /** Format: double */
+            created_at: number;
+        };
+        ImportedStoryList: {
+            stories: components["schemas"]["ImportedStory"][];
+            limit: number;
+            offset: number;
+            has_more: boolean;
         };
         Profile: {
             user_id: string;
@@ -1881,6 +1921,34 @@ export interface operations {
             503: components["responses"]["ServiceUnavailable"];
         };
     };
+    listImportedStories: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+                /** @description registered language code to scope the page to; omitted lists all languages */
+                language?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Imported story page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportedStoryList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     importStory: {
         parameters: {
             query?: never;
@@ -1928,6 +1996,29 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["StoryLoad"];
                 };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteStory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];

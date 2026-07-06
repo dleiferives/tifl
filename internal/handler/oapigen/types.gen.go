@@ -990,6 +990,25 @@ type ImportStoryUploadRequest struct {
 	Title string `json:"title,omitempty"`
 }
 
+// ImportedStory One row in the imported-story (standalone reader content) list.
+type ImportedStory struct {
+	CreatedAt float64 `json:"created_at"`
+	Language  string  `json:"language"`
+	Level     string  `json:"level"`
+	StoryId   string  `json:"story_id"`
+
+	// Title clean display title — the "Imported: " topic prefix is stripped and untitled imports fall back to the first words of the text.
+	Title string `json:"title"`
+}
+
+// ImportedStoryList defines model for ImportedStoryList.
+type ImportedStoryList struct {
+	HasMore bool            `json:"has_more"`
+	Limit   int             `json:"limit"`
+	Offset  int             `json:"offset"`
+	Stories []ImportedStory `json:"stories"`
+}
+
 // LLMCall One llm_calls audit row scoped to a session and current user.
 type LLMCall struct {
 	CallId      string  `json:"call_id"`
@@ -1557,6 +1576,15 @@ type ListSessionsParams struct {
 // ListSkillsParams defines parameters for ListSkills.
 type ListSkillsParams struct {
 	// Language Optional enabled language code; defaults to profile.active_language.
+	Language string `form:"language,omitempty" json:"language,omitempty"`
+}
+
+// ListImportedStoriesParams defines parameters for ListImportedStories.
+type ListImportedStoriesParams struct {
+	Limit  int `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset int `form:"offset,omitempty" json:"offset,omitempty"`
+
+	// Language registered language code to scope the page to; omitted lists all languages
 	Language string `form:"language,omitempty" json:"language,omitempty"`
 }
 
