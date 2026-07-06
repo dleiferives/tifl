@@ -14,6 +14,10 @@ export type Route =
   | { name: "phrases"; path: string; sessionId: string }
   | { name: "tasks"; path: string; sessionId: string }
   | { name: "skills"; path: "/skills" }
+  | { name: "admin"; path: "/admin" }
+  | { name: "admin-cost"; path: "/admin/cost" }
+  | { name: "admin-session"; path: string; sessionId: string }
+  | { name: "admin-user"; path: string; userId: string }
   | { name: "not-found"; path: string };
 
 export type SessionStep = "read" | "tasks" | "review";
@@ -54,6 +58,20 @@ export function parseHash(hash: string): Route {
   }
   if (segments.length === 1 && segments[0] === "skills") {
     return { name: "skills", path: "/skills" };
+  }
+  if (segments[0] === "admin") {
+    if (segments.length === 1) {
+      return { name: "admin", path: "/admin" };
+    }
+    if (segments.length === 2 && segments[1] === "cost") {
+      return { name: "admin-cost", path: "/admin/cost" };
+    }
+    if (segments.length === 3 && segments[1] === "session") {
+      return { name: "admin-session", path, sessionId: segments[2] };
+    }
+    if (segments.length === 3 && segments[1] === "user") {
+      return { name: "admin-user", path, userId: segments[2] };
+    }
   }
   if (segments.length >= 2 && segments.length <= 3 && segments[0] === "session") {
     const step = segments[2] ?? "read";

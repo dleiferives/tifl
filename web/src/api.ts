@@ -474,6 +474,33 @@ export async function reportTask(taskID: string, request: APIRequest<"reportTask
   return decodeResponse<APISchema<"TaskReportResponse">>(response);
 }
 
+// Admin/observability surface (#24). Every /admin route returns 404 for
+// non-admins, so getAdminContext doubles as the admin-flag probe: a 200 means
+// admin, an APIError with status 404 means not.
+export async function getAdminContext(): Promise<APIResponse<"getAdminContext", 200>> {
+  return apiFetch<APIResponse<"getAdminContext", 200>>("/admin/context");
+}
+
+export async function adminListCalls(query: APIQuery<"adminListCalls"> = {}): Promise<APIResponse<"adminListCalls", 200>> {
+  return apiFetch<APIResponse<"adminListCalls", 200>>(`/admin/calls${queryString(query ?? {})}`);
+}
+
+export async function adminGetCall(callID: string): Promise<APIResponse<"adminGetCall", 200>> {
+  return apiFetch<APIResponse<"adminGetCall", 200>>(`/admin/calls/${encodeURIComponent(callID)}`);
+}
+
+export async function adminGetSession(sessionID: string): Promise<APIResponse<"adminGetSession", 200>> {
+  return apiFetch<APIResponse<"adminGetSession", 200>>(`/admin/sessions/${encodeURIComponent(sessionID)}`);
+}
+
+export async function adminGetUser(idOrEmail: string): Promise<APIResponse<"adminGetUser", 200>> {
+  return apiFetch<APIResponse<"adminGetUser", 200>>(`/admin/users/${encodeURIComponent(idOrEmail)}`);
+}
+
+export async function adminCostRollup(query: APIQuery<"adminCostRollup"> = {}): Promise<APIResponse<"adminCostRollup", 200>> {
+  return apiFetch<APIResponse<"adminCostRollup", 200>>(`/admin/cost${queryString(query ?? {})}`);
+}
+
 function jsonRequest(method: "PATCH" | "POST" | "PUT", body: unknown): RequestInit {
   return {
     method,

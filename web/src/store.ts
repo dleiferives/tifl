@@ -1,5 +1,5 @@
 import { createMemo, createSignal } from "solid-js";
-import { configureAuthCallbacks, setAccessToken, type APISchema } from "./api";
+import { configureAuthCallbacks, getAdminContext, setAccessToken, type APISchema } from "./api";
 import { applyTheme } from "./theme";
 
 export type AuthStatus = "checking" | "anonymous" | "authenticated" | "local";
@@ -26,7 +26,20 @@ const [activeLanguage, setActiveLanguage] = createSignal("");
 const [currentLevel, setCurrentLevel] = createSignal<Level>("beginner");
 const [pendingOperations, setPendingOperations] = createSignal(0);
 const [toast, setToast] = createSignal<Toast | null>(null);
+const [isAdmin, setIsAdmin] = createSignal(false);
 let nextToastID = 1;
+
+// refreshAdminContext learns the caller's admin state from the server: a 200
+// from /admin/context means admin, any error (notably 404) means not. The
+// client never infers admin from an email — the server is the authority (#24).
+async function refreshAdminContext() {
+  try {
+    await getAdminContext();
+    setIsAdmin(true);
+  } catch {
+    setIsAdmin(false);
+  }
+}
 
 function setAuthenticated(response: AuthResponse) {
   setAccessToken(response.access_token);
@@ -40,6 +53,7 @@ function clearAuthentication() {
   setUser(null);
   setProfile(null);
   setAuthLoading(false);
+  setIsAdmin(false);
   setAuthStatus("anonymous");
 }
 
@@ -86,6 +100,8 @@ export const appStore = {
   activeLanguage,
   currentLevel,
   isBusy: createMemo(() => pendingOperations() > 0),
+  isAdmin,
+  refreshAdminContext,
   toast,
   setAuthenticated,
   clearAuthentication,

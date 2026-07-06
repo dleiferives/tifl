@@ -3,6 +3,7 @@ import { render } from "solid-js/web";
 import { initializeAuthentication } from "./auth";
 import { createHashRouter, routeHref, sessionHref, type Route } from "./router";
 import { appStore } from "./store";
+import { AdminCallLogView, AdminCostView, AdminSessionView, AdminUserView } from "./views/admin";
 import { DebugView } from "./views/debug";
 import { HomeView } from "./views/home";
 import { ImportView } from "./views/import";
@@ -50,6 +51,22 @@ function App() {
             <Match when={route().name === "debug"}>
               <DebugView sessionId={(route() as Extract<Route, { name: "debug" }>).sessionId} />
             </Match>
+            <Match when={route().name === "admin"}>
+              <AdminGuard route={route()}><AdminCallLogView /></AdminGuard>
+            </Match>
+            <Match when={route().name === "admin-cost"}>
+              <AdminGuard route={route()}><AdminCostView /></AdminGuard>
+            </Match>
+            <Match when={route().name === "admin-session"}>
+              <AdminGuard route={route()}>
+                <AdminSessionView sessionId={(route() as Extract<Route, { name: "admin-session" }>).sessionId} />
+              </AdminGuard>
+            </Match>
+            <Match when={route().name === "admin-user"}>
+              <AdminGuard route={route()}>
+                <AdminUserView userId={(route() as Extract<Route, { name: "admin-user" }>).userId} />
+              </AdminGuard>
+            </Match>
             <Match when={route().name === "reader"}>
               <Show
                 when={(route() as Extract<Route, { name: "reader" }>).sessionId}
@@ -86,8 +103,20 @@ function RedirectTo(props: { to: string }) {
   );
 }
 
+// AdminGuard renders admin pages only for admins; a non-admin who navigates
+// directly to an /admin route sees the not-found page, so the surface is never
+// exposed client-side (#24). The server enforces the same with a 404.
+function AdminGuard(props: { route: Route; children: JSX.Element }) {
+  return (
+    <Show when={appStore.isAdmin()} fallback={<NotFoundView path={props.route.path} />}>
+      {props.children}
+    </Show>
+  );
+}
+
 function AppLayout(props: { route: Route; children: JSX.Element }) {
   const isCurrent = (name: Route["name"]) => props.route.name === name ? "page" : undefined;
+  const isAdminRoute = () => props.route.name.startsWith("admin");
 
   return (
     <>
@@ -99,6 +128,9 @@ function AppLayout(props: { route: Route; children: JSX.Element }) {
           <a href={routeHref("/import")} aria-current={isCurrent("import")}>Import</a>
           <a href={routeHref("/skills")} aria-current={isCurrent("skills")}>Skills</a>
           <a href={routeHref("/settings")} aria-current={isCurrent("settings")}>Settings</a>
+          <Show when={appStore.isAdmin()}>
+            <a href={routeHref("/admin")} aria-current={isAdminRoute() ? "page" : undefined}>Admin</a>
+          </Show>
         </nav>
         <Show
           when={appStore.authStatus() !== "local"}
