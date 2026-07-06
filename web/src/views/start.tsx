@@ -4,7 +4,7 @@ import {
   generateSession,
   type APIRequest,
 } from "../api";
-import { routeHref } from "../router";
+import { routeHref, sessionHref } from "../router";
 import { appStore } from "../store";
 
 type GenerateRequest = APIRequest<"generateSession">;
@@ -132,7 +132,7 @@ export function StartView() {
     const finish = appStore.beginOperation();
     try {
       const next = await generateSession(request);
-      window.location.hash = routeHref(`/generation/${encodeURIComponent(next.session_id)}`);
+      window.location.hash = sessionHref(next.session_id, "read");
     } catch (error) {
       setActionError(startSessionErrorMessage(error));
     } finally {

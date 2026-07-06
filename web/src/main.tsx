@@ -1,20 +1,18 @@
 import { createEffect, Match, Show, Switch, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { initializeAuthentication } from "./auth";
-import { createHashRouter, routeHref, type Route } from "./router";
+import { createHashRouter, routeHref, sessionHref, type Route } from "./router";
 import { appStore } from "./store";
 import { DebugView } from "./views/debug";
-import { GenerationView } from "./views/generation";
 import { HomeView } from "./views/home";
 import { ImportView } from "./views/import";
 import { LibraryView } from "./views/library";
 import { LoginView } from "./views/login";
-import { PhrasesView } from "./views/phrases";
 import { ReaderView } from "./views/reader";
+import { SessionShellView } from "./views/session_shell";
 import { SettingsView } from "./views/settings";
 import { SkillsView } from "./views/skills";
 import { StartView } from "./views/start";
-import { TasksView } from "./views/tasks";
 import "./style.css";
 
 function App() {
@@ -40,28 +38,51 @@ function App() {
             <Match when={route().name === "library"}><LibraryView /></Match>
             <Match when={route().name === "settings"}><SettingsView /></Match>
             <Match when={route().name === "skills"}><SkillsView /></Match>
+            <Match when={route().name === "session"}>
+              <SessionShellView
+                sessionId={(route() as Extract<Route, { name: "session" }>).sessionId}
+                step={(route() as Extract<Route, { name: "session" }>).step}
+              />
+            </Match>
             <Match when={route().name === "generation"}>
-              <GenerationView sessionId={(route() as Extract<Route, { name: "generation" }>).sessionId} />
+              <RedirectTo to={sessionHref((route() as Extract<Route, { name: "generation" }>).sessionId, "read")} />
             </Match>
             <Match when={route().name === "debug"}>
               <DebugView sessionId={(route() as Extract<Route, { name: "debug" }>).sessionId} />
             </Match>
             <Match when={route().name === "reader"}>
-              <ReaderView
-                storyId={(route() as Extract<Route, { name: "reader" }>).storyId}
-                sessionId={(route() as Extract<Route, { name: "reader" }>).sessionId}
-              />
+              <Show
+                when={(route() as Extract<Route, { name: "reader" }>).sessionId}
+                fallback={
+                  <ReaderView
+                    storyId={(route() as Extract<Route, { name: "reader" }>).storyId}
+                  />
+                }
+              >
+                {(sessionId) => <RedirectTo to={sessionHref(sessionId(), "read")} />}
+              </Show>
             </Match>
             <Match when={route().name === "phrases"}>
-              <PhrasesView sessionId={(route() as Extract<Route, { name: "phrases" }>).sessionId} />
+              <RedirectTo to={sessionHref((route() as Extract<Route, { name: "phrases" }>).sessionId, "read")} />
             </Match>
             <Match when={route().name === "tasks"}>
-              <TasksView sessionId={(route() as Extract<Route, { name: "tasks" }>).sessionId} />
+              <RedirectTo to={sessionHref((route() as Extract<Route, { name: "tasks" }>).sessionId, "tasks")} />
             </Match>
           </Switch>
         </AppLayout>
       </Show>
     </Show>
+  );
+}
+
+function RedirectTo(props: { to: string }) {
+  createEffect(() => {
+    window.location.replace(props.to);
+  });
+  return (
+    <section class="redirect-state" aria-busy="true">
+      Opening session...
+    </section>
   );
 }
 

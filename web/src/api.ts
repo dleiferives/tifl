@@ -345,8 +345,14 @@ function parseSSEFrame(frame: string): GenerationEvent | null {
   }
 }
 
-export async function getStory(storyID: string): Promise<APIResponse<"getStory", 200>> {
-  return apiFetch<APIResponse<"getStory", 200>>(`/stories/${encodeURIComponent(storyID)}`);
+export async function getStory(
+  storyID: string,
+  options: APIRequestOptions = {},
+): Promise<APIResponse<"getStory", 200>> {
+  return apiFetch<APIResponse<"getStory", 200>>(
+    `/stories/${encodeURIComponent(storyID)}`,
+    { signal: options.signal },
+  );
 }
 
 export async function getDefinition(storyID: string, key: string): Promise<APIResponse<"getDefinition", 200>> {

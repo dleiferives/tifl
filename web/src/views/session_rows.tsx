@@ -1,6 +1,6 @@
 import { createSignal, onCleanup, onMount, Show, type JSX } from "solid-js";
 import type { APISchema } from "../api";
-import { routeHref } from "../router";
+import { routeHref, sessionHref } from "../router";
 
 export type SessionOverview = APISchema<"SessionOverview">;
 export type SessionStatus = SessionOverview["status"];
@@ -160,10 +160,13 @@ function SessionActions(props: {
       <Show when={session.status === "pending" || session.status === "generating"}>
         <a class="button-link secondary-link" href={generationHref(session.session_id)}>Generation</a>
       </Show>
-      <Show when={session.story_id && (session.status === "ready" || session.status === "reading" || session.status === "complete")}>
+      <Show when={session.status === "complete"}>
+        <a class="button-link" href={reviewHref(session.session_id)}>Review</a>
+      </Show>
+      <Show when={session.story_id && (session.status === "ready" || session.status === "reading")}>
         <a class="button-link" href={readerHref(session.story_id || "", session.session_id)}>Reader</a>
       </Show>
-      <Show when={session.content_type === "phrase_set" && (session.status === "ready" || session.status === "reading" || session.status === "complete")}>
+      <Show when={session.content_type === "phrase_set" && (session.status === "ready" || session.status === "reading")}>
         <a class="button-link" href={phrasesHref(session.session_id)}>Phrases</a>
       </Show>
       <Show when={session.tasks.total > 0 && (session.status === "ready" || session.status === "reading" || session.status === "complete")}>
@@ -212,6 +215,9 @@ export function sessionPrimaryHref(session: SessionOverview): string {
   if (!(session.status === "ready" || session.status === "reading" || session.status === "complete")) {
     return "";
   }
+  if (session.status === "complete") {
+    return reviewHref(session.session_id);
+  }
   if (session.content_type === "phrase_set") {
     return phrasesHref(session.session_id);
   }
@@ -233,7 +239,7 @@ export function formatUnixSeconds(value: number): string {
 }
 
 export function generationHref(sessionID: string): string {
-  return routeHref(`/generation/${encodeURIComponent(sessionID)}`);
+  return sessionHref(sessionID, "read");
 }
 
 export function readerHref(storyID: string, sessionID?: string): string {
@@ -241,15 +247,19 @@ export function readerHref(storyID: string, sessionID?: string): string {
   if (!sessionID) {
     return base;
   }
-  return `${base}?sessionId=${encodeURIComponent(sessionID)}`;
+  return sessionHref(sessionID, "read");
 }
 
 export function phrasesHref(sessionID: string): string {
-  return routeHref(`/phrases/${encodeURIComponent(sessionID)}`);
+  return sessionHref(sessionID, "read");
 }
 
 export function tasksHref(sessionID: string): string {
-  return routeHref(`/tasks/${encodeURIComponent(sessionID)}`);
+  return sessionHref(sessionID, "tasks");
+}
+
+export function reviewHref(sessionID: string): string {
+  return sessionHref(sessionID, "review");
 }
 
 export function debugHref(sessionID: string): string {

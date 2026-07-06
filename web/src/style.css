@@ -2467,6 +2467,351 @@ select {
   font-size: 0.8rem;
 }
 
+/* Session shell ------------------------------------------------------------ */
+
+.session-shell {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.app-main .session-shell .reader-view,
+.app-main .session-shell .tasks-view,
+.app-main .session-shell .phrases-view,
+.app-main .session-shell .generation-view,
+.app-main .session-shell .review-panel,
+.app-main .session-shell .review-section {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.session-shell-header {
+  display: grid;
+  gap: 1rem;
+}
+
+.session-shell-title {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.session-back-link {
+  justify-self: start;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.session-shell-title h1 {
+  margin: 0;
+}
+
+.session-shell-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem 1rem;
+  margin: 0;
+}
+
+.session-shell-meta div {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+
+.session-shell-meta dt {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.session-shell-meta dd {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.session-stepper {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  background: var(--surface);
+}
+
+.session-step {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-width: 0;
+  min-height: 2.6rem;
+  padding: 0.45rem 0.65rem;
+  border-right: 1px solid var(--border);
+  color: var(--text-muted);
+  font-weight: 700;
+  text-align: center;
+  text-decoration: none;
+}
+
+.session-step:last-child {
+  border-right: 0;
+}
+
+.session-step span {
+  display: inline-grid;
+  place-items: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1;
+}
+
+.session-step[data-active] {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.session-step[data-active] span {
+  border-color: var(--accent-contrast);
+  background: var(--accent-contrast);
+  color: var(--accent);
+}
+
+.session-step[data-locked] {
+  background: var(--surface-subtle);
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.session-shell-state {
+  display: grid;
+  gap: 0.75rem;
+  justify-items: start;
+  padding: 1.25rem;
+  border: 1px dashed var(--border);
+  border-radius: 0.4rem;
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+}
+
+.session-shell-state p {
+  margin: 0;
+}
+
+.session-panels {
+  min-width: 0;
+}
+
+.session-panel[hidden],
+.session-panels[hidden] {
+  display: none;
+}
+
+.task-panel-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.review-panel {
+  display: grid;
+  gap: 1.1rem;
+}
+
+.review-outcome {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.review-outcome h2,
+.review-outcome p {
+  margin: 0;
+}
+
+.review-kicker {
+  color: var(--success);
+  font-size: 0.82rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.review-section {
+  display: grid;
+  gap: 0.7rem;
+  padding-top: 0.1rem;
+}
+
+.review-section h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.review-story-recap {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.review-story-recap p {
+  max-height: 18rem;
+  margin: 0;
+  overflow: auto;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  background: var(--surface-subtle);
+  white-space: pre-wrap;
+}
+
+.review-phrase-recap,
+.review-task-list {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.review-phrase-recap li {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  background: var(--surface-subtle);
+}
+
+.review-phrase-recap span,
+.review-muted {
+  color: var(--text-muted);
+}
+
+.review-task {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.85rem;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: 0.4rem;
+  background: var(--surface);
+}
+
+.review-task[data-state="correct"] {
+  border-left-color: var(--success);
+}
+
+.review-task[data-state="incorrect"] {
+  border-left-color: var(--danger);
+}
+
+.review-task[data-state="skipped"] {
+  border-left-color: var(--border);
+  background: var(--surface-subtle);
+}
+
+.review-task header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.review-task header span {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.review-task-prompt,
+.review-grade p,
+.review-task-status {
+  margin: 0;
+}
+
+.review-task-status {
+  font-weight: 700;
+}
+
+.review-task-status[data-state="correct"] {
+  color: var(--success);
+}
+
+.review-task-status[data-state="incorrect"] {
+  color: var(--danger);
+}
+
+.review-task-status[data-state="skipped"] {
+  color: var(--text-muted);
+}
+
+.review-grade {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.review-receipt {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+}
+
+.review-receipt div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.review-receipt dt {
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.review-receipt dd {
+  margin: 0;
+  font-weight: 800;
+}
+
+.review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: flex-end;
+  padding-top: 0.25rem;
+}
+
+@media (max-width: 36rem) {
+  .session-stepper {
+    grid-template-columns: 1fr;
+  }
+
+  .session-step {
+    justify-content: flex-start;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .session-step:last-child {
+    border-bottom: 0;
+  }
+
+  .review-actions,
+  .task-panel-actions {
+    justify-content: flex-start;
+  }
+}
+
 /* Session debug */
 .debug-view {
   display: grid;

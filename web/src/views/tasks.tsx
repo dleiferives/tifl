@@ -4,11 +4,12 @@ import { APIError, getSessionTasks, submitTask, type APIRequest, type APISchema 
 import { routeHref } from "../router";
 import { appStore } from "../store";
 
-type Task = APISchema<"Task"> & { attempt_count?: number };
+export type Task = APISchema<"Task"> & { attempt_count?: number };
 type Grade = APISchema<"Grade">;
 type SkillXPDelta = APISchema<"SkillXPDelta">;
 type SubmitRequest = APIRequest<"submitTask">;
 type ResponseStore = Record<string, unknown>;
+export type TaskLoadStatus = "loading" | "ready" | "error";
 
 // Task types whose grading routes through the LLM gateway: their submit is slow
 // and can come back 503 (no gateway) / 502 (gateway error), so the UI shows an
@@ -116,12 +117,11 @@ const RENDERERS: Record<string, Renderer> = {
 };
 
 export function TasksView(props: { sessionId: string }) {
-  const [status, setStatus] = createSignal<"loading" | "ready" | "error">("loading");
+  const [status, setStatus] = createSignal<TaskLoadStatus>("loading");
   const [tasks, setTasks] = createStore<Task[]>([]);
 
   const total = createMemo(() => tasks.length);
   const completed = createMemo(() => tasks.filter((task) => task.graded).length);
-  const allDone = createMemo(() => total() > 0 && completed() === total());
 
   onMount(() => void load());
 
@@ -152,54 +152,91 @@ export function TasksView(props: { sessionId: string }) {
   }
 
   return (
+    <TasksPanel
+      status={status()}
+      tasks={tasks}
+      total={total()}
+      completed={completed()}
+      showHeading
+      actions={<a class="button-link secondary-link" href={routeHref("/")}>Back home</a>}
+      onRetry={() => void load()}
+      onSubmit={(index, request) => submit(index, request)}
+    />
+  );
+}
+
+export function TasksPanel(props: {
+  status: TaskLoadStatus;
+  tasks: readonly Task[];
+  total: number;
+  completed: number;
+  showHeading?: boolean;
+  actions?: JSX.Element;
+  completeAction?: JSX.Element;
+  onRetry?: () => void;
+  onSubmit: (index: number, request: SubmitRequest) => Promise<void>;
+}) {
+  const allDone = createMemo(() => props.total > 0 && props.completed === props.total);
+
+  return (
     <section class="tasks-view">
-      <header class="view-heading">
-        <div>
-          <h1>Tasks</h1>
-          <p>{progressLabel(completed(), total(), status())}</p>
-        </div>
-        <a class="button-link secondary-link" href={routeHref("/")}>Back home</a>
-      </header>
+      <Show when={props.showHeading}>
+        <header class="view-heading">
+          <div>
+            <h1>Tasks</h1>
+            <p>{progressLabel(props.completed, props.total, props.status)}</p>
+          </div>
+          <Show when={props.actions}>
+            <div class="view-heading-actions">{props.actions}</div>
+          </Show>
+        </header>
+      </Show>
 
       <Switch>
-        <Match when={status() === "loading"}>
+        <Match when={props.status === "loading"}>
           <div class="tasks-state" aria-busy="true">Loading tasks...</div>
         </Match>
-        <Match when={status() === "error"}>
+        <Match when={props.status === "error"}>
           <div class="tasks-state" role="alert">
             <p>These tasks could not be loaded.</p>
-            <button class="secondary-button" type="button" onClick={() => void load()}>Retry</button>
+            <Show when={props.onRetry}>
+              {(retry) => <button class="secondary-button" type="button" onClick={retry()}>Retry</button>}
+            </Show>
           </div>
         </Match>
-        <Match when={total() === 0}>
+        <Match when={props.total === 0}>
           <div class="tasks-state empty-state">
-            <h2>No tasks yet</h2>
-            <p>This session has no tasks attached. Read the story or start a new session.</p>
+            <h2>No tasks in this session</h2>
+            <p>Read the session content or start a new session.</p>
+            <Show when={props.completeAction}>{props.completeAction}</Show>
           </div>
         </Match>
-        <Match when={total() > 0}>
+        <Match when={props.total > 0}>
           <div
             class="task-progress"
             role="progressbar"
             aria-valuemin={0}
-            aria-valuemax={total()}
-            aria-valuenow={completed()}
+            aria-valuemax={props.total}
+            aria-valuenow={props.completed}
             aria-label="Tasks completed"
           >
-            <div class="task-progress-bar" style={{ width: `${(completed() / total()) * 100}%` }} />
+            <div class="task-progress-bar" style={{ width: `${(props.completed / props.total) * 100}%` }} />
           </div>
           <Show when={allDone()}>
             <p class="tasks-complete" role="status">All tasks have a current grade for this session.</p>
           </Show>
           <ol class="task-list">
-            <For each={tasks}>
+            <For each={props.tasks}>
               {(task, index) => (
                 <li>
-                  <TaskCard task={task} position={index() + 1} onSubmit={(request) => submit(index(), request)} />
+                  <TaskCard task={task} position={index() + 1} onSubmit={(request) => props.onSubmit(index(), request)} />
                 </li>
               )}
             </For>
           </ol>
+          <Show when={props.completeAction}>
+            <div class="task-panel-actions">{props.completeAction}</div>
+          </Show>
         </Match>
       </Switch>
     </section>
@@ -323,7 +360,7 @@ function GradeView(props: { grade?: Grade; attemptCount?: number }) {
   );
 }
 
-function announceGrade(grade: Grade, skillXP: SkillXPDelta[]) {
+export function announceGrade(grade: Grade, skillXP: SkillXPDelta[]) {
   const xpDelta = skillXP.reduce((sum, change) => sum + change.xp_delta, 0);
   const pending = skillXP.filter((change) => change.pending_verify).length;
   if (xpDelta !== 0) {
