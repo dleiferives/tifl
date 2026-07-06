@@ -143,6 +143,10 @@ type Repository interface {
 	// Sessions — the study unit the generation pipeline drives. CreateSession
 	// assigns a session_id (when blank), created_at, and a pending status.
 	CreateSession(ctx context.Context, s domain.Session) (domain.Session, error)
+	// LockSessionForUpdate acquires a write lock on one session row until the
+	// surrounding transaction commits. Call it inside Tx before checking
+	// per-session counters that must not race.
+	LockSessionForUpdate(ctx context.Context, sessionID string) error
 	GetSession(ctx context.Context, sessionID string) (domain.Session, error)
 	ListSessions(ctx context.Context, userID string, opts domain.ListSessionsOptions) ([]domain.SessionOverview, error)
 	GetSessionDetail(ctx context.Context, userID, sessionID string) (domain.SessionDetail, error)

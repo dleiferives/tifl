@@ -54,6 +54,14 @@ func (r *SQLRepository) CreateSession(ctx context.Context, s domain.Session) (do
 	return s, nil
 }
 
+func (r *SQLRepository) LockSessionForUpdate(ctx context.Context, sessionID string) error {
+	res, err := r.exec(ctx, `UPDATE sessions SET session_id = session_id WHERE session_id = ?`, sessionID)
+	if err != nil {
+		return err
+	}
+	return requireRow(res)
+}
+
 func (r *SQLRepository) GetSession(ctx context.Context, sessionID string) (domain.Session, error) {
 	row := r.queryRow(ctx,
 		`SELECT `+sessionColumns+`

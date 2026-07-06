@@ -414,10 +414,18 @@ export async function submitTask(taskID: string, request: APIRequest<"submitTask
 }
 
 export async function reportTask(taskID: string, request: APIRequest<"reportTask">): Promise<APISchema<"TaskReportResponse">> {
-  const response = await sendRequest(
-    `/tasks/${encodeURIComponent(taskID)}/report`,
-    jsonRequest("POST", request),
-  );
+  const path = `/tasks/${encodeURIComponent(taskID)}/report`;
+  const init = jsonRequest("POST", request);
+  let response = await sendRequest(path, init);
+  if (response.status === 401) {
+    if (await refreshAccessToken()) {
+      response = await sendRequest(path, init);
+    }
+    if (response.status === 401) {
+      setAccessToken(null);
+      authCallbacks.onAuthenticationLost?.();
+    }
+  }
   if (response.status === 503) {
     const body = parseJSON(await response.text());
     if (isTaskReportResponse(body)) {

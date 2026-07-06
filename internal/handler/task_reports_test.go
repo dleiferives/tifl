@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/dleiferives/tifl/internal/db"
@@ -148,6 +149,58 @@ func TestReportTaskQueueFailureStillPersists(t *testing.T) {
 	}
 	if report.Outcome != domain.ContentReportOutcomeUnavailable {
 		t.Fatalf("persisted outcome = %q", report.Outcome)
+	}
+}
+
+func TestReportTaskCapIsEnforcedConcurrently(t *testing.T) {
+	srv, repo, queue := newReportServer(t, 1, nil)
+	seedItem(t, repo, "it-race", "alpha")
+	sessionID, taskID := seedTask(t, repo, tasks.TypeComprehensionMC, reportableTaskContent("it-race"), []string{"it-race"})
+
+	const attempts = 8
+	var wg sync.WaitGroup
+	statuses := make(chan int, attempts)
+	errs := make(chan error, attempts)
+	for range attempts {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp, err := http.Post(srv.URL+"/api/v1/tasks/"+taskID+"/report", "application/json", strings.NewReader(`{"reason":"malformed"}`))
+			if err != nil {
+				errs <- err
+				return
+			}
+			defer resp.Body.Close()
+			statuses <- resp.StatusCode
+		}()
+	}
+	wg.Wait()
+	close(statuses)
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	var accepted int
+	for status := range statuses {
+		if status == http.StatusAccepted {
+			accepted++
+		}
+	}
+	if accepted != 1 {
+		t.Fatalf("accepted reports = %d, want exactly 1", accepted)
+	}
+	if len(queue.calls) != 1 {
+		t.Fatalf("queued regenerations = %d, want 1: %+v", len(queue.calls), queue.calls)
+	}
+	count, err := repo.CountContentReportsByOutcome(context.Background(), domain.ContentReportContextSession, sessionID,
+		domain.ContentReportKindTask, []string{domain.ContentReportOutcomeQueued})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("queued report count = %d, want 1", count)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/handler/oapigen"
 )
@@ -44,26 +45,38 @@ func (h *Handler) reportTask(w http.ResponseWriter, r *http.Request) {
 		h.writeTaskLookupError(w, err)
 		return
 	}
-	used, err := h.regenerationsUsed(r.Context(), task.SessionID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
 
-	outcome, code := h.reportOutcome(task, used)
-	report, err := h.repo.CreateContentReport(r.Context(), domain.ContentReport{
-		ReporterUserID: userID,
-		Kind:           domain.ContentReportKindTask,
-		TargetID:       task.TaskID,
-		ContextKind:    domain.ContentReportContextSession,
-		ContextID:      task.SessionID,
-		ReasonCategory: string(req.Reason),
-		Note:           note,
-		Snapshot:       taskReportSnapshot(task),
-		Outcome:        outcome,
-		OutcomeDetail:  taskReportMessage(outcome),
-	})
-	if err != nil {
+	var (
+		used    int
+		outcome string
+		code    int
+		report  domain.ContentReport
+	)
+	if err := h.repo.Tx(r.Context(), func(repo db.Repository) error {
+		if err := repo.LockSessionForUpdate(r.Context(), task.SessionID); err != nil {
+			return err
+		}
+		var err error
+		used, err = repo.CountContentReportsByOutcome(r.Context(), domain.ContentReportContextSession, task.SessionID,
+			domain.ContentReportKindTask, taskRegenerationOutcomes)
+		if err != nil {
+			return err
+		}
+		outcome, code = h.reportOutcome(task, used)
+		report, err = repo.CreateContentReport(r.Context(), domain.ContentReport{
+			ReporterUserID: userID,
+			Kind:           domain.ContentReportKindTask,
+			TargetID:       task.TaskID,
+			ContextKind:    domain.ContentReportContextSession,
+			ContextID:      task.SessionID,
+			ReasonCategory: string(req.Reason),
+			Note:           note,
+			Snapshot:       taskReportSnapshot(task),
+			Outcome:        outcome,
+			OutcomeDetail:  taskReportMessage(outcome),
+		})
+		return err
+	}); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("recording report: %w", err))
 		return
 	}
@@ -84,12 +97,16 @@ func (h *Handler) reportTask(w http.ResponseWriter, r *http.Request) {
 			responseUsed = used
 		}
 	}
+	message := report.OutcomeDetail
+	if message == "" {
+		message = taskReportMessage(outcome)
+	}
 
 	writeJSON(w, code, taskReportResponse{
 		ReportId:          report.ReportID,
 		TaskId:            task.TaskID,
 		Status:            reportStatusDTO(outcome),
-		Message:           taskReportMessage(outcome),
+		Message:           message,
 		ReplacementTaskId: replacementTaskID(outcome, task.TaskID, report.ReplacementTaskID),
 		RegenerationCap:   h.taskReportRegenerationCap,
 		RegenerationsUsed: responseUsed,

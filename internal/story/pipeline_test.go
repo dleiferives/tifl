@@ -686,6 +686,61 @@ func TestPipeline_RegenerateTaskReplacesInPlaceAndStaysGradeable(t *testing.T) {
 	}
 }
 
+func TestPipeline_RegenerateTaskKeepsReportNonterminalBeforeFinalAttempt(t *testing.T) {
+	ctx := context.Background()
+	repo := dbtest.NewRepo(t)
+	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "xx", Name: "Testish", Enabled: true}))
+	if _, err := repo.EnsureLocalUser(ctx); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := repo.CreateSession(ctx, domain.Session{
+		UserID: domain.LocalUserID, Language: "xx", Level: "beginner",
+	})
+	must(t, err)
+	task, err := repo.CreateTask(ctx, domain.Task{
+		SessionID: sess.SessionID, UserID: domain.LocalUserID, TaskType: tasks.TypeComprehensionMC, Language: "xx",
+		Content: map[string]any{"question": "old", "options": []any{"x", "y"}, "correct_index": float64(0)},
+	}, nil)
+	must(t, err)
+	report, err := repo.CreateContentReport(ctx, domain.ContentReport{
+		ReporterUserID: domain.LocalUserID,
+		Kind:           domain.ContentReportKindTask,
+		TargetID:       task.TaskID,
+		ContextKind:    domain.ContentReportContextSession,
+		ContextID:      sess.SessionID,
+		ReasonCategory: "malformed",
+		Snapshot:       map[string]any{"content": task.Content},
+		Outcome:        domain.ContentReportOutcomeQueued,
+	})
+	must(t, err)
+	langs := lang.NewRegistry()
+	langs.Register(fakeLang{taskTypes: []string{tasks.TypeComprehensionMC}})
+	p := story.New(story.Deps{
+		Repo:     repo,
+		Selector: fixedSelector{},
+		Client:   &llm.FakeClient{},
+		Langs:    langs,
+		Tasks:    tasks.DefaultRegistry(),
+	}, story.Config{})
+
+	if err := p.RegenerateTaskAttempt(ctx, report.ReportID, task.TaskID, domain.LocalUserID, false); err == nil {
+		t.Fatal("non-final attempt should return the source-content error")
+	}
+	got, err := repo.GetContentReport(ctx, report.ReportID)
+	must(t, err)
+	if got.Outcome != domain.ContentReportOutcomeRegenerating {
+		t.Fatalf("non-final outcome = %q, want regenerating", got.Outcome)
+	}
+	if err := p.RegenerateTaskAttempt(ctx, report.ReportID, task.TaskID, domain.LocalUserID, true); err == nil {
+		t.Fatal("final attempt should return the source-content error")
+	}
+	got, err = repo.GetContentReport(ctx, report.ReportID)
+	must(t, err)
+	if got.Outcome != domain.ContentReportOutcomeFailed {
+		t.Fatalf("final outcome = %q, want failed", got.Outcome)
+	}
+}
+
 func TestPipeline_InvalidGeneratedTaskDoesNotPersist(t *testing.T) {
 	ctx := context.Background()
 	ctrl := &clientControl{

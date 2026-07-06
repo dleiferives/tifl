@@ -54,6 +54,7 @@ type Store interface {
 	ListUserSkillXP(ctx context.Context, userID string, skillIDs []string) ([]domain.UserSkillXP, error)
 	LoadReaderKnowledge(ctx context.Context, userID, language string) ([]domain.ReaderKnowledge, error)
 	LoadReaderSurfaceLevels(ctx context.Context, userID, language string) ([]domain.ReaderSurfaceLevel, error)
+	LockSessionForUpdate(ctx context.Context, sessionID string) error
 	MarkSessionComplete(ctx context.Context, userID, sessionID string) error
 	MarkSessionReading(ctx context.Context, userID, sessionID string) error
 	RecordTaskGrade(ctx context.Context, userID, taskID string, g domain.TaskGrade) error

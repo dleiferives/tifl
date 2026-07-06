@@ -684,6 +684,13 @@ func (p *Pipeline) runTaskType(ctx context.Context, sess domain.Session, lc doma
 // deletes the original row before valid replacement content exists, so a failed
 // generation leaves the task set whole.
 func (p *Pipeline) RegenerateTask(ctx context.Context, reportID, taskID, userID string) error {
+	return p.RegenerateTaskAttempt(ctx, reportID, taskID, userID, true)
+}
+
+// RegenerateTaskAttempt is the queue-worker entry point. Non-final attempts keep
+// the report in a nonterminal regenerating state so a later retry cannot replace
+// a task after the client has stopped polling a terminal failure.
+func (p *Pipeline) RegenerateTaskAttempt(ctx context.Context, reportID, taskID, userID string, finalAttempt bool) error {
 	report, err := p.deps.Repo.GetContentReport(ctx, reportID)
 	if err != nil {
 		return err
@@ -693,8 +700,7 @@ func (p *Pipeline) RegenerateTask(ctx context.Context, reportID, taskID, userID 
 	}
 	task, err := p.deps.Repo.GetTask(ctx, userID, taskID)
 	if err != nil {
-		_ = p.deps.Repo.UpdateContentReportOutcome(ctx, reportID, domain.ContentReportOutcomeFailed, "Task could not be loaded for regeneration.", "")
-		return err
+		return p.failTaskRegeneration(ctx, reportID, "Task could not be loaded for regeneration.", finalAttempt, err)
 	}
 	if task.GradedAt != nil || task.GradedBy != "" {
 		return p.deps.Repo.UpdateContentReportOutcome(ctx, reportID, domain.ContentReportOutcomeAnswered, "Report saved. Answered tasks are not regenerated.", "")
@@ -705,25 +711,21 @@ func (p *Pipeline) RegenerateTask(ctx context.Context, reportID, taskID, userID 
 
 	sess, err := p.deps.Repo.GetSession(ctx, task.SessionID)
 	if err != nil {
-		_ = p.deps.Repo.UpdateContentReportOutcome(ctx, reportID, domain.ContentReportOutcomeFailed, "Regeneration failed while loading the session.", "")
-		return err
+		return p.failTaskRegeneration(ctx, reportID, "Regeneration failed while loading the session.", finalAttempt, err)
 	}
 	ctx = p.callContext(ctx, sess)
 	sourceText, err := p.sourceTextForTaskRegeneration(ctx, sess)
 	if err != nil {
-		_ = p.deps.Repo.UpdateContentReportOutcome(ctx, reportID, domain.ContentReportOutcomeFailed, "Regeneration failed while loading the session content.", "")
-		return err
+		return p.failTaskRegeneration(ctx, reportID, "Regeneration failed while loading the session content.", finalAttempt, err)
 	}
 	lc, err := p.rebuildTaskCtx(ctx, sess)
 	if err != nil {
-		_ = p.deps.Repo.UpdateContentReportOutcome(ctx, reportID, domain.ContentReportOutcomeFailed, "Regeneration failed while rebuilding learner context.", "")
-		return err
+		return p.failTaskRegeneration(ctx, reportID, "Regeneration failed while rebuilding learner context.", finalAttempt, err)
 	}
 	tt, ok := p.deps.Tasks.Get(task.TaskType)
 	if !ok {
 		err := fmt.Errorf("task type %q not registered", task.TaskType)
-		_ = p.deps.Repo.UpdateContentReportOutcome(ctx, reportID, domain.ContentReportOutcomeFailed, "Regeneration failed because the task type is not registered.", "")
-		return err
+		return p.failTaskRegeneration(ctx, reportID, "Regeneration failed because the task type is not registered.", finalAttempt, err)
 	}
 	rejected := &llm.TaskRejectedExample{
 		Reason:  report.ReasonCategory,
@@ -732,22 +734,26 @@ func (p *Pipeline) RegenerateTask(ctx context.Context, reportID, taskID, userID 
 	}
 	priorQuestions, err := p.priorTaskQuestions(ctx, task)
 	if err != nil {
-		_ = p.deps.Repo.UpdateContentReportOutcome(ctx, reportID, domain.ContentReportOutcomeFailed, "Regeneration failed while loading sibling tasks.", "")
-		return err
+		return p.failTaskRegeneration(ctx, reportID, "Regeneration failed while loading sibling tasks.", finalAttempt, err)
 	}
 	if qt := tasks.PrimaryTextOf(tt, task.Content); qt != "" {
 		priorQuestions = append(priorQuestions, qt)
 	}
 	content, err := p.generateValidTaskContent(ctx, tt, task.TaskType, sourceText, lc, priorQuestions, p.taskStep(sess, tt), rejected)
 	if err != nil {
-		_ = p.deps.Repo.UpdateContentReportOutcome(ctx, reportID, domain.ContentReportOutcomeFailed, "Regeneration failed. The original task is still usable.", "")
-		return err
+		return p.failTaskRegeneration(ctx, reportID, "Regeneration failed. The original task is still usable.", finalAttempt, err)
 	}
 	if _, err := p.deps.Repo.ReplaceTaskContent(ctx, userID, taskID, content, tt.Targets(content)); err != nil {
-		_ = p.deps.Repo.UpdateContentReportOutcome(ctx, reportID, domain.ContentReportOutcomeFailed, "Regeneration finished but the task could not be replaced.", "")
-		return err
+		return p.failTaskRegeneration(ctx, reportID, "Regeneration finished but the task could not be replaced.", finalAttempt, err)
 	}
 	return p.deps.Repo.UpdateContentReportOutcome(ctx, reportID, domain.ContentReportOutcomeRegenerated, "Report saved. The task was replaced.", taskID)
+}
+
+func (p *Pipeline) failTaskRegeneration(ctx context.Context, reportID, detail string, finalAttempt bool, cause error) error {
+	if finalAttempt {
+		_ = p.deps.Repo.UpdateContentReportOutcome(ctx, reportID, domain.ContentReportOutcomeFailed, detail, "")
+	}
+	return cause
 }
 
 func (p *Pipeline) sourceTextForTaskRegeneration(ctx context.Context, sess domain.Session) (string, error) {

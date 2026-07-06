@@ -267,14 +267,16 @@ function TaskCard(props: {
 
   const renderer = (): Renderer | undefined => RENDERERS[props.task.task_type];
   const needsLLM = () => LLM_TYPES.has(props.task.task_type);
+  const regenerating = () => isPollingReport(props.task.report);
+  const disabled = () => submitting() || regenerating();
   const canSubmit = () => {
     const current = renderer();
-    return current ? current.canSubmit(response) : false;
+    return current ? current.canSubmit(response) && !regenerating() : false;
   };
 
   async function handleSubmit(event: Event) {
     event.preventDefault();
-    if (!canSubmit() || submitting()) {
+    if (!canSubmit() || disabled()) {
       return;
     }
     setErrorMessage("");
@@ -319,7 +321,7 @@ function TaskCard(props: {
                 content: props.task.content,
                 response,
                 setResponse,
-                disabled: submitting,
+                disabled,
                 name: `task-${props.task.task_id}`,
                 lang: appStore.activeLanguage(),
               })}
@@ -337,7 +339,7 @@ function TaskCard(props: {
                 </button>
               </div>
             </form>
-            <ReportControl disabled={submitting()} onReport={props.onReport} />
+            <ReportControl disabled={disabled()} onReport={props.onReport} />
           </>
         )}
       </Show>

@@ -10,7 +10,7 @@ import (
 // TaskRegenerator replaces one reported, unanswered task in place; implemented
 // by story.Broker.RunTaskRegeneration.
 type TaskRegenerator interface {
-	RunTaskRegeneration(ctx context.Context, reportID, taskID, userID string) error
+	RunTaskRegeneration(ctx context.Context, reportID, taskID, userID string, finalAttempt bool) error
 }
 
 type taskRegenerationArgs struct {
@@ -38,7 +38,7 @@ type taskRegenerationWorker struct {
 func (w *taskRegenerationWorker) Work(ctx context.Context, job *river.Job[taskRegenerationArgs]) error {
 	ctx, cancel := context.WithTimeout(ctx, w.timeout)
 	defer cancel()
-	return w.regenerator.RunTaskRegeneration(ctx, job.Args.ReportID, job.Args.TaskID, job.Args.UserID)
+	return w.regenerator.RunTaskRegeneration(ctx, job.Args.ReportID, job.Args.TaskID, job.Args.UserID, finalAttempt(job))
 }
 
 // RegisterTaskRegeneration wires the one-task regeneration worker.
@@ -49,4 +49,11 @@ func (ws *Workers) RegisterTaskRegeneration(r TaskRegenerator) {
 func (c *client[TTx]) EnqueueTaskRegeneration(ctx context.Context, reportID, taskID, userID string) error {
 	_, err := c.rc.Insert(ctx, taskRegenerationArgs{ReportID: reportID, TaskID: taskID, UserID: userID}, nil)
 	return err
+}
+
+func finalAttempt(job *river.Job[taskRegenerationArgs]) bool {
+	if job == nil || job.JobRow == nil || job.MaxAttempts <= 0 {
+		return true
+	}
+	return job.Attempt >= job.MaxAttempts
 }

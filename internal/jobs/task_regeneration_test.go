@@ -20,7 +20,7 @@ type queuedTaskRegeneration struct {
 	userID   string
 }
 
-func (s *spyTaskRegenerator) RunTaskRegeneration(_ context.Context, reportID, taskID, userID string) error {
+func (s *spyTaskRegenerator) RunTaskRegeneration(_ context.Context, reportID, taskID, userID string, _ bool) error {
 	s.mu.Lock()
 	s.calls = append(s.calls, queuedTaskRegeneration{reportID: reportID, taskID: taskID, userID: userID})
 	s.mu.Unlock()
