@@ -45,6 +45,7 @@ func testRepository(t *testing.T, newRepo repoFactory) {
 	run("ReaderEvents", testReaderEvents)
 	run("DefinitionsBreakdowns", testDefinitionsBreakdowns)
 	run("Pipeline", testPipeline)
+	run("TargetPreviewGuesses", testTargetPreviewGuesses)
 	run("ContentReports", testContentReports)
 	run("SessionLifecycle", testSessionLifecycle)
 	run("SessionArchiveDelete", testSessionArchiveDelete)
@@ -768,6 +769,68 @@ func testPipeline(t *testing.T, repo db.Repository) {
 		Items: []domain.PhraseItem{{PhraseID: "x", TargetText: "x"}},
 	}); err == nil {
 		t.Fatal("expected FK violation for phrase set on unknown session")
+	}
+}
+
+func testTargetPreviewGuesses(t *testing.T, repo db.Repository) {
+	ctx := context.Background()
+	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "grc", Name: "Greek", KeyStrategy: "lemma", Enabled: true}))
+	user, err := repo.CreateUser(ctx, domain.User{Email: "preview@example.com"})
+	must(t, err)
+	target, err := repo.UpsertKnowledgeItem(ctx, domain.KnowledgeItem{
+		Language: "grc", ItemType: "word", Key: "λόγος", Metadata: map[string]any{"gloss": "word"},
+	})
+	must(t, err)
+	otherItem, err := repo.UpsertKnowledgeItem(ctx, domain.KnowledgeItem{Language: "grc", ItemType: "word", Key: "ἄλλος"})
+	must(t, err)
+	sess, err := repo.CreateSession(ctx, domain.Session{
+		UserID: user.UserID, Language: "grc", Level: "beginner", Status: domain.StatusGenerating,
+	})
+	must(t, err)
+	story, err := repo.CreateStory(ctx, domain.Story{
+		UserID: user.UserID, Language: "grc", Text: "λόγος", Level: "beginner", SessionID: &sess.SessionID,
+	})
+	must(t, err)
+	must(t, repo.SetSessionSelection(ctx, sess.SessionID, story.StoryID, []string{target}, nil))
+
+	if _, err := repo.UpsertTargetPreviewGuess(ctx, user.UserID, sess.SessionID, domain.TargetPreviewGuess{
+		ItemID: otherItem, GuessKind: domain.TargetPreviewGuessText, GuessText: "other",
+	}); !errors.Is(err, db.ErrInvalidTargetPreviewGuess) {
+		t.Fatalf("non-target preview guess should be invalid, got %v", err)
+	}
+	if _, err := repo.UpsertTargetPreviewGuess(ctx, "other-user", sess.SessionID, domain.TargetPreviewGuess{
+		ItemID: target, GuessKind: domain.TargetPreviewGuessNoIdea,
+	}); !errors.Is(err, db.ErrInvalidTargetPreviewGuess) {
+		t.Fatalf("cross-user preview guess should be invalid, got %v", err)
+	}
+
+	first, err := repo.UpsertTargetPreviewGuess(ctx, user.UserID, sess.SessionID, domain.TargetPreviewGuess{
+		ItemID: target, GuessKind: domain.TargetPreviewGuessNoIdea,
+	})
+	must(t, err)
+	if first.SessionID != sess.SessionID || first.UserID != user.UserID || first.ItemID != target ||
+		first.GuessKind != domain.TargetPreviewGuessNoIdea || first.GuessText != "" || first.CreatedAt == 0 {
+		t.Fatalf("bad first preview guess: %+v", first)
+	}
+	second, err := repo.UpsertTargetPreviewGuess(ctx, user.UserID, sess.SessionID, domain.TargetPreviewGuess{
+		ItemID: target, GuessKind: domain.TargetPreviewGuessText, GuessText: "word",
+	})
+	must(t, err)
+	if second.GuessKind != domain.TargetPreviewGuessText || second.GuessText != "word" ||
+		second.CreatedAt != first.CreatedAt || second.UpdatedAt == nil {
+		t.Fatalf("preview guess update did not replace the same row: first=%+v second=%+v", first, second)
+	}
+	guesses, err := repo.ListTargetPreviewGuesses(ctx, user.UserID, sess.SessionID)
+	must(t, err)
+	if len(guesses) != 1 || guesses[0].ItemID != target || guesses[0].SessionID != sess.SessionID {
+		t.Fatalf("preview guesses not joinable by session/item: %+v", guesses)
+	}
+
+	if _, err := repo.CreateTask(ctx, domain.Task{
+		SessionID: sess.SessionID, UserID: user.UserID, TaskType: "comprehension_mc", Language: "grc",
+		Content: map[string]any{"question": "τί;", "correct_index": float64(0)},
+	}, []string{target}); err != nil {
+		t.Fatal(err)
 	}
 }
 

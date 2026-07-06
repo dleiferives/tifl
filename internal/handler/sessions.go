@@ -34,18 +34,22 @@ func (h *Handler) currentUserID(r *http.Request) string {
 // than embedding. GenerationEvent.tasks/stage_summary keep Go pointers via
 // x-go-type-skip-optional-pointer so progress events omit them entirely.
 type (
-	generateRequest     = oapigen.GenerateRequest
-	sessionResponse     = oapigen.SessionRef
-	selectedCountsDTO   = oapigen.SelectedItemCounts
-	taskProgressDTO     = oapigen.TaskProgress
-	stageSummaryDTO     = oapigen.StageSummary
-	generationStageDTO  = oapigen.GenerationStageRecord
-	generationEventDTO  = oapigen.GenerationEvent
-	sessionOverviewDTO  = oapigen.SessionOverview
-	sessionDetailDTO    = oapigen.SessionDetail
-	llmCallDTO          = oapigen.LLMCall
-	sessionDebugDTO     = oapigen.SessionDebug
-	sessionListResponse = oapigen.SessionList
+	generateRequest           = oapigen.GenerateRequest
+	sessionResponse           = oapigen.SessionRef
+	selectedCountsDTO         = oapigen.SelectedItemCounts
+	taskProgressDTO           = oapigen.TaskProgress
+	stageSummaryDTO           = oapigen.StageSummary
+	generationStageDTO        = oapigen.GenerationStageRecord
+	generationEventDTO        = oapigen.GenerationEvent
+	targetPreviewDTO          = oapigen.TargetPreview
+	targetPreviewItemDTO      = oapigen.TargetPreviewItem
+	targetPreviewAttemptDTO   = oapigen.TargetPreviewAttempt
+	targetPreviewGuessRequest = oapigen.TargetPreviewGuessRequest
+	sessionOverviewDTO        = oapigen.SessionOverview
+	sessionDetailDTO          = oapigen.SessionDetail
+	llmCallDTO                = oapigen.LLMCall
+	sessionDebugDTO           = oapigen.SessionDebug
+	sessionListResponse       = oapigen.SessionList
 )
 
 // deref helpers: the domain uses pointer-optionals, the wire types value +
@@ -108,12 +112,18 @@ func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getSessionDetail(w http.ResponseWriter, r *http.Request) {
-	detail, err := h.repo.GetSessionDetail(r.Context(), h.currentUserID(r), r.PathValue("id"))
+	userID := h.currentUserID(r)
+	detail, err := h.repo.GetSessionDetail(r.Context(), userID, r.PathValue("id"))
 	if err != nil {
 		h.writeSessionLookupError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toSessionDetailDTO(detail))
+	dto, err := h.toSessionDetailDTO(r.Context(), userID, detail)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, dto)
 }
 
 func (h *Handler) getSessionDebug(w http.ResponseWriter, r *http.Request) {
@@ -133,6 +143,49 @@ func (h *Handler) getSessionDebug(w http.ResponseWriter, r *http.Request) {
 		Session:  toSessionDetailDTO(detail),
 		LlmCalls: toLLMCallDTOs(calls),
 	})
+}
+
+func (h *Handler) recordTargetPreviewGuess(w http.ResponseWriter, r *http.Request) {
+	userID := h.currentUserID(r)
+	sessionID := r.PathValue("id")
+	if _, err := h.repo.GetSessionDetail(r.Context(), userID, sessionID); err != nil {
+		h.writeSessionLookupError(w, err)
+		return
+	}
+	var req targetPreviewGuessRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
+		return
+	}
+	itemID := strings.TrimSpace(req.ItemId)
+	guessText := strings.TrimSpace(req.GuessText)
+	kind := domain.TargetPreviewGuessKind(req.GuessKind)
+	if itemID == "" {
+		writeError(w, http.StatusBadRequest, errors.New("item_id is required"))
+		return
+	}
+	if kind != domain.TargetPreviewGuessText && kind != domain.TargetPreviewGuessNoIdea {
+		writeError(w, http.StatusBadRequest, errors.New("guess_kind must be text or no_idea"))
+		return
+	}
+	if kind == domain.TargetPreviewGuessText && guessText == "" {
+		writeError(w, http.StatusBadRequest, errors.New("guess_text is required for text guesses"))
+		return
+	}
+	guess, err := h.repo.UpsertTargetPreviewGuess(r.Context(), userID, sessionID, domain.TargetPreviewGuess{
+		ItemID:    itemID,
+		GuessKind: kind,
+		GuessText: guessText,
+	})
+	if errors.Is(err, db.ErrInvalidTargetPreviewGuess) {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, targetPreviewAttemptDTOFromDomain(guess))
 }
 
 func (h *Handler) generateSession(w http.ResponseWriter, r *http.Request) {
@@ -493,7 +546,70 @@ func toSessionDetailDTO(detail domain.SessionDetail) sessionDetailDTO {
 		Tasks:            ov.Tasks,
 		StageSummary:     summarizeStages(ordered),
 		Stages:           stages,
+		TargetPreview:    targetPreviewDTO{Items: []targetPreviewItemDTO{}, Attempts: []targetPreviewAttemptDTO{}},
 	}
+}
+
+func (h *Handler) toSessionDetailDTO(ctx context.Context, userID string, detail domain.SessionDetail) (sessionDetailDTO, error) {
+	dto := toSessionDetailDTO(detail)
+	preview, err := h.targetPreviewDTO(ctx, userID, detail.Session)
+	if err != nil {
+		return sessionDetailDTO{}, err
+	}
+	dto.TargetPreview = preview
+	return dto, nil
+}
+
+func (h *Handler) targetPreviewDTO(ctx context.Context, userID string, sess domain.Session) (targetPreviewDTO, error) {
+	items := make([]targetPreviewItemDTO, 0, len(sess.SelectedTargets))
+	for _, itemID := range sess.SelectedTargets {
+		item, err := h.repo.GetKnowledgeItem(ctx, itemID)
+		if errors.Is(err, db.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return targetPreviewDTO{}, err
+		}
+		items = append(items, targetPreviewItemDTO{
+			ItemId:   item.ItemID,
+			Language: item.Language,
+			ItemType: item.ItemType,
+			Key:      item.Key,
+			Display:  targetPreviewDisplay(item),
+		})
+	}
+	guesses, err := h.repo.ListTargetPreviewGuesses(ctx, userID, sess.SessionID)
+	if err != nil {
+		return targetPreviewDTO{}, err
+	}
+	attempts := make([]targetPreviewAttemptDTO, 0, len(guesses))
+	for _, guess := range guesses {
+		attempts = append(attempts, targetPreviewAttemptDTOFromDomain(guess))
+	}
+	return targetPreviewDTO{Items: items, Attempts: attempts}, nil
+}
+
+func targetPreviewAttemptDTOFromDomain(guess domain.TargetPreviewGuess) targetPreviewAttemptDTO {
+	dto := targetPreviewAttemptDTO{
+		ItemId:    guess.ItemID,
+		GuessKind: oapigen.TargetPreviewGuessKind(guess.GuessKind),
+		GuessText: guess.GuessText,
+		CreatedAt: guess.CreatedAt,
+		UpdatedAt: derefF(guess.UpdatedAt),
+	}
+	if guess.Correct != nil {
+		dto.Correct = *guess.Correct
+	}
+	return dto
+}
+
+func targetPreviewDisplay(item domain.KnowledgeItem) string {
+	for _, key := range []string{"display", "surface", "label"} {
+		if v, ok := item.Metadata[key].(string); ok && strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return item.Key
 }
 
 func toLLMCallDTOs(calls []domain.LLMCall) []llmCallDTO {

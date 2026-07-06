@@ -610,6 +610,115 @@ func TestGetSessionDetailLocalMode(t *testing.T) {
 	}
 }
 
+func TestTargetPreviewDetailAndGuess(t *testing.T) {
+	srv, repo := newServer(t, false)
+	ctx := context.Background()
+	targetID, err := repo.UpsertKnowledgeItem(ctx, domain.KnowledgeItem{
+		Language: "xx", ItemType: "word", Key: "alpha", Metadata: map[string]any{"display": "Alpha"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherID, err := repo.UpsertKnowledgeItem(ctx, domain.KnowledgeItem{Language: "xx", ItemType: "word", Key: "beta"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := repo.CreateSession(ctx, domain.Session{
+		UserID: domain.LocalUserID, Language: "xx", Level: "beginner", Status: domain.StatusGenerating,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetSessionSelection(ctx, sess.SessionID, "", []string{targetID}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(srv.URL + "/api/v1/sessions/" + sess.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("detail = %d", resp.StatusCode)
+	}
+	var detail struct {
+		TargetPreview struct {
+			Items []struct {
+				ItemID  string `json:"item_id"`
+				Display string `json:"display"`
+			} `json:"items"`
+			Attempts []struct {
+				ItemID    string `json:"item_id"`
+				GuessKind string `json:"guess_kind"`
+				GuessText string `json:"guess_text"`
+			} `json:"attempts"`
+		} `json:"target_preview"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&detail); err != nil {
+		t.Fatal(err)
+	}
+	if len(detail.TargetPreview.Items) != 1 || detail.TargetPreview.Items[0].ItemID != targetID ||
+		detail.TargetPreview.Items[0].Display != "Alpha" || len(detail.TargetPreview.Attempts) != 0 {
+		t.Fatalf("bad initial target preview: %+v", detail.TargetPreview)
+	}
+
+	resp, err = http.Post(srv.URL+"/api/v1/sessions/"+sess.SessionID+"/target-preview/guesses", "application/json",
+		strings.NewReader(`{"item_id":"`+targetID+`","guess_kind":"text","guess_text":"letter"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("record guess = %d", resp.StatusCode)
+	}
+	var attempt struct {
+		ItemID    string `json:"item_id"`
+		GuessKind string `json:"guess_kind"`
+		GuessText string `json:"guess_text"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&attempt); err != nil {
+		t.Fatal(err)
+	}
+	if attempt.ItemID != targetID || attempt.GuessKind != "text" || attempt.GuessText != "letter" {
+		t.Fatalf("bad recorded attempt: %+v", attempt)
+	}
+	guesses, err := repo.ListTargetPreviewGuesses(ctx, domain.LocalUserID, sess.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(guesses) != 1 || guesses[0].ItemID != targetID || guesses[0].GuessText != "letter" {
+		t.Fatalf("guess not persisted: %+v", guesses)
+	}
+
+	resp, err = http.Post(srv.URL+"/api/v1/sessions/"+sess.SessionID+"/target-preview/guesses", "application/json",
+		strings.NewReader(`{"item_id":"`+otherID+`","guess_kind":"no_idea"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("non-target guess = %d, want 400", resp.StatusCode)
+	}
+
+	otherUser := "preview-other-user"
+	if _, err := repo.CreateUser(ctx, domain.User{UserID: otherUser, Email: "preview-other@example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	otherSess, err := repo.CreateSession(ctx, domain.Session{UserID: otherUser, Language: "xx", Level: "beginner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err = http.Post(srv.URL+"/api/v1/sessions/"+otherSess.SessionID+"/target-preview/guesses", "application/json",
+		strings.NewReader(`{"item_id":"`+targetID+`","guess_kind":"no_idea"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("cross-tenant guess = %d, want 404", resp.StatusCode)
+	}
+}
+
 func TestGetSessionDebugIncludesOwnedLLMCalls(t *testing.T) {
 	srv, repo := newServer(t, false)
 	ctx := context.Background()

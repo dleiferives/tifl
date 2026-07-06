@@ -34,6 +34,7 @@ type Store interface {
 	DeleteUserDefinition(ctx context.Context, userID, language, itemKey string) error
 	EnsureLocalUser(ctx context.Context) (domain.User, error)
 	GetLanguage(ctx context.Context, code string) (domain.Language, error)
+	GetKnowledgeItem(ctx context.Context, itemID string) (domain.KnowledgeItem, error)
 	LatestContentReportForTarget(ctx context.Context, kind, targetID string) (domain.ContentReport, error)
 	GetPhraseSet(ctx context.Context, sessionID string) (domain.PhraseSet, error)
 	GetSession(ctx context.Context, sessionID string) (domain.Session, error)
@@ -48,6 +49,7 @@ type Store interface {
 	ListSessionLLMCalls(ctx context.Context, userID, sessionID string) ([]domain.LLMCall, error)
 	ListSessionTasks(ctx context.Context, sessionID string) ([]domain.Task, error)
 	ListSessions(ctx context.Context, userID string, opts domain.ListSessionsOptions) ([]domain.SessionOverview, error)
+	ListTargetPreviewGuesses(ctx context.Context, userID, sessionID string) ([]domain.TargetPreviewGuess, error)
 	ListSkillProgress(ctx context.Context, userID, language string) ([]domain.SkillProgress, error)
 	ListSkills(ctx context.Context, language string) ([]domain.Skill, error)
 	ListStages(ctx context.Context, sessionID string) ([]domain.GenerationStage, error)
@@ -60,6 +62,7 @@ type Store interface {
 	RecordTaskGrade(ctx context.Context, userID, taskID string, g domain.TaskGrade) error
 	SetSessionArchived(ctx context.Context, userID, sessionID string, archived bool) error
 	UpdateContentReportOutcome(ctx context.Context, reportID, outcome, detail, replacementTaskID string) error
+	UpsertTargetPreviewGuess(ctx context.Context, userID, sessionID string, guess domain.TargetPreviewGuess) (domain.TargetPreviewGuess, error)
 	UpdateUserProfile(ctx context.Context, userID string, patch domain.UserProfilePatch) (domain.UserProfile, error)
 	UpsertUserDefinition(ctx context.Context, d domain.UserDefinition) (domain.UserDefinition, error)
 }

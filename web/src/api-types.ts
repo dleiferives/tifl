@@ -334,6 +334,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions/{id}/target-preview/guesses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record an ungraded target-preview guess
+         * @description Stores one warm-up attempt for a selected target item in this session. Attempts are ungraded learning-prep data: they do not update knowledge state and may be replaced by re-submitting the same item. The item must be one of the session's selected targets.
+         */
+        post: operations["recordTargetPreviewGuess"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{id}/events": {
         parameters: {
             query?: never;
@@ -902,6 +922,39 @@ export interface components {
             completed: number;
             pending: number;
         };
+        /** @enum {string} */
+        TargetPreviewGuessKind: "text" | "no_idea";
+        /** @description One ungraded warm-up attempt for a selected target item. */
+        TargetPreviewAttempt: {
+            item_id: string;
+            guess_kind: components["schemas"]["TargetPreviewGuessKind"];
+            guess_text?: string;
+            /** @description Present only when correctness is computable without an LLM call. */
+            correct?: boolean;
+            /** Format: double */
+            created_at: number;
+            /** Format: double */
+            updated_at?: number;
+        };
+        /** @description A selected target item suitable for the generation warm-up. */
+        TargetPreviewItem: {
+            item_id: string;
+            language: string;
+            item_type: string;
+            key: string;
+            display: string;
+        };
+        /** @description Selected targets and any ungraded preview attempts for this session. */
+        TargetPreview: {
+            items: components["schemas"]["TargetPreviewItem"][];
+            attempts: components["schemas"]["TargetPreviewAttempt"][];
+        };
+        TargetPreviewGuessRequest: {
+            item_id: string;
+            guess_kind: components["schemas"]["TargetPreviewGuessKind"];
+            /** @description Required when guess_kind is text; ignored for no_idea. */
+            guess_text?: string;
+        };
         /** @description One home/resume row for the current user. */
         SessionOverview: {
             session_id: string;
@@ -963,6 +1016,7 @@ export interface components {
         SessionDetail: components["schemas"]["SessionOverview"] & {
             stage_summary: components["schemas"]["StageSummary"];
             stages: components["schemas"]["GenerationStageRecord"][];
+            target_preview?: components["schemas"]["TargetPreview"];
         };
         /** @description One llm_calls audit row scoped to a session and current user. */
         LLMCall: {
@@ -1887,6 +1941,36 @@ export interface operations {
                     "application/json": components["schemas"]["SessionContent"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    recordTargetPreviewGuess: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SessionID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TargetPreviewGuessRequest"];
+            };
+        };
+        responses: {
+            /** @description Guess recorded */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TargetPreviewAttempt"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];

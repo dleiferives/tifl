@@ -124,6 +124,72 @@ func (r *SQLRepository) GetSessionDetail(ctx context.Context, userID, sessionID 
 	return domain.SessionDetail{SessionOverview: overview, Stages: stages}, nil
 }
 
+func (r *SQLRepository) ListTargetPreviewGuesses(ctx context.Context, userID, sessionID string) ([]domain.TargetPreviewGuess, error) {
+	rows, err := r.query(ctx,
+		`SELECT g.session_id, g.user_id, g.item_id, g.guess_kind, COALESCE(g.guess_text, ''),
+		        g.correct, g.created_at, g.updated_at
+		 FROM session_preview_guesses g
+		 JOIN sessions s ON s.session_id = g.session_id AND s.user_id = g.user_id
+		 WHERE g.user_id = ? AND g.session_id = ?
+		 ORDER BY g.created_at, g.item_id`, userID, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domain.TargetPreviewGuess
+	for rows.Next() {
+		g, err := scanTargetPreviewGuess(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+func (r *SQLRepository) UpsertTargetPreviewGuess(ctx context.Context, userID, sessionID string, guess domain.TargetPreviewGuess) (domain.TargetPreviewGuess, error) {
+	sess, err := r.GetSession(ctx, sessionID)
+	if err != nil {
+		return domain.TargetPreviewGuess{}, err
+	}
+	if sess.UserID != userID || !containsString(sess.SelectedTargets, guess.ItemID) {
+		return domain.TargetPreviewGuess{}, ErrInvalidTargetPreviewGuess
+	}
+	if guess.GuessKind != domain.TargetPreviewGuessText && guess.GuessKind != domain.TargetPreviewGuessNoIdea {
+		return domain.TargetPreviewGuess{}, ErrInvalidTargetPreviewGuess
+	}
+	if guess.GuessKind == domain.TargetPreviewGuessText && strings.TrimSpace(guess.GuessText) == "" {
+		return domain.TargetPreviewGuess{}, ErrInvalidTargetPreviewGuess
+	}
+	if guess.GuessKind == domain.TargetPreviewGuessNoIdea {
+		guess.GuessText = ""
+	}
+	now := float64(time.Now().UnixMilli()) / 1000
+	var (
+		correct sql.NullBool
+		updated sql.NullFloat64
+	)
+	err = r.queryRow(ctx,
+		`INSERT INTO session_preview_guesses(session_id, user_id, item_id, guess_kind, guess_text, correct, created_at, updated_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, NULL)
+		 ON CONFLICT(session_id, item_id) DO UPDATE SET
+		   guess_kind = excluded.guess_kind,
+		   guess_text = excluded.guess_text,
+		   correct = excluded.correct,
+		   updated_at = ?
+		 RETURNING session_id, user_id, item_id, guess_kind, COALESCE(guess_text, ''), correct, created_at, updated_at`,
+		sessionID, userID, guess.ItemID, string(guess.GuessKind), nullEmpty(guess.GuessText), nullBool(guess.Correct), now, now).
+		Scan(&guess.SessionID, &guess.UserID, &guess.ItemID, &guess.GuessKind, &guess.GuessText,
+			&correct, &guess.CreatedAt, &updated)
+	if err != nil {
+		return domain.TargetPreviewGuess{}, err
+	}
+	guess.Correct = boolPtr(correct)
+	guess.UpdatedAt = floatPtr(updated)
+	return guess, nil
+}
+
 func (r *SQLRepository) UpdateSessionStatus(ctx context.Context, sessionID string, status domain.SessionStatus) error {
 	res, err := r.exec(ctx,
 		`UPDATE sessions SET status = ? WHERE session_id = ?`, string(status), sessionID)
@@ -967,6 +1033,21 @@ func scanContentReport(row rowScanner) (domain.ContentReport, error) {
 	return report, nil
 }
 
+func scanTargetPreviewGuess(row rowScanner) (domain.TargetPreviewGuess, error) {
+	var (
+		g       domain.TargetPreviewGuess
+		correct sql.NullBool
+		updated sql.NullFloat64
+	)
+	if err := row.Scan(&g.SessionID, &g.UserID, &g.ItemID, &g.GuessKind, &g.GuessText,
+		&correct, &g.CreatedAt, &updated); err != nil {
+		return domain.TargetPreviewGuess{}, err
+	}
+	g.Correct = boolPtr(correct)
+	g.UpdatedAt = floatPtr(updated)
+	return g, nil
+}
+
 // inTx runs fn inside a transaction, committing on success and rolling back on
 // any error so multi-row writes (token/glossary replace, task + targets) are
 // atomic.
@@ -1006,6 +1087,15 @@ func nullEmpty(s string) any {
 		return nil
 	}
 	return s
+}
+
+func containsString(values []string, target string) bool {
+	for _, v := range values {
+		if v == target {
+			return true
+		}
+	}
+	return false
 }
 
 // marshalStrings stores a string slice as a JSON array, or NULL when empty so an

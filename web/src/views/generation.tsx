@@ -3,8 +3,10 @@ import { createStore, reconcile } from "solid-js/store";
 import {
   APIError,
   getSessionDetail,
+  recordTargetPreviewGuess,
   retrySession,
   streamGenerationEvents,
+  type APIResponse,
   type GenerationEvent,
 } from "../api";
 import { routeHref, sessionHref } from "../router";
@@ -12,6 +14,9 @@ import { appStore } from "../store";
 import { writeStartDraft, type SessionMode } from "./start";
 
 type StageStatus = "pending" | "in_progress" | "complete" | "failed";
+type TargetPreview = NonNullable<APIResponse<"getSessionDetail", 200>["target_preview"]>;
+type TargetPreviewItem = TargetPreview["items"][number];
+type TargetPreviewAttempt = TargetPreview["attempts"][number];
 
 interface StageState {
   status: StageStatus;
@@ -58,9 +63,14 @@ export function GenerationView(props: { sessionId: string; onReady?: () => void 
   const [connectionError, setConnectionError] = createSignal(false);
   const [retrying, setRetrying] = createSignal(false);
   const [actionError, setActionError] = createSignal("");
+  const [preview, setPreview] = createSignal<TargetPreview | null>(null);
+  const [previewError, setPreviewError] = createSignal("");
+  const [savingPreviewItem, setSavingPreviewItem] = createSignal("");
+  const [drafts, setDrafts] = createStore<Record<string, string>>({});
 
   let stop: (() => void) | undefined;
   let readyNotified = false;
+  let previewSeq = 0;
 
   const subscribe = () => {
     stop?.();
@@ -70,6 +80,7 @@ export function GenerationView(props: { sessionId: string; onReady?: () => void 
     setTokenRate(0);
     setResult(null);
     setConnectionError(false);
+    void loadPreview();
     stop = streamGenerationEvents(props.sessionId, {
       onEvent: applyEvent,
       onError: () => setConnectionError(true),
@@ -79,6 +90,7 @@ export function GenerationView(props: { sessionId: string; onReady?: () => void 
   const applyEvent = (event: GenerationEvent) => {
     if (event.stage === "done") {
       setResult(event);
+      void loadPreview();
       if (!readyNotified && (event.status === "ready" || event.status === "complete")) {
         readyNotified = true;
         props.onReady?.();
@@ -90,11 +102,26 @@ export function GenerationView(props: { sessionId: string; onReady?: () => void 
     }
     if (event.status) {
       setStages(event.stage, { status: event.status as StageStatus });
+      if (event.stage === "selection" && event.status === "complete") {
+        void loadPreview();
+      }
     } else if (!(event.stage in stages)) {
       setStages(event.stage, { status: "in_progress" });
     }
     if (typeof event.token_rate === "number" && event.token_rate > 0) {
       setTokenRate(event.token_rate);
+    }
+  };
+
+  const loadPreview = async () => {
+    const seq = ++previewSeq;
+    try {
+      const detail = await getSessionDetail(props.sessionId);
+      if (seq === previewSeq) {
+        setPreview(detail.target_preview ?? { items: [], attempts: [] });
+      }
+    } catch {
+      // Preview is helpful but never blocks generation progress or opening.
     }
   };
 
@@ -125,6 +152,28 @@ export function GenerationView(props: { sessionId: string; onReady?: () => void 
     } finally {
       finish();
       setRetrying(false);
+    }
+  };
+
+  const submitPreviewGuess = async (itemID: string, kind: "text" | "no_idea") => {
+    const guessText = (drafts[itemID] ?? "").trim();
+    if (kind === "text" && !guessText) {
+      setPreviewError("Enter a guess or choose no idea.");
+      return;
+    }
+    setPreviewError("");
+    setSavingPreviewItem(itemID);
+    try {
+      const attempt = await recordTargetPreviewGuess(props.sessionId, {
+        item_id: itemID,
+        guess_kind: kind,
+        guess_text: kind === "text" ? guessText : undefined,
+      });
+      setPreview((current) => mergePreviewAttempt(current, attempt));
+    } catch {
+      setPreviewError("Couldn't save that guess.");
+    } finally {
+      setSavingPreviewItem("");
     }
   };
 
@@ -177,6 +226,15 @@ export function GenerationView(props: { sessionId: string; onReady?: () => void 
       <Show when={actionError()}>
         <p class="form-error" role="alert">{actionError()}</p>
       </Show>
+
+      <TargetPreviewWarmup
+        preview={preview()}
+        drafts={drafts}
+        savingItem={savingPreviewItem()}
+        error={previewError()}
+        onDraft={(itemID, value) => setDrafts(itemID, value)}
+        onSubmit={submitPreviewGuess}
+      />
 
       <Switch>
         <Match when={connectionError() && !result()}>
@@ -278,6 +336,112 @@ function TokenTicker(props: { rate: number }) {
       <span class="token-ticker-rate">{props.rate > 0 ? `${props.rate} tok/s` : "warming up…"}</span>
     </span>
   );
+}
+
+function TargetPreviewWarmup(props: {
+  preview: TargetPreview | null;
+  drafts: Record<string, string>;
+  savingItem: string;
+  error: string;
+  onDraft: (itemID: string, value: string) => void;
+  onSubmit: (itemID: string, kind: "text" | "no_idea") => Promise<void>;
+}) {
+  const items = createMemo(() => props.preview?.items ?? []);
+  const attempts = createMemo(() => new Map((props.preview?.attempts ?? []).map((attempt) => [attempt.item_id, attempt])));
+  const answered = createMemo(() => items().filter((item) => attempts().has(item.item_id)).length);
+
+  return (
+    <Show when={items().length > 0}>
+      <section class="target-preview-panel" aria-label="Target preview warm-up">
+        <header>
+          <div>
+            <h2>Warm-up</h2>
+            <p>No scores. Reading is the feedback.</p>
+          </div>
+          <span>{answered()} / {items().length}</span>
+        </header>
+        <ol class="target-preview-list">
+          <For each={items()}>
+            {(item) => (
+              <TargetPreviewRow
+                item={item}
+                attempt={attempts().get(item.item_id)}
+                value={props.drafts[item.item_id] ?? ""}
+                saving={props.savingItem === item.item_id}
+                onDraft={(value) => props.onDraft(item.item_id, value)}
+                onSubmit={(kind) => void props.onSubmit(item.item_id, kind)}
+              />
+            )}
+          </For>
+        </ol>
+        <Show when={props.error}>
+          <p class="form-error" role="alert">{props.error}</p>
+        </Show>
+      </section>
+    </Show>
+  );
+}
+
+function TargetPreviewRow(props: {
+  item: TargetPreviewItem;
+  attempt: TargetPreviewAttempt | undefined;
+  value: string;
+  saving: boolean;
+  onDraft: (value: string) => void;
+  onSubmit: (kind: "text" | "no_idea") => void;
+}) {
+  return (
+    <li class="target-preview-item">
+      <div>
+        <p lang={props.item.language}>{props.item.display}</p>
+        <span>{props.item.item_type}</span>
+      </div>
+      <Show
+        when={props.attempt}
+        fallback={
+          <form
+            class="target-preview-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              props.onSubmit("text");
+            }}
+          >
+            <input
+              type="text"
+              value={props.value}
+              onInput={(event) => props.onDraft(event.currentTarget.value)}
+              disabled={props.saving}
+              aria-label={`Guess the meaning of ${props.item.display}`}
+              autocomplete="off"
+            />
+            <button class="secondary-button" type="submit" disabled={props.saving}>
+              {props.saving ? "Saving..." : "Save"}
+            </button>
+            <button class="secondary-button" type="button" disabled={props.saving} onClick={() => props.onSubmit("no_idea")}>
+              No idea
+            </button>
+          </form>
+        }
+      >
+        {(attempt) => (
+          <p class="target-preview-saved">
+            {attempt().guess_kind === "no_idea" ? "No idea saved" : `Saved: ${attempt().guess_text}`}
+          </p>
+        )}
+      </Show>
+    </li>
+  );
+}
+
+function mergePreviewAttempt(current: TargetPreview | null, attempt: TargetPreviewAttempt): TargetPreview {
+  const base = current ?? { items: [], attempts: [] };
+  return {
+    items: base.items,
+    attempts: [
+      ...base.attempts.filter((existing) => existing.item_id !== attempt.item_id),
+      attempt,
+    ],
+  };
 }
 
 function stageGlyph(status: StageStatus): string {

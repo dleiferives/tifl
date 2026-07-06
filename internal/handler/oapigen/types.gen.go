@@ -740,6 +740,24 @@ func (e SubmitTaskRequestInputMethod) Valid() bool {
 	}
 }
 
+// Defines values for TargetPreviewGuessKind.
+const (
+	NoIdea TargetPreviewGuessKind = "no_idea"
+	Text   TargetPreviewGuessKind = "text"
+)
+
+// Valid indicates whether the value is a known member of the TargetPreviewGuessKind enum.
+func (e TargetPreviewGuessKind) Valid() bool {
+	switch e {
+	case NoIdea:
+		return true
+	case Text:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TaskReportReason.
 const (
 	Malformed      TaskReportReason = "malformed"
@@ -1339,10 +1357,13 @@ type SessionDetail struct {
 	Status         SessionDetailStatus      `json:"status"`
 
 	// StoryId present once story generation has persisted a story
-	StoryId         string       `json:"story_id,omitempty"`
-	Tasks           TaskProgress `json:"tasks"`
-	Topic           string       `json:"topic,omitempty"`
-	UserExpressions []string     `json:"user_expressions,omitempty"`
+	StoryId string `json:"story_id,omitempty"`
+
+	// TargetPreview Selected targets and any ungraded preview attempts for this session.
+	TargetPreview   TargetPreview `json:"target_preview,omitempty"`
+	Tasks           TaskProgress  `json:"tasks"`
+	Topic           string        `json:"topic,omitempty"`
+	UserExpressions []string      `json:"user_expressions,omitempty"`
 }
 
 // SessionDetailContentType what the session's content is — a narrative story or a phrase set. Derived from the session shape (expression-guided + expression_output phrases is a phrase set; everything else is a story). Tells the client whether to load /stories/{id} or the phrase set via /sessions/{id}/content.
@@ -1556,6 +1577,44 @@ type SubmitTaskResponse struct {
 	TaskId  string         `json:"task_id"`
 }
 
+// TargetPreview Selected targets and any ungraded preview attempts for this session.
+type TargetPreview struct {
+	Attempts []TargetPreviewAttempt `json:"attempts"`
+	Items    []TargetPreviewItem    `json:"items"`
+}
+
+// TargetPreviewAttempt One ungraded warm-up attempt for a selected target item.
+type TargetPreviewAttempt struct {
+	// Correct Present only when correctness is computable without an LLM call.
+	Correct   bool                   `json:"correct,omitempty"`
+	CreatedAt float64                `json:"created_at"`
+	GuessKind TargetPreviewGuessKind `json:"guess_kind"`
+	GuessText string                 `json:"guess_text,omitempty"`
+	ItemId    string                 `json:"item_id"`
+	UpdatedAt float64                `json:"updated_at,omitempty"`
+}
+
+// TargetPreviewGuessKind defines model for TargetPreviewGuessKind.
+type TargetPreviewGuessKind string
+
+// TargetPreviewGuessRequest defines model for TargetPreviewGuessRequest.
+type TargetPreviewGuessRequest struct {
+	GuessKind TargetPreviewGuessKind `json:"guess_kind"`
+
+	// GuessText Required when guess_kind is text; ignored for no_idea.
+	GuessText string `json:"guess_text,omitempty"`
+	ItemId    string `json:"item_id"`
+}
+
+// TargetPreviewItem A selected target item suitable for the generation warm-up.
+type TargetPreviewItem struct {
+	Display  string `json:"display"`
+	ItemId   string `json:"item_id"`
+	ItemType string `json:"item_type"`
+	Key      string `json:"key"`
+	Language string `json:"language"`
+}
+
 // Task One task in presentation form (answer-free content + grade once submitted).
 type Task struct {
 	// Content Present-filtered content — never includes answer keys.
@@ -1747,6 +1806,9 @@ type PutReaderSurfaceKnowledgeJSONRequestBody = ReaderSurfaceKnowledgeRequest
 
 // GenerateSessionJSONRequestBody defines body for GenerateSession for application/json ContentType.
 type GenerateSessionJSONRequestBody = GenerateRequest
+
+// RecordTargetPreviewGuessJSONRequestBody defines body for RecordTargetPreviewGuess for application/json ContentType.
+type RecordTargetPreviewGuessJSONRequestBody = TargetPreviewGuessRequest
 
 // ImportStoryJSONRequestBody defines body for ImportStory for application/json ContentType.
 type ImportStoryJSONRequestBody = ImportStoryRequest

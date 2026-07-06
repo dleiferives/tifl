@@ -219,3 +219,24 @@ type TaskGrade struct {
 	GradedBy          string
 	GradedAt          float64
 }
+
+type TargetPreviewGuessKind string
+
+const (
+	TargetPreviewGuessText   TargetPreviewGuessKind = "text"
+	TargetPreviewGuessNoIdea TargetPreviewGuessKind = "no_idea"
+)
+
+// TargetPreviewGuess is an ungraded warm-up attempt for one selected session
+// target. It is joinable to task_targets by (session_id, item_id) for before /
+// after measurement, but it never feeds acquisition scoring directly.
+type TargetPreviewGuess struct {
+	SessionID string
+	UserID    string
+	ItemID    string
+	GuessKind TargetPreviewGuessKind
+	GuessText string
+	Correct   *bool
+	CreatedAt float64
+	UpdatedAt *float64
+}

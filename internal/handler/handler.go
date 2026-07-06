@@ -88,6 +88,7 @@ func currentAPIRoutes() []apiRoute {
 		{Method: http.MethodPost, Path: "/api/v1/sessions/{id}/archive", Handler: (*Handler).archiveSession, RequireUser: true},
 		{Method: http.MethodDelete, Path: "/api/v1/sessions/{id}/archive", Handler: (*Handler).unarchiveSession, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/sessions/{id}/content", Handler: (*Handler).getSessionContent, RequireUser: true},
+		{Method: http.MethodPost, Path: "/api/v1/sessions/{id}/target-preview/guesses", Handler: (*Handler).recordTargetPreviewGuess, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/sessions/{id}/events", Handler: (*Handler).sessionEvents, RequireUser: true},
 		{Method: http.MethodPost, Path: "/api/v1/sessions/{id}/reading", Handler: (*Handler).startReading, RequireUser: true},
 		{Method: http.MethodPost, Path: "/api/v1/sessions/{id}/complete", Handler: (*Handler).completeSession, RequireUser: true},
