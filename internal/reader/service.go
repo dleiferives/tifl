@@ -147,14 +147,19 @@ func (s *Service) IngestOnly(ctx context.Context, userID string, events []domain
 		return 0, nil, nil
 	}
 	stories := map[string]struct{}{}
+	accepted := events[:0]
 	for i := range events {
 		events[i].UserID = userID // never trust the client's user_id
 		sid := events[i].StoryID
 		if sid == "" {
 			return 0, nil, fmt.Errorf("%w: missing story_id", ErrInvalidEvent)
 		}
-		if err := s.validateEvent(ctx, userID, events[i]); err != nil {
+		ok, err := s.normalizeEvent(ctx, userID, &events[i])
+		if err != nil {
 			return 0, nil, err
+		}
+		if !ok {
+			continue
 		}
 		if _, ok := stories[sid]; !ok {
 			// Ownership/existence check up front so a bad batch 404s at flush
@@ -164,8 +169,9 @@ func (s *Service) IngestOnly(ctx context.Context, userID string, events []domain
 			}
 			stories[sid] = struct{}{}
 		}
+		accepted = append(accepted, events[i])
 	}
-	inserted, err := s.repo.InsertReaderEvents(ctx, events)
+	inserted, err := s.repo.InsertReaderEvents(ctx, accepted)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -266,22 +272,42 @@ func (s *Service) ProcessPendingEvents(ctx context.Context, userID, storyID stri
 	return s.repo.MarkReaderEventsProcessed(ctx, eventIDs, s.now())
 }
 
-func (s *Service) validateEvent(ctx context.Context, userID string, e domain.ReaderEvent) error {
+func (s *Service) normalizeEvent(ctx context.Context, userID string, e *domain.ReaderEvent) (bool, error) {
 	switch e.EventType {
 	case domain.ReaderEventLookup, domain.ReaderEventRate, domain.ReaderEventNavigate, domain.ReaderEventSentenceBreak:
-		return nil
+		return true, nil
 	case domain.ReaderEventReferencePeek:
-		if e.SessionID == nil || len(referencePeekTaskIDs(e)) == 0 {
-			return fmt.Errorf("%w: reference_peek requires session_id and task_ids", ErrInvalidEvent)
+		if e.SessionID == nil {
+			return false, fmt.Errorf("%w: reference_peek requires session_id and task_ids", ErrInvalidEvent)
 		}
-		return s.validateSessionEvent(ctx, userID, e)
+		taskIDs := referencePeekTaskIDs(*e)
+		if len(taskIDs) == 0 {
+			return false, fmt.Errorf("%w: reference_peek requires session_id and task_ids", ErrInvalidEvent)
+		}
+		if err := s.validateSessionEvent(ctx, userID, *e); err != nil {
+			return false, err
+		}
+		unanswered, err := s.unansweredTaskIDs(ctx, userID, *e.SessionID, taskIDs)
+		if err != nil {
+			return false, err
+		}
+		if len(unanswered) == 0 {
+			return false, nil
+		}
+		payload, err := json.Marshal(map[string][]string{"task_ids": unanswered})
+		if err != nil {
+			return false, err
+		}
+		v := string(payload)
+		e.Value = &v
+		return true, nil
 	case domain.ReaderEventNotReadyReadAgain:
 		if e.SessionID == nil {
-			return fmt.Errorf("%w: not_ready_read_again requires session_id", ErrInvalidEvent)
+			return false, fmt.Errorf("%w: not_ready_read_again requires session_id", ErrInvalidEvent)
 		}
-		return s.validateSessionEvent(ctx, userID, e)
+		return true, s.validateSessionEvent(ctx, userID, *e)
 	default:
-		return fmt.Errorf("%w: unknown event_type %q", ErrInvalidEvent, e.EventType)
+		return false, fmt.Errorf("%w: unknown event_type %q", ErrInvalidEvent, e.EventType)
 	}
 }
 
@@ -297,6 +323,35 @@ func (s *Service) validateSessionEvent(ctx context.Context, userID string, e dom
 		return fmt.Errorf("%w: event story_id does not match session", ErrInvalidEvent)
 	}
 	return nil
+}
+
+func (s *Service) unansweredTaskIDs(ctx context.Context, userID, sessionID string, requested []string) ([]string, error) {
+	tasks, err := s.repo.ListSessionTasks(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	byID := map[string]domain.Task{}
+	for _, task := range tasks {
+		if task.UserID == userID {
+			byID[task.TaskID] = task
+		}
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, taskID := range requested {
+		if seen[taskID] {
+			continue
+		}
+		task, ok := byID[taskID]
+		if !ok {
+			return nil, fmt.Errorf("%w: reference_peek task %q is not in session", ErrInvalidEvent, taskID)
+		}
+		seen[taskID] = true
+		if task.GradedAt == nil && task.GradedBy == "" {
+			out = append(out, taskID)
+		}
+	}
+	return out, nil
 }
 
 func (s *Service) applyNotReady(ctx context.Context, userID string, e domain.ReaderEvent) error {

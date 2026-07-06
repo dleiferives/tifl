@@ -13,6 +13,7 @@ import (
 type Store interface {
 	GetSession(ctx context.Context, sessionID string) (domain.Session, error)
 	GetStory(ctx context.Context, storyID string) (domain.Story, error)
+	ListSessionTasks(ctx context.Context, sessionID string) ([]domain.Task, error)
 	ListStoryTokens(ctx context.Context, storyID string) ([]domain.StoryToken, error)
 	ListStoryGlossary(ctx context.Context, storyID string) ([]domain.StoryGlossaryEntry, error)
 	ListKnowledgeItems(ctx context.Context, language string) ([]domain.KnowledgeItem, error)

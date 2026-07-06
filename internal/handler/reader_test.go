@@ -208,6 +208,57 @@ func TestPostReaderEventsAcceptsPeekAndNotReady(t *testing.T) {
 	}
 }
 
+func TestPostReaderEventsSkipsSubmittedPeekTasks(t *testing.T) {
+	srv, repo := newServer(t, false)
+	ctx := context.Background()
+	storyID := seedStory(t, repo)
+	seedItem(t, repo, "target1", "target")
+	sess, err := repo.CreateSession(ctx, domain.Session{
+		UserID: domain.LocalUserID, StoryID: &storyID, Language: "xx", Level: "beginner",
+		SelectedTargets: []string{"target1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := repo.CreateTask(ctx, domain.Task{
+		SessionID: sess.SessionID, UserID: domain.LocalUserID, TaskType: "comprehension_mc",
+		Language: "xx", Content: map[string]any{"question": "?", "options": []any{"x"}, "correct_index": float64(0)},
+	}, []string{"target1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RecordTaskGrade(ctx, domain.LocalUserID, task.TaskID, domain.TaskGrade{
+		Response: map[string]any{"selected_index": float64(0)},
+		Grade:    map[string]any{"correct": true, "score": float64(1)},
+		GradedBy: "rule",
+		GradedAt: 1000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{"events":[
+		{"event_id":"peek-submitted","story_id":"` + storyID + `","session_id":"` + sess.SessionID + `","event_type":"reference_peek","task_ids":["` + task.TaskID + `"]}
+	]}`
+	resp, err := http.Post(srv.URL+"/api/v1/reader/events", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("want 202, got %d: %s", resp.StatusCode, raw)
+	}
+	var out struct {
+		Ingested int `json:"ingested"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Ingested != 0 {
+		t.Fatalf("submitted-task peek should be skipped, ingested %d", out.Ingested)
+	}
+}
+
 func TestPutWordKnowledgeWritesCanonicalLevel(t *testing.T) {
 	srv, repo := newServer(t, false)
 	storyID := seedStory(t, repo)
