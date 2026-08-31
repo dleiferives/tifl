@@ -5,6 +5,7 @@ import { createHashRouter, routeHref, sessionHref, type Route } from "./router";
 import { appStore } from "./store";
 import { AdminCallLogView, AdminCostView, AdminSessionView, AdminUserView } from "./views/admin";
 import { DebugView } from "./views/debug";
+import { ConversationView } from "./views/conversation";
 import { HomeView } from "./views/home";
 import { ImportView } from "./views/import";
 import { LibraryView } from "./views/library";
@@ -39,6 +40,9 @@ function App() {
             <Match when={route().name === "library"}><LibraryView /></Match>
             <Match when={route().name === "settings"}><SettingsView /></Match>
             <Match when={route().name === "skills"}><SkillsView /></Match>
+			<Match when={route().name === "conversation"}>
+			  <ConversationView conversationId={(route() as Extract<Route, { name: "conversation" }>).conversationId} />
+			</Match>
             <Match when={route().name === "session"}>
               <SessionShellView
                 sessionId={(route() as Extract<Route, { name: "session" }>).sessionId}
@@ -126,6 +130,7 @@ function AppLayout(props: { route: Route; children: JSX.Element }) {
           <a href={routeHref("/")} aria-current={isCurrent("home")}>Home</a>
           <a href={routeHref("/import")} aria-current={isCurrent("import")}>Add story</a>
           <a href={routeHref("/library")} aria-current={isCurrent("library")}>Library</a>
+		  <a href={routeHref("/conversation")} aria-current={isCurrent("conversation")}>Greek coach</a>
           <a href={routeHref("/skills")} aria-current={isCurrent("skills")}>Skills</a>
           <a href={routeHref("/settings")} aria-current={isCurrent("settings")}>Settings</a>
           <Show when={appStore.isAdmin()}>

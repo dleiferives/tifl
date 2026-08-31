@@ -162,6 +162,7 @@ export function HomeView() {
           <a class="button-link" href={routeHref("/import")}>Add story</a>
           <a class="button-link secondary-link" href={routeHref("/start")}>Generate a story</a>
           <a class="button-link secondary-link" href={routeHref("/library")}>Library</a>
+		  <a class="button-link secondary-link" href={routeHref("/conversation")}>Greek story coach</a>
         </div>
       </header>
 

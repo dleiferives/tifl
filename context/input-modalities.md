@@ -25,41 +25,59 @@ task row.
 
 ---
 
-## Modality 2: Conversational Speech
+## Modality 2: Adaptive Greek Story Conversation
 
 ### The Problem It Solves
 
-Reading and typing are recognition tasks — the user sees or hears something and
-responds. Speaking is a production task — the user must generate language from
-scratch, which is where fluency is actually built. The conversational modality
-forces production and reveals gaps that reading alone never would.
+The learner needs a large amount of Greek input but also needs to think about the
+meaning rather than passively listen. The story conversation therefore alternates
+short target-language passages with a simple Socratic check: the learner gives
+their best English interpretation and identifies anything unclear.
 
-The other unique value: the user can express what they *want* to say but can't.
-That intent — "I wanted to say X but didn't know how" — is the strongest possible
-signal for what to teach next. No other modality captures it.
+Failure does not end the exercise or reveal a complete translation. It opens a
+smaller, easier narrative around the exact missing word or construction. Once the
+learner understands that sub-story, the system returns to the parent passage.
+This produces depth-first repair while one main story continues slowly.
 
 ### How It Works
 
 ```
-System generates a conversation prompt
-    └─ A question or scenario in the target language (or mixed)
-    └─ Seeded with specific knowledge items the system wants the user to use
+POST /api/v1/conversations
+    └─ Generate and persist a 1–3 sentence Greek root passage
+    └─ Ask for the learner's best interpretation and unclear parts
 
-User responds via speech
-    └─ Browser MediaRecorder API captures audio
-    └─ Audio posted to /api/v1/conversations/{id}/respond
-
-Server pipeline:
-    1. STT: audio → transcript (via LLM gateway, e.g. Whisper)
-    2. Analysis: LLM compares transcript to prompt + target items
-       └─ What did they use correctly?
-       └─ What did they struggle with (hesitations, self-corrections)?
-       └─ What did they avoid entirely?
-    3. Gap extraction: anything they wanted to say but couldn't
-    4. Signal update: correct uses → boost confidence, gaps → new items
+POST /api/v1/conversations/{id}/respond
+    ├─ Persist the learner turn
+    ├─ Assess: understood | partial | not_understood
+    ├─ partial / not_understood
+    │   ├─ Explain the precise gap briefly in English
+    │   ├─ Push the current passage onto the repair stack
+    │   └─ Generate a simpler Greek sub-story focused on the gap
+    └─ understood
+        ├─ stack non-empty: pop and retry that exact parent passage
+        └─ stack empty: continue the main story
 ```
 
-### The "How Do You Say X?" Feature
+The backend, not the model, owns push/pop transitions. Model output is structured
+content and an assessment; this prevents prompt drift from corrupting navigation.
+The main-story summary is preserved during repairs so a sub-story never silently
+becomes the canonical narrative.
+
+### Chat, Reader, and Audio Views
+
+There is one turn model and one conversation engine. Presentation is a view:
+
+- Chat shows assistant and learner turns together.
+- Reader focus hides prior learner bubbles and enlarges the Greek passage.
+- Greek text can be hidden for listening-first use.
+- The initial client can play Greek using the browser/device speech synthesizer.
+- Server-generated TTS and recorded speech/STT will populate `audio_url` and
+  `transcript` on the same turn contract; they do not require a second engine.
+
+Typed learner responses ship first. Speech input later records audio, performs
+STT, and submits the resulting transcript through the same response path.
+
+### The "How Do You Say X?" Feature (Future)
 
 During a conversation session the user can interrupt and ask how to say something
 in the target language. This is captured as a `conversation_gap`:
@@ -87,12 +105,25 @@ to `introduced` then `acquired`.
 conversations
     conversation_id     TEXT PK
     user_id             TEXT
-    language            TEXT
-    prompt_text         TEXT        what the system asked
-    prompt_item_ids     JSON        knowledge item IDs the system wanted used
-    audio_path          TEXT        media object key/ref for stored recording
-    transcript          TEXT        STT output
-    analysis            JSON        {used_correctly, struggled_with, gaps, notes}
+    language            TEXT        "el" in v1
+    level               TEXT
+    story_summary       TEXT
+    repair_stack        JSON        [{turn_id, focus}, ...]
+    status              TEXT
+    created_at          REAL
+    updated_at          REAL
+
+conversation_turns
+    turn_id             TEXT PK
+    conversation_id     TEXT
+    turn_index          INTEGER
+    role, kind, action, assessment
+    greek_text, english_text, prompt_text
+    input_text          TEXT        typed response
+    transcript          TEXT        future STT output
+    audio_path          TEXT        future media object key
+    focus               TEXT
+    reply_to_turn_id    TEXT
     created_at          REAL
 
 conversation_gaps
@@ -108,18 +139,12 @@ conversation_gaps
 
 ### Prompt Generation for Conversations
 
-The conversation prompt is generated by a prompt builder (see `prompting-system.md`)
-that receives the same `LearnerCtx` + `SelectedItems` as the story generator. The
-difference is the output format: instead of prose, the LLM produces a
-conversational scenario or question designed to elicit use of the target items.
-
-Examples for a Greek learner with "aorist indicative" as a target:
-- "Tell me about something you did yesterday."
-- "Your friend asks: what happened at the market? Respond in at least three sentences."
-
-The scenario is designed so that answering it naturally requires the target
-construction. This is the same principle as the story generator — embed the target
-in a communicative context, not an exercise context.
+The Greek v1 builder receives the level, compact main-story summary, repair
+depth, recent turns, and the learner's latest response. It returns only JSON with
+an assessment, Greek candidate passage, English feedback, next question, repair
+focus, and updated main-story summary. Follow-up work will add known-vocabulary
+and skill constraints from `LearnerCtx`; the transcript/stack contract does not
+change when those signals arrive.
 
 ---
 

@@ -398,24 +398,59 @@ reading session for debugging or model training.
 
 ### `conversations`
 
-Records of conversational practice sessions (speech input modality).
+Session-level state for the adaptive story conversation. The main narrative is
+durable; focused repair stories are transcript turns plus a small LIFO stack,
+not a graph of curriculum nodes.
 
 ```
 conversations
   conversation_id TEXT  PK
   user_id         TEXT  NOT NULL
-  language        TEXT  NOT NULL
-  prompt_text     TEXT  NOT NULL    what the system asked the user to discuss
-  prompt_item_ids JSON              item_ids the system wanted the user to use
-  audio_path      TEXT              media object key/ref for user's speech recording
-  transcript      TEXT              STT output
-  analysis        JSON              {used_correctly: [...], struggled_with: [...],
-                                     gaps: [...]}
+  language        TEXT  NOT NULL    "el" in the first release
+  level           TEXT  NOT NULL
+  story_summary   TEXT  NOT NULL    compact memory of the main narrative only
+  repair_stack    JSON  NOT NULL    [{turn_id, focus}, ...], top frame last
+  status          TEXT  NOT NULL    "active" | "complete"
   created_at      REAL  NOT NULL
+  updated_at      REAL  NOT NULL
 ```
 
-`audio_path` follows the same media object-key convention, for example
-`conversation_audio/{conversation_id}/{upload_id}.webm`.
+The legacy `prompt_text`, `prompt_item_ids`, `audio_path`, `transcript`, and
+`analysis` columns remain for migration compatibility but are not the adaptive
+loop's source of truth.
+
+### `conversation_turns`
+
+The ordered, append-only conversation transcript. A learner response and the
+assistant turn it produces are committed atomically with the corresponding
+repair-stack update.
+
+```
+conversation_turns
+  turn_id          TEXT  PK
+  conversation_id  TEXT  NOT NULL    FK → conversations.conversation_id
+  turn_index       INT   NOT NULL    unique within the conversation
+  role             TEXT  NOT NULL    "assistant" | "user"
+  kind             TEXT  NOT NULL    "story" | "repair_story" | "retry" |
+                                     "learner_response"
+  action           TEXT  NOT NULL    "continue_story" | "descend" |
+                                     "retry_parent" (assistant turns)
+  assessment       TEXT  NOT NULL    "understood" | "partial" |
+                                     "not_understood" (assistant turns)
+  greek_text       TEXT  NOT NULL    target passage; future TTS input
+  english_text     TEXT  NOT NULL    concise explanation/repair feedback
+  prompt_text      TEXT  NOT NULL    question shown after the passage
+  input_text       TEXT  NOT NULL    typed learner interpretation
+  audio_path       TEXT              future TTS or recorded speech object key
+  transcript       TEXT              future STT output
+  focus            TEXT  NOT NULL    word/construction isolated by a repair
+  reply_to_turn_id TEXT              FK → conversation_turns.turn_id
+  created_at       REAL  NOT NULL
+```
+
+`audio_path` follows the shared object-key convention, for example
+`conversation_audio/{conversation_id}/{turn_id}.mp3`. The API exposes a
+short-lived `audio_url`, never this key directly.
 
 ---
 

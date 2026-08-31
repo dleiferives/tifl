@@ -58,6 +58,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start an adaptive Greek story conversation
+         * @description Generates the first short Greek passage. The conversation transcript and depth-first repair stack are persisted before the response is returned.
+         */
+        post: operations["startConversation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/conversations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get an adaptive story conversation */
+        get: operations["getConversation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/conversations/{id}/respond": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit the learner's understanding of the current Greek passage
+         * @description Persists the learner response, assesses comprehension, and either descends into a simpler repair story, retries its parent, or continues the main narrative.
+         */
+        post: operations["respondToConversation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/register": {
         parameters: {
             query?: never;
@@ -919,6 +976,62 @@ export interface components {
             /** @enum {string} */
             key_strategy: "surface" | "lemma" | "root" | "stem";
             enabled: boolean;
+        };
+        /** @description Greek is the fixed target language in the first release. */
+        StartConversationRequest: {
+            /**
+             * @description Defaults to the learner profile level.
+             * @enum {string}
+             */
+            level?: "beginner" | "elementary" | "intermediate" | "upper-intermediate" | "advanced";
+        };
+        RespondConversationRequest: {
+            /** @description The learner's best English translation and any unclear parts. */
+            text: string;
+        };
+        Conversation: {
+            conversation_id: string;
+            /** @constant */
+            language: "el";
+            level: string;
+            /** @enum {string} */
+            status: "active" | "complete";
+            /** @description Compact main-narrative memory; repair stories do not replace it. */
+            story_summary: string;
+            repair_depth: number;
+            turns: components["schemas"]["ConversationTurn"][];
+            /** Format: double */
+            created_at: number;
+            /** Format: double */
+            updated_at: number;
+        };
+        ConversationTurn: {
+            turn_id: string;
+            /** @enum {string} */
+            role: "assistant" | "user";
+            /** @enum {string} */
+            kind: "story" | "repair_story" | "retry" | "learner_response";
+            /** @enum {string} */
+            action?: "continue_story" | "descend" | "retry_parent";
+            /** @enum {string} */
+            assessment?: "understood" | "partial" | "not_understood";
+            /** @description Target-language passage; suitable for display and future TTS. */
+            greek_text?: string;
+            /** @description Brief correction or teaching feedback. */
+            english_text?: string;
+            /** @description Learner-facing request for a translation/uncertainty report. */
+            prompt_text?: string;
+            /** @description Typed learner response. */
+            input_text?: string;
+            /** @description Future STT transcript for spoken learner input. */
+            transcript?: string;
+            /** @description Future server-issued URL for assistant TTS audio. */
+            audio_url?: string;
+            /** @description The specific word or construction targeted by a repair story. */
+            focus?: string;
+            reply_to_turn_id?: string;
+            /** Format: double */
+            created_at: number;
         };
         Credentials: {
             email: string;
@@ -1847,6 +1960,91 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    startConversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartConversationRequest"];
+            };
+        };
+        responses: {
+            /** @description Conversation started */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Conversation"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getConversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Conversation and ordered transcript */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Conversation"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    respondToConversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RespondConversationRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated conversation and transcript */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Conversation"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             502: components["responses"]["BadGateway"];
             503: components["responses"]["ServiceUnavailable"];
         };

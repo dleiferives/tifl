@@ -37,6 +37,10 @@ var ErrInvalidAuthSecurityEvent = errors.New("db: invalid auth security event")
 // item outside the session's selected target list or has an invalid shape.
 var ErrInvalidTargetPreviewGuess = errors.New("db: invalid target preview guess")
 
+// ErrConversationConflict is returned when a learner response targets a turn
+// that is no longer current (for example, two browser tabs responded at once).
+var ErrConversationConflict = errors.New("db: conversation advanced")
+
 // errNestedTx is returned when Tx is called from inside a Tx callback.
 var errNestedTx = errors.New("db: nested Tx is not supported")
 
@@ -136,6 +140,14 @@ type Repository interface {
 	// given Unix time — the spend measure behind per-user budgets (#208). Uses
 	// the (user_id, called_at) index.
 	UserLLMTokensSince(ctx context.Context, userID string, since float64) (int64, error)
+
+	// Adaptive story conversations — a durable transcript plus a small repair
+	// stack that drives depth-first comprehension teaching. Writes persist a
+	// complete visible exchange and its stack transition atomically.
+	CreateConversationWithTurn(ctx context.Context, conversation domain.Conversation, turn domain.ConversationTurn) (domain.ConversationDetail, error)
+	GetConversation(ctx context.Context, userID, conversationID string) (domain.Conversation, error)
+	ListConversationTurns(ctx context.Context, userID, conversationID string) ([]domain.ConversationTurn, error)
+	AppendConversationExchange(ctx context.Context, userID string, learner, assistant domain.ConversationTurn, storySummary string, repairStack []domain.ConversationRepairFrame) (domain.ConversationDetail, error)
 
 	// Reader events — the high-volume behavioural signal log the reader flushes in
 	// batches. InsertReaderEvents is append-only and idempotent on event_id (a

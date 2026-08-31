@@ -5,6 +5,7 @@ import (
 	"database/sql"
 
 	"github.com/dleiferives/tifl/internal/acquire"
+	"github.com/dleiferives/tifl/internal/conversation"
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/reader"
@@ -22,6 +23,7 @@ type Store interface {
 	skillassoc.Store
 	reader.Store
 	story.ImportRepository
+	conversation.Store
 
 	// Tx runs fn in one database transaction (see db.Repository.Tx).
 	Tx(ctx context.Context, fn func(db.Repository) error) error

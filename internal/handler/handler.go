@@ -9,6 +9,7 @@ import (
 
 	"github.com/dleiferives/tifl/internal/acquire"
 	authn "github.com/dleiferives/tifl/internal/auth"
+	"github.com/dleiferives/tifl/internal/conversation"
 	"github.com/dleiferives/tifl/internal/lang"
 	"github.com/dleiferives/tifl/internal/llm"
 	"github.com/dleiferives/tifl/internal/objectstore"
@@ -43,6 +44,7 @@ type Handler struct {
 	llmEnabled                bool                            // false when no LLM client: LLM-graded tasks return 503
 	models                    llm.ModelLister                 // nil when the gateway cannot list upstream models
 	media                     objectstore.ObjectStore         // nil disables media access endpoints
+	conversations             *conversation.Service           // durable adaptive Greek story loop
 	frontendDir               string
 	auth                      *authn.Service
 	cookieSecure              bool
@@ -71,6 +73,9 @@ func currentAPIRoutes() []apiRoute {
 		{Method: http.MethodGet, Path: "/api/v1/ping", Handler: (*Handler).ping, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/languages", Handler: (*Handler).listLanguages, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/llm/models", Handler: (*Handler).listLLMModels, RequireUser: true},
+		{Method: http.MethodPost, Path: "/api/v1/conversations", Handler: (*Handler).startConversation, RequireUser: true},
+		{Method: http.MethodGet, Path: "/api/v1/conversations/{id}", Handler: (*Handler).getConversation, RequireUser: true},
+		{Method: http.MethodPost, Path: "/api/v1/conversations/{id}/respond", Handler: (*Handler).respondToConversation, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/profile", Handler: (*Handler).getProfile, RequireUser: true},
 		{Method: http.MethodPatch, Path: "/api/v1/profile", Handler: (*Handler).patchProfile, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/skills", Handler: (*Handler).listSkills, RequireUser: true},
@@ -240,6 +245,7 @@ func New(repo Store, broker *story.Broker, client llm.Client, taskTypes *tasks.R
 	if lister, ok := client.(llm.ModelLister); ok {
 		modelLister = lister
 	}
+	conversationService := conversation.New(repo, client)
 	h := &Handler{
 		repo:                      repo,
 		langs:                     langs,
@@ -255,6 +261,7 @@ func New(repo Store, broker *story.Broker, client llm.Client, taskTypes *tasks.R
 		taskReportRegenerationCap: 3,
 		llmEnabled:                client != nil,
 		models:                    modelLister,
+		conversations:             conversationService,
 		frontendDir:               frontendDir,
 		pricing:                   pricing.New(nil, nil),
 		adminEmails:               map[string]struct{}{},

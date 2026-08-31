@@ -168,6 +168,202 @@ select {
   margin-top: 0;
 }
 
+/* Adaptive Greek story conversation -------------------------------------- */
+
+.conversation-view {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.conversation-heading {
+  margin-bottom: 0;
+}
+
+.conversation-eyebrow {
+  margin: 0 0 0.25rem;
+  color: var(--accent) !important;
+  font-size: 0.78rem;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.conversation-intro {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2rem;
+  align-items: center;
+  padding: 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  background: var(--surface-subtle);
+}
+
+.conversation-intro h2,
+.conversation-intro p {
+  margin-top: 0;
+}
+
+.conversation-toolbar,
+.conversation-submit-row,
+.turn-meta,
+.turn-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: center;
+}
+
+.repair-depth {
+  margin-left: auto;
+  padding: 0.3rem 0.55rem;
+  border-radius: 999px;
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.repair-depth[data-active="true"] {
+  background: #fff4d6;
+  color: #744b00;
+}
+
+.conversation-turns {
+  display: grid;
+  gap: 1rem;
+}
+
+.conversation-turn {
+  width: min(45rem, 92%);
+  padding: 1rem 1.15rem;
+  border: 1px solid var(--border);
+  border-radius: 0.7rem;
+  background: var(--surface);
+}
+
+.conversation-turn[data-role="user"] {
+  justify-self: end;
+  width: min(36rem, 86%);
+  border-color: transparent;
+  background: var(--surface-subtle);
+}
+
+.conversation-turn[data-kind="repair_story"] {
+  border-left: 4px solid #d49a1f;
+}
+
+.conversation-turn[data-kind="retry"] {
+  border-left: 4px solid var(--success);
+}
+
+.turn-meta {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.focus-chip {
+  padding: 0.15rem 0.4rem;
+  border-radius: 999px;
+  background: #fff4d6;
+  color: #744b00;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.greek-passage {
+  margin: 0.9rem 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(1.4rem, 3.2vw, 2rem);
+  line-height: 1.55;
+}
+
+.greek-hidden {
+  margin: 1rem 0;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.english-feedback {
+  margin: 0.9rem 0 0;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border);
+}
+
+.conversation-prompt {
+  margin-bottom: 0;
+  color: var(--text-muted);
+}
+
+.learner-response {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.conversation-response {
+  display: grid;
+  gap: 0.65rem;
+  position: sticky;
+  bottom: 0.5rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  background: var(--surface);
+  box-shadow: 0 0.45rem 1.25rem var(--shadow);
+}
+
+.conversation-response label {
+  font-weight: 700;
+}
+
+.conversation-response textarea {
+  width: 100%;
+  resize: vertical;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.conversation-submit-row {
+  justify-content: space-between;
+}
+
+.conversation-submit-row p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.reader-focus .conversation-heading,
+.reader-focus .conversation-turn[data-role="user"] {
+  display: none;
+}
+
+.reader-focus .conversation-turn {
+  width: min(48rem, 100%);
+  margin: 0 auto;
+}
+
+@media (max-width: 44rem) {
+  .conversation-intro {
+    grid-template-columns: 1fr;
+  }
+
+  .conversation-turn,
+  .conversation-turn[data-role="user"] {
+    width: 100%;
+  }
+
+  .repair-depth {
+    width: 100%;
+    margin-left: 0;
+  }
+}
+
 .button-link {
   display: inline-block;
   padding: 0.5rem 0.75rem;

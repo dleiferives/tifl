@@ -84,6 +84,31 @@ export async function listLLMModels(): Promise<APIResponse<"listLLMModels", 200>
   return apiFetch<APIResponse<"listLLMModels", 200>>("/llm/models");
 }
 
+export type Conversation = APIResponse<"getConversation", 200>;
+
+export async function startConversation(
+  request: APIRequest<"startConversation"> = {},
+): Promise<APIResponse<"startConversation", 201>> {
+  return apiFetch<APIResponse<"startConversation", 201>>(
+    "/conversations",
+    jsonRequest("POST", request),
+  );
+}
+
+export async function getConversation(conversationID: string): Promise<Conversation> {
+  return apiFetch<Conversation>(`/conversations/${encodeURIComponent(conversationID)}`);
+}
+
+export async function respondToConversation(
+  conversationID: string,
+  request: APIRequest<"respondToConversation">,
+): Promise<APIResponse<"respondToConversation", 200>> {
+  return apiFetch<APIResponse<"respondToConversation", 200>>(
+    `/conversations/${encodeURIComponent(conversationID)}/respond`,
+    jsonRequest("POST", request),
+  );
+}
+
 export async function register(request: APIRequest<"register">): Promise<APIResponse<"register", 201>> {
   return apiFetch<APIResponse<"register", 201>>("/auth/register", jsonRequest("POST", request), false);
 }

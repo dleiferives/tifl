@@ -74,6 +74,94 @@ paths:
           $ref: "#/components/responses/BadGateway"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
+  /conversations:
+    post:
+      summary: Start an adaptive Greek story conversation
+      description: >
+        Generates the first short Greek passage. The conversation transcript and
+        depth-first repair stack are persisted before the response is returned.
+      operationId: startConversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartConversationRequest"
+      responses:
+        "201":
+          description: Conversation started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conversation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /conversations/{id}:
+    get:
+      summary: Get an adaptive story conversation
+      operationId: getConversation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Conversation and ordered transcript
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conversation"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /conversations/{id}/respond:
+    post:
+      summary: Submit the learner's understanding of the current Greek passage
+      description: >
+        Persists the learner response, assesses comprehension, and either
+        descends into a simpler repair story, retries its parent, or continues
+        the main narrative.
+      operationId: respondToConversation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RespondConversationRequest"
+      responses:
+        "200":
+          description: Updated conversation and transcript
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conversation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /auth/register:
     post:
       security: []
@@ -1505,6 +1593,91 @@ components:
           enum: [surface, lemma, root, stem]
         enabled: { type: boolean }
       required: [code, name, key_strategy, enabled]
+    StartConversationRequest:
+      type: object
+      description: Greek is the fixed target language in the first release.
+      properties:
+        level:
+          type: string
+          enum: [beginner, elementary, intermediate, upper-intermediate, advanced]
+          x-enum-varnames: [StartConversationLevelBeginner, StartConversationLevelElementary, StartConversationLevelIntermediate, StartConversationLevelUpperIntermediate, StartConversationLevelAdvanced]
+          description: Defaults to the learner profile level.
+    RespondConversationRequest:
+      type: object
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 8000
+          description: The learner's best English translation and any unclear parts.
+      required: [text]
+    Conversation:
+      type: object
+      properties:
+        conversation_id: { type: string }
+        language: { type: string, const: el }
+        level: { type: string }
+        status:
+          type: string
+          enum: [active, complete]
+          x-enum-varnames: [ConversationStatusActive, ConversationStatusComplete]
+        story_summary:
+          type: string
+          description: Compact main-narrative memory; repair stories do not replace it.
+        repair_depth:
+          type: integer
+          minimum: 0
+        turns:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConversationTurn"
+        created_at: { type: number, format: double }
+        updated_at: { type: number, format: double }
+      required: [conversation_id, language, level, status, story_summary, repair_depth, turns, created_at, updated_at]
+    ConversationTurn:
+      type: object
+      properties:
+        turn_id: { type: string }
+        role:
+          type: string
+          enum: [assistant, user]
+          x-enum-varnames: [ConversationRoleAssistant, ConversationRoleUser]
+        kind:
+          type: string
+          enum: [story, repair_story, retry, learner_response]
+          x-enum-varnames: [ConversationKindStory, ConversationKindRepairStory, ConversationKindRetry, ConversationKindLearnerResponse]
+        action:
+          type: string
+          enum: [continue_story, descend, retry_parent]
+          x-enum-varnames: [ConversationActionContinueStory, ConversationActionDescend, ConversationActionRetryParent]
+        assessment:
+          type: string
+          enum: [understood, partial, not_understood]
+          x-enum-varnames: [ConversationAssessmentUnderstood, ConversationAssessmentPartial, ConversationAssessmentNotUnderstood]
+        greek_text:
+          type: string
+          description: Target-language passage; suitable for display and future TTS.
+        english_text:
+          type: string
+          description: Brief correction or teaching feedback.
+        prompt_text:
+          type: string
+          description: Learner-facing request for a translation/uncertainty report.
+        input_text:
+          type: string
+          description: Typed learner response.
+        transcript:
+          type: string
+          description: Future STT transcript for spoken learner input.
+        audio_url:
+          type: string
+          description: Future server-issued URL for assistant TTS audio.
+        focus:
+          type: string
+          description: The specific word or construction targeted by a repair story.
+        reply_to_turn_id: { type: string }
+        created_at: { type: number, format: double }
+      required: [turn_id, role, kind, created_at]
     Credentials:
       type: object
       properties:

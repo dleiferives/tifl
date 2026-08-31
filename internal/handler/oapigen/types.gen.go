@@ -47,6 +47,108 @@ func (e BreakdownTraceSource) Valid() bool {
 	}
 }
 
+// Defines values for ConversationStatus.
+const (
+	ConversationStatusActive   ConversationStatus = "active"
+	ConversationStatusComplete ConversationStatus = "complete"
+)
+
+// Valid indicates whether the value is a known member of the ConversationStatus enum.
+func (e ConversationStatus) Valid() bool {
+	switch e {
+	case ConversationStatusActive:
+		return true
+	case ConversationStatusComplete:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ConversationTurnAction.
+const (
+	ConversationActionContinueStory ConversationTurnAction = "continue_story"
+	ConversationActionDescend       ConversationTurnAction = "descend"
+	ConversationActionRetryParent   ConversationTurnAction = "retry_parent"
+)
+
+// Valid indicates whether the value is a known member of the ConversationTurnAction enum.
+func (e ConversationTurnAction) Valid() bool {
+	switch e {
+	case ConversationActionContinueStory:
+		return true
+	case ConversationActionDescend:
+		return true
+	case ConversationActionRetryParent:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ConversationTurnAssessment.
+const (
+	ConversationAssessmentNotUnderstood ConversationTurnAssessment = "not_understood"
+	ConversationAssessmentPartial       ConversationTurnAssessment = "partial"
+	ConversationAssessmentUnderstood    ConversationTurnAssessment = "understood"
+)
+
+// Valid indicates whether the value is a known member of the ConversationTurnAssessment enum.
+func (e ConversationTurnAssessment) Valid() bool {
+	switch e {
+	case ConversationAssessmentNotUnderstood:
+		return true
+	case ConversationAssessmentPartial:
+		return true
+	case ConversationAssessmentUnderstood:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ConversationTurnKind.
+const (
+	ConversationKindLearnerResponse ConversationTurnKind = "learner_response"
+	ConversationKindRepairStory     ConversationTurnKind = "repair_story"
+	ConversationKindRetry           ConversationTurnKind = "retry"
+	ConversationKindStory           ConversationTurnKind = "story"
+)
+
+// Valid indicates whether the value is a known member of the ConversationTurnKind enum.
+func (e ConversationTurnKind) Valid() bool {
+	switch e {
+	case ConversationKindLearnerResponse:
+		return true
+	case ConversationKindRepairStory:
+		return true
+	case ConversationKindRetry:
+		return true
+	case ConversationKindStory:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ConversationTurnRole.
+const (
+	ConversationRoleAssistant ConversationTurnRole = "assistant"
+	ConversationRoleUser      ConversationTurnRole = "user"
+)
+
+// Valid indicates whether the value is a known member of the ConversationTurnRole enum.
+func (e ConversationTurnRole) Valid() bool {
+	switch e {
+	case ConversationRoleAssistant:
+		return true
+	case ConversationRoleUser:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DefinitionSource.
 const (
 	DefinitionSourceGlossary             DefinitionSource = "glossary"
@@ -851,6 +953,33 @@ func (e SessionOverviewStatus) Valid() bool {
 	}
 }
 
+// Defines values for StartConversationRequestLevel.
+const (
+	StartConversationLevelAdvanced          StartConversationRequestLevel = "advanced"
+	StartConversationLevelBeginner          StartConversationRequestLevel = "beginner"
+	StartConversationLevelElementary        StartConversationRequestLevel = "elementary"
+	StartConversationLevelIntermediate      StartConversationRequestLevel = "intermediate"
+	StartConversationLevelUpperIntermediate StartConversationRequestLevel = "upper-intermediate"
+)
+
+// Valid indicates whether the value is a known member of the StartConversationRequestLevel enum.
+func (e StartConversationRequestLevel) Valid() bool {
+	switch e {
+	case StartConversationLevelAdvanced:
+		return true
+	case StartConversationLevelBeginner:
+		return true
+	case StartConversationLevelElementary:
+		return true
+	case StartConversationLevelIntermediate:
+		return true
+	case StartConversationLevelUpperIntermediate:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SubmitTaskRequestInputMethod.
 const (
 	Typed SubmitTaskRequestInputMethod = "typed"
@@ -1057,6 +1186,68 @@ type BreakdownTraceScope string
 
 // BreakdownTraceSource defines model for BreakdownTrace.Source.
 type BreakdownTraceSource string
+
+// Conversation defines model for Conversation.
+type Conversation struct {
+	ConversationId string             `json:"conversation_id"`
+	CreatedAt      float64            `json:"created_at"`
+	Language       string             `json:"language"`
+	Level          string             `json:"level"`
+	RepairDepth    int                `json:"repair_depth"`
+	Status         ConversationStatus `json:"status"`
+
+	// StorySummary Compact main-narrative memory; repair stories do not replace it.
+	StorySummary string             `json:"story_summary"`
+	Turns        []ConversationTurn `json:"turns"`
+	UpdatedAt    float64            `json:"updated_at"`
+}
+
+// ConversationStatus defines model for Conversation.Status.
+type ConversationStatus string
+
+// ConversationTurn defines model for ConversationTurn.
+type ConversationTurn struct {
+	Action     ConversationTurnAction     `json:"action,omitempty"`
+	Assessment ConversationTurnAssessment `json:"assessment,omitempty"`
+
+	// AudioUrl Future server-issued URL for assistant TTS audio.
+	AudioUrl  string  `json:"audio_url,omitempty"`
+	CreatedAt float64 `json:"created_at"`
+
+	// EnglishText Brief correction or teaching feedback.
+	EnglishText string `json:"english_text,omitempty"`
+
+	// Focus The specific word or construction targeted by a repair story.
+	Focus string `json:"focus,omitempty"`
+
+	// GreekText Target-language passage; suitable for display and future TTS.
+	GreekText string `json:"greek_text,omitempty"`
+
+	// InputText Typed learner response.
+	InputText string               `json:"input_text,omitempty"`
+	Kind      ConversationTurnKind `json:"kind"`
+
+	// PromptText Learner-facing request for a translation/uncertainty report.
+	PromptText    string               `json:"prompt_text,omitempty"`
+	ReplyToTurnId string               `json:"reply_to_turn_id,omitempty"`
+	Role          ConversationTurnRole `json:"role"`
+
+	// Transcript Future STT transcript for spoken learner input.
+	Transcript string `json:"transcript,omitempty"`
+	TurnId     string `json:"turn_id"`
+}
+
+// ConversationTurnAction defines model for ConversationTurn.Action.
+type ConversationTurnAction string
+
+// ConversationTurnAssessment defines model for ConversationTurn.Assessment.
+type ConversationTurnAssessment string
+
+// ConversationTurnKind defines model for ConversationTurn.Kind.
+type ConversationTurnKind string
+
+// ConversationTurnRole defines model for ConversationTurn.Role.
+type ConversationTurnRole string
 
 // CostBucket One aggregation bucket of LLM spend. day and/or model are set depending on how the rollup was grouped. cost_usd is present only when every call in the bucket had known pricing (cost_known true); a bucket for an unpriced model reports cost_known false rather than a misleading zero.
 type CostBucket struct {
@@ -1585,6 +1776,12 @@ type ReaderTraceKind string
 // ReaderTraceStatus defines model for ReaderTrace.Status.
 type ReaderTraceStatus string
 
+// RespondConversationRequest defines model for RespondConversationRequest.
+type RespondConversationRequest struct {
+	// Text The learner's best English translation and any unclear parts.
+	Text string `json:"text"`
+}
+
 // SelectedItemCounts Persisted SelectedItems counts; background items are not currently stored.
 type SelectedItemCounts struct {
 	New     int `json:"new"`
@@ -1810,6 +2007,15 @@ type StageSummary struct {
 	Pending     int    `json:"pending"`
 	Total       int    `json:"total"`
 }
+
+// StartConversationRequest Greek is the fixed target language in the first release.
+type StartConversationRequest struct {
+	// Level Defaults to the learner profile level.
+	Level StartConversationRequestLevel `json:"level,omitempty"`
+}
+
+// StartConversationRequestLevel Defaults to the learner profile level.
+type StartConversationRequestLevel string
 
 // StoryContentRef Reference to a story session's story; load it via GET /stories/{id}.
 type StoryContentRef struct {
@@ -2131,6 +2337,12 @@ type LoginJSONRequestBody = Credentials
 
 // RegisterJSONRequestBody defines body for Register for application/json ContentType.
 type RegisterJSONRequestBody = Credentials
+
+// StartConversationJSONRequestBody defines body for StartConversation for application/json ContentType.
+type StartConversationJSONRequestBody = StartConversationRequest
+
+// RespondToConversationJSONRequestBody defines body for RespondToConversation for application/json ContentType.
+type RespondToConversationJSONRequestBody = RespondConversationRequest
 
 // PutDictionaryEntryJSONRequestBody defines body for PutDictionaryEntry for application/json ContentType.
 type PutDictionaryEntryJSONRequestBody = DictionaryEntryRequest
