@@ -56,6 +56,13 @@ POST /api/v1/conversations/{id}/respond
     └─ understood
         ├─ stack non-empty: pop and retry that exact parent passage
         └─ stack empty: continue the main story
+
+POST /api/v1/conversations/{id}/respond/audio
+    └─ Proxy a browser recording to audio-server STT
+    └─ Persist the transcript and enter the identical response transition
+
+GET /api/v1/conversations/{id}/turns/{turn_id}/audio
+    └─ Authorize the turn and proxy its Greek passage to audio-server TTS
 ```
 
 The backend, not the model, owns push/pop transitions. Model output is structured
@@ -70,12 +77,14 @@ There is one turn model and one conversation engine. Presentation is a view:
 - Chat shows assistant and learner turns together.
 - Reader focus hides prior learner bubbles and enlarges the Greek passage.
 - Greek text can be hidden for listening-first use.
-- The initial client can play Greek using the browser/device speech synthesizer.
-- Server-generated TTS and recorded speech/STT will populate `audio_url` and
-  `transcript` on the same turn contract; they do not require a second engine.
+- Assistant Greek uses server-generated TTS through an authenticated Tifl URL.
+- Audio-first hides Greek and automatically plays each new assistant passage.
+- Browser microphone recordings are transcribed by the configured audio server;
+  their transcript populates the same turn contract as typed input.
 
-Typed learner responses ship first. Speech input later records audio, performs
-STT, and submits the resulting transcript through the same response path.
+Typed and spoken learner responses both run through the same depth-first repair
+engine. The audio-server address is deployment configuration and is never sent
+to the browser.
 
 ### The "How Do You Say X?" Feature (Future)
 
@@ -120,8 +129,8 @@ conversation_turns
     role, kind, action, assessment
     greek_text, english_text, prompt_text
     input_text          TEXT        typed response
-    transcript          TEXT        future STT output
-    audio_path          TEXT        future media object key
+    transcript          TEXT        STT output for spoken learner input
+    audio_path          TEXT        future persisted media object key
     focus               TEXT
     reply_to_turn_id    TEXT
     created_at          REAL

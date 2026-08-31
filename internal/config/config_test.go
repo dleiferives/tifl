@@ -28,6 +28,9 @@ func TestLoad_DefaultsWhenNoFile(t *testing.T) {
 	if cfg.LLMBaseURL != "http://127.0.0.1:8001" {
 		t.Fatalf("llm_base_url default wrong: %q", cfg.LLMBaseURL)
 	}
+	if cfg.AudioBaseURL != "" || cfg.AudioTTSModel != "auto" || cfg.AudioTTSVoice != "auto" || cfg.AudioTTSSpeed != 0.9 || cfg.AudioSTTModel != "auto" {
+		t.Fatalf("audio defaults not applied: %+v", cfg)
+	}
 	if cfg.TaskReportRegenerationCap != 3 {
 		t.Fatalf("task_report_regeneration_cap default = %d, want 3", cfg.TaskReportRegenerationCap)
 	}
@@ -94,6 +97,12 @@ server:
   media_s3_access_key_env: TIFL_R2_ACCESS_KEY_ID
   media_s3_secret_key_env: TIFL_R2_SECRET_ACCESS_KEY
   media_s3_signed_urls: false
+  audio_base_url: http://audio.example.test/
+  audio_api_key: local-audio-key
+  audio_tts_model: supertonic
+  audio_tts_voice: F1
+  audio_tts_speed: 0.8
+  audio_stt_model: faster-whisper
 `)
 	cfg, err := config.Load(path)
 	if err != nil {
@@ -113,6 +122,11 @@ server:
 		cfg.MediaS3SecretKeyEnv != "TIFL_R2_SECRET_ACCESS_KEY" ||
 		cfg.MediaS3SignedURLs {
 		t.Fatalf("media storage file values not applied: %+v", cfg)
+	}
+	if cfg.AudioBaseURL != "http://audio.example.test" || cfg.AudioAPIKey != "local-audio-key" ||
+		cfg.AudioTTSModel != "supertonic" || cfg.AudioTTSVoice != "F1" || cfg.AudioTTSSpeed != 0.8 ||
+		cfg.AudioSTTModel != "faster-whisper" {
+		t.Fatalf("audio file values not applied: %+v", cfg)
 	}
 	// Unset key falls back to default.
 	if cfg.DBPath != "data/tifl.db" {
@@ -173,6 +187,8 @@ func TestLoad_EnvOverridesFile(t *testing.T) {
 	t.Setenv("TIFL_ADDR", "2.2.2.2:2")
 	t.Setenv("MEDIA_STORAGE_MODE", "s3")
 	t.Setenv("MEDIA_S3_SIGNED_URLS", "false")
+	t.Setenv("AUDIO_BASE_URL", "http://prometheus:8010/")
+	t.Setenv("AUDIO_TTS_SPEED", "1.1")
 	cfg, err := config.Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -182,6 +198,9 @@ func TestLoad_EnvOverridesFile(t *testing.T) {
 	}
 	if cfg.MediaStorageMode != config.MediaStorageS3 || cfg.MediaS3SignedURLs {
 		t.Fatalf("media env should override file/default: %+v", cfg)
+	}
+	if cfg.AudioBaseURL != "http://prometheus:8010" || cfg.AudioTTSSpeed != 1.1 {
+		t.Fatalf("audio env should override file/default: %+v", cfg)
 	}
 }
 

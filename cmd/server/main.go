@@ -35,6 +35,7 @@ import (
 	"github.com/dleiferives/tifl/internal/reader"
 	"github.com/dleiferives/tifl/internal/selector"
 	"github.com/dleiferives/tifl/internal/skills"
+	"github.com/dleiferives/tifl/internal/speech"
 	"github.com/dleiferives/tifl/internal/story"
 	"github.com/dleiferives/tifl/internal/tasks"
 )
@@ -190,6 +191,13 @@ func main() {
 	handlerOpts = append(handlerOpts, handler.WithMediaStore(mediaStore))
 	handlerOpts = append(handlerOpts, handler.WithModelPricing(modelPricingTable(cfg)))
 	handlerOpts = append(handlerOpts, handler.WithAdminEmails(cfg.AdminEmails))
+	if cfg.AudioBaseURL != "" {
+		handlerOpts = append(handlerOpts, handler.WithSpeech(speech.New(speech.Config{
+			BaseURL: cfg.AudioBaseURL, APIKey: cfg.AudioAPIKey,
+			TTSModel: cfg.AudioTTSModel, TTSVoice: cfg.AudioTTSVoice,
+			TTSSpeed: cfg.AudioTTSSpeed, STTModel: cfg.AudioSTTModel,
+		})))
+	}
 	if jobsClient != nil {
 		handlerOpts = append(handlerOpts, handler.WithSignalQueue(jobsClient))
 	}

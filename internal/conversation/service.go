@@ -98,6 +98,16 @@ func (s *Service) Get(ctx context.Context, userID, conversationID string) (domai
 // descends into a focused sub-story, retries the parent, or continues the root
 // narrative. The model supplies teaching content but never mutates the stack.
 func (s *Service) Respond(ctx context.Context, userID, conversationID, input string) (domain.ConversationDetail, error) {
+	return s.respond(ctx, userID, conversationID, input, false)
+}
+
+// RespondTranscript runs the same teaching transition as Respond while storing
+// the learner input as speech-to-text output rather than typed text.
+func (s *Service) RespondTranscript(ctx context.Context, userID, conversationID, transcript string) (domain.ConversationDetail, error) {
+	return s.respond(ctx, userID, conversationID, transcript, true)
+}
+
+func (s *Service) respond(ctx context.Context, userID, conversationID, input string, fromSpeech bool) (domain.ConversationDetail, error) {
 	input = strings.TrimSpace(input)
 	conversation, err := s.store.GetConversation(ctx, userID, conversationID)
 	if err != nil {
@@ -133,9 +143,13 @@ func (s *Service) Respond(ctx context.Context, userID, conversationID, input str
 		ConversationID: conversationID,
 		Role:           domain.ConversationRoleUser,
 		Kind:           domain.ConversationTurnLearner,
-		InputText:      input,
 		ReplyToTurnID:  &currentID,
 		CreatedAt:      now,
+	}
+	if fromSpeech {
+		learner.Transcript = input
+	} else {
+		learner.InputText = input
 	}
 	learnerID := learner.TurnID
 	assistant := domain.ConversationTurn{

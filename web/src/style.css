@@ -332,6 +332,12 @@ select {
   justify-content: space-between;
 }
 
+.conversation-response-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
 .conversation-submit-row p {
   margin: 0;
   color: var(--text-muted);

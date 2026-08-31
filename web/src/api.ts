@@ -109,6 +109,36 @@ export async function respondToConversation(
   );
 }
 
+export async function respondToConversationAudio(
+  conversationID: string,
+  audio: Blob,
+): Promise<APIResponse<"respondToConversationAudio", 200>> {
+  const form = new FormData();
+  form.set("file", new File([audio], conversationAudioFilename(audio.type), {
+    type: audio.type || "application/octet-stream",
+  }));
+  return apiFetch<APIResponse<"respondToConversationAudio", 200>>(
+    `/conversations/${encodeURIComponent(conversationID)}/respond/audio`,
+    { method: "POST", body: form },
+  );
+}
+
+export async function getConversationTurnAudio(audioURL: string): Promise<Blob> {
+  let response = await sendRequest(audioURL, { headers: { Accept: "audio/mpeg" } });
+  if (response.status === 401 && await refreshAccessToken()) {
+    response = await sendRequest(audioURL, { headers: { Accept: "audio/mpeg" } });
+  }
+  if (response.status === 401) {
+    setAccessToken(null);
+    authCallbacks.onAuthenticationLost?.();
+  }
+  if (!response.ok) {
+    const body = parseJSON(await response.text());
+    throw new APIError(response, isErrorBody(body) ? body : null);
+  }
+  return response.blob();
+}
+
 export async function register(request: APIRequest<"register">): Promise<APIResponse<"register", 201>> {
   return apiFetch<APIResponse<"register", 201>>("/auth/register", jsonRequest("POST", request), false);
 }
@@ -568,7 +598,9 @@ async function apiFetch<T>(path: string, init: RequestInit = {}, retryUnauthoriz
 
 async function sendRequest(path: string, init: RequestInit, includeAccessToken = true): Promise<Response> {
   const headers = new Headers(init.headers);
-  headers.set("Accept", "application/json");
+  if (!headers.has("Accept")) {
+    headers.set("Accept", "application/json");
+  }
   if (includeAccessToken && accessToken) {
     headers.set("Authorization", `Bearer ${accessToken}`);
   }
@@ -578,6 +610,13 @@ async function sendRequest(path: string, init: RequestInit, includeAccessToken =
     credentials: "include",
     headers,
   });
+}
+
+function conversationAudioFilename(contentType: string): string {
+  if (contentType.includes("mp4")) return "answer.m4a";
+  if (contentType.includes("ogg")) return "answer.ogg";
+  if (contentType.includes("wav")) return "answer.wav";
+  return "answer.webm";
 }
 
 async function decodeResponse<T>(response: Response): Promise<T> {

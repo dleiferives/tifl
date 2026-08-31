@@ -162,6 +162,77 @@ paths:
           $ref: "#/components/responses/BadGateway"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
+  /conversations/{id}/respond/audio:
+    post:
+      summary: Transcribe a spoken interpretation and advance the story
+      description: >
+        Proxies the recorded audio to the configured audio-server STT endpoint,
+        stores its transcript as the learner turn, then runs the same adaptive
+        assessment and depth-first transition as a typed response.
+      operationId: respondToConversationAudio
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/ConversationAudioResponseRequest"
+      responses:
+        "200":
+          description: Updated conversation and transcript
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conversation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /conversations/{id}/turns/{turn_id}/audio:
+    get:
+      summary: Generate speech for an assistant Greek passage
+      description: >
+        Authorizes the conversation and turn, then proxies the passage to the
+        configured audio-server TTS endpoint. The machine-specific audio-server
+        address is never exposed to the browser.
+      operationId: getConversationTurnAudio
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: turn_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Synthesized passage audio
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /auth/register:
     post:
       security: []
@@ -1611,6 +1682,14 @@ components:
           maxLength: 8000
           description: The learner's best English translation and any unclear parts.
       required: [text]
+    ConversationAudioResponseRequest:
+      type: object
+      properties:
+        file:
+          type: string
+          format: binary
+          description: Browser-recorded audio in a format supported by the configured audio-server.
+      required: [file]
     Conversation:
       type: object
       properties:
@@ -1668,10 +1747,10 @@ components:
           description: Typed learner response.
         transcript:
           type: string
-          description: Future STT transcript for spoken learner input.
+          description: STT output for spoken learner input.
         audio_url:
           type: string
-          description: Future server-issued URL for assistant TTS audio.
+          description: API-root-relative authenticated path that generates assistant TTS audio.
         focus:
           type: string
           description: The specific word or construction targeted by a repair story.

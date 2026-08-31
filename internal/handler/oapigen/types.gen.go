@@ -1205,12 +1205,18 @@ type Conversation struct {
 // ConversationStatus defines model for Conversation.Status.
 type ConversationStatus string
 
+// ConversationAudioResponseRequest defines model for ConversationAudioResponseRequest.
+type ConversationAudioResponseRequest struct {
+	// File Browser-recorded audio in a format supported by the configured audio-server.
+	File openapi_types.File `json:"file"`
+}
+
 // ConversationTurn defines model for ConversationTurn.
 type ConversationTurn struct {
 	Action     ConversationTurnAction     `json:"action,omitempty"`
 	Assessment ConversationTurnAssessment `json:"assessment,omitempty"`
 
-	// AudioUrl Future server-issued URL for assistant TTS audio.
+	// AudioUrl API-root-relative authenticated path that generates assistant TTS audio.
 	AudioUrl  string  `json:"audio_url,omitempty"`
 	CreatedAt float64 `json:"created_at"`
 
@@ -1232,7 +1238,7 @@ type ConversationTurn struct {
 	ReplyToTurnId string               `json:"reply_to_turn_id,omitempty"`
 	Role          ConversationTurnRole `json:"role"`
 
-	// Transcript Future STT transcript for spoken learner input.
+	// Transcript STT output for spoken learner input.
 	Transcript string `json:"transcript,omitempty"`
 	TurnId     string `json:"turn_id"`
 }
@@ -2343,6 +2349,9 @@ type StartConversationJSONRequestBody = StartConversationRequest
 
 // RespondToConversationJSONRequestBody defines body for RespondToConversation for application/json ContentType.
 type RespondToConversationJSONRequestBody = RespondConversationRequest
+
+// RespondToConversationAudioMultipartRequestBody defines body for RespondToConversationAudio for multipart/form-data ContentType.
+type RespondToConversationAudioMultipartRequestBody = ConversationAudioResponseRequest
 
 // PutDictionaryEntryJSONRequestBody defines body for PutDictionaryEntry for application/json ContentType.
 type PutDictionaryEntryJSONRequestBody = DictionaryEntryRequest

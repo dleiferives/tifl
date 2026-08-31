@@ -17,6 +17,7 @@ import (
 	"github.com/dleiferives/tifl/internal/pricing"
 	"github.com/dleiferives/tifl/internal/reader"
 	skillassoc "github.com/dleiferives/tifl/internal/skills"
+	"github.com/dleiferives/tifl/internal/speech"
 	"github.com/dleiferives/tifl/internal/story"
 	"github.com/dleiferives/tifl/internal/tasks"
 )
@@ -45,6 +46,7 @@ type Handler struct {
 	models                    llm.ModelLister                 // nil when the gateway cannot list upstream models
 	media                     objectstore.ObjectStore         // nil disables media access endpoints
 	conversations             *conversation.Service           // durable adaptive Greek story loop
+	speech                    speech.Gateway                  // optional TTS/STT service for conversation turns
 	frontendDir               string
 	auth                      *authn.Service
 	cookieSecure              bool
@@ -76,6 +78,8 @@ func currentAPIRoutes() []apiRoute {
 		{Method: http.MethodPost, Path: "/api/v1/conversations", Handler: (*Handler).startConversation, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/conversations/{id}", Handler: (*Handler).getConversation, RequireUser: true},
 		{Method: http.MethodPost, Path: "/api/v1/conversations/{id}/respond", Handler: (*Handler).respondToConversation, RequireUser: true},
+		{Method: http.MethodPost, Path: "/api/v1/conversations/{id}/respond/audio", Handler: (*Handler).respondToConversationAudio, RequireUser: true},
+		{Method: http.MethodGet, Path: "/api/v1/conversations/{id}/turns/{turn_id}/audio", Handler: (*Handler).conversationTurnAudio, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/profile", Handler: (*Handler).getProfile, RequireUser: true},
 		{Method: http.MethodPatch, Path: "/api/v1/profile", Handler: (*Handler).patchProfile, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/skills", Handler: (*Handler).listSkills, RequireUser: true},
@@ -180,6 +184,11 @@ func WithTaskReportRegenerationCap(cap int) Option {
 // still authorizes through task ownership before touching object storage.
 func WithMediaStore(store objectstore.ObjectStore) Option {
 	return func(h *Handler) { h.media = store }
+}
+
+// WithSpeech enables server-side TTS and STT for adaptive conversation turns.
+func WithSpeech(gateway speech.Gateway) Option {
+	return func(h *Handler) { h.speech = gateway }
 }
 
 func WithAuth(service *authn.Service, secureCookie bool) Option {

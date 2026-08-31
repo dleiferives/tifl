@@ -19,6 +19,14 @@ server:
   llm_base_url: http://127.0.0.1:8001  # where the gateway listens        (default http://127.0.0.1:8001)
   llm_api_key: ""                 # optional gateway auth
   llm_model: ""                   # model the server requests (blank = gateway default)
+  # Optional OpenAI-compatible audio-server. Blank keeps conversation TTS/STT
+  # disabled; inject a machine-specific URL through tifl.yaml or launch env.
+  audio_base_url: ""              # e.g. http://127.0.0.1:8010             (default disabled)
+  audio_api_key: ""               # optional audio-server bearer token
+  audio_tts_model: auto            # provider id or OpenAI TTS alias        (default auto)
+  audio_tts_voice: auto            # provider voice id                     (default auto)
+  audio_tts_speed: 0.9             # 0.25..4 synthesis speed               (default 0.9)
+  audio_stt_model: auto            # provider id or OpenAI STT alias        (default auto)
   auth_mode: none                 # none (desktop-local) | jwt (cloud)    (default none)
   jwt_secret: ""                  # signing key when auth_mode: jwt
   allow_insecure_auth_cookie: false # DEVELOPMENT ONLY: permit refresh cookie over HTTP

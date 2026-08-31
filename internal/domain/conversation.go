@@ -71,7 +71,7 @@ type Conversation struct {
 
 // ConversationTurn is one durable item in the conversation transcript.
 // Assistant turns use GreekText/EnglishText/PromptText; learner turns use
-// InputText today and may additionally carry Transcript once speech input lands.
+// InputText for typed input or Transcript for speech-to-text input.
 type ConversationTurn struct {
 	TurnID         string
 	ConversationID string

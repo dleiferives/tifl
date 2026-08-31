@@ -2,7 +2,9 @@ import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import {
   APIError,
   getConversation,
+  getConversationTurnAudio,
   respondToConversation,
+  respondToConversationAudio,
   startConversation,
   type Conversation,
 } from "../api";
@@ -19,13 +21,43 @@ export function ConversationView(props: { conversationId?: string }) {
   const [error, setError] = createSignal("");
   const [showGreek, setShowGreek] = createSignal(true);
   const [readerFocus, setReaderFocus] = createSignal(false);
+  const [audioFirst, setAudioFirst] = createSignal(false);
   const [speakingTurn, setSpeakingTurn] = createSignal("");
+  const [recording, setRecording] = createSignal(false);
+  const [requestingMicrophone, setRequestingMicrophone] = createSignal(false);
+  let mediaRecorder: MediaRecorder | null = null;
+  let microphoneStream: MediaStream | null = null;
+  let audioElement: HTMLAudioElement | null = null;
+  let playbackToken = 0;
+  let microphoneRequestToken = 0;
+  let disposed = false;
+  const audioObjectURLs = new Map<string, string>();
+
+  const resetTransientMedia = () => {
+    playbackToken++;
+    microphoneRequestToken++;
+    audioElement?.pause();
+    audioElement = null;
+    setSpeakingTurn("");
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+      mediaRecorder.onstop = null;
+      mediaRecorder.stop();
+    }
+    microphoneStream?.getTracks().forEach((track) => track.stop());
+    mediaRecorder = null;
+    microphoneStream = null;
+    setRecording(false);
+    setRequestingMicrophone(false);
+    for (const objectURL of audioObjectURLs.values()) URL.revokeObjectURL(objectURL);
+    audioObjectURLs.clear();
+  };
 
   let loadedConversationID: string | undefined | null = null;
   createEffect(() => {
     const conversationID = props.conversationId;
     if (conversationID === loadedConversationID) return;
     loadedConversationID = conversationID;
+    resetTransientMedia();
     setConversation(null);
     setInput("");
     if (conversationID) {
@@ -35,14 +67,19 @@ export function ConversationView(props: { conversationId?: string }) {
       setError("");
     }
   });
-  onCleanup(() => window.speechSynthesis?.cancel());
+  onCleanup(() => {
+    disposed = true;
+    resetTransientMedia();
+  });
 
   const load = async (conversationID: string) => {
     setLoading(true);
     setError("");
     const finish = appStore.beginOperation();
     try {
-      setConversation(await getConversation(conversationID));
+      const next = await getConversation(conversationID);
+      setConversation(next);
+      playLatestWhenEnabled(next);
     } catch (cause) {
       setError(conversationError(cause, "load this conversation"));
     } finally {
@@ -77,8 +114,10 @@ export function ConversationView(props: { conversationId?: string }) {
     setError("");
     const finish = appStore.beginOperation();
     try {
-      setConversation(await respondToConversation(current.conversation_id, { text }));
+      const next = await respondToConversation(current.conversation_id, { text });
+      setConversation(next);
       setInput("");
+      playLatestWhenEnabled(next);
     } catch (cause) {
       setError(conversationError(cause, "send your response"));
     } finally {
@@ -87,22 +126,132 @@ export function ConversationView(props: { conversationId?: string }) {
     }
   };
 
-  const speak = (turn: ConversationTurn) => {
-    if (!("speechSynthesis" in window) || !turn.greek_text) {
-      setError("This browser does not provide a Greek device voice.");
+  const speak = async (turn: ConversationTurn) => {
+    if (!turn.audio_url) {
+      setError("Server speech is not configured for this conversation.");
       return;
     }
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(turn.greek_text);
-    utterance.lang = "el-GR";
-    utterance.rate = 0.82;
-    utterance.onend = () => setSpeakingTurn("");
-    utterance.onerror = () => {
-      setSpeakingTurn("");
-      setError("The device voice could not play this passage.");
-    };
+    const token = ++playbackToken;
+    audioElement?.pause();
     setSpeakingTurn(turn.turn_id);
-    window.speechSynthesis.speak(utterance);
+    setError("");
+    try {
+      let objectURL = audioObjectURLs.get(turn.turn_id);
+      if (!objectURL) {
+        const audio = await getConversationTurnAudio(turn.audio_url);
+        if (disposed || token !== playbackToken) return;
+        objectURL = URL.createObjectURL(audio);
+        audioObjectURLs.set(turn.turn_id, objectURL);
+      }
+      if (disposed || token !== playbackToken) return;
+      const player = new Audio(objectURL);
+      audioElement = player;
+      player.onended = () => {
+        if (token === playbackToken) setSpeakingTurn("");
+      };
+      player.onerror = () => {
+        if (token === playbackToken) {
+          setSpeakingTurn("");
+          setError("The generated Greek audio could not be played.");
+        }
+      };
+      await player.play();
+    } catch (cause) {
+      if (token === playbackToken) {
+        setSpeakingTurn("");
+        setError(conversationError(cause, "play this passage"));
+      }
+    }
+  };
+
+  const playLatestWhenEnabled = (detail: Conversation) => {
+    if (!audioFirst()) return;
+    const latest = [...detail.turns].reverse().find((turn) => turn.role === "assistant");
+    if (latest) void speak(latest);
+  };
+
+  const toggleAudioFirst = () => {
+    const enabled = !audioFirst();
+    setAudioFirst(enabled);
+    if (!enabled) return;
+    setShowGreek(false);
+    const detail = conversation();
+    if (detail) playLatestWhenEnabled(detail);
+  };
+
+  const startRecording = async () => {
+    if (recording() || requestingMicrophone()) return;
+    if (!navigator.mediaDevices?.getUserMedia || !("MediaRecorder" in window)) {
+      setError("This browser does not support microphone recording.");
+      return;
+    }
+    const token = ++microphoneRequestToken;
+    setRequestingMicrophone(true);
+    setError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (disposed || token !== microphoneRequestToken) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      microphoneStream = stream;
+      const candidates = ["audio/webm;codecs=opus", "audio/mp4", "audio/ogg;codecs=opus"];
+      const mimeType = candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate));
+      mediaRecorder = mimeType
+        ? new MediaRecorder(microphoneStream, { mimeType })
+        : new MediaRecorder(microphoneStream);
+      const chunks: BlobPart[] = [];
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunks.push(event.data);
+      };
+      mediaRecorder.onstop = () => {
+        const type = mediaRecorder?.mimeType || mimeType || "audio/webm";
+        const audio = new Blob(chunks, { type });
+        microphoneStream?.getTracks().forEach((track) => track.stop());
+        microphoneStream = null;
+        mediaRecorder = null;
+        setRecording(false);
+        if (!disposed) void submitRecordedAudio(audio);
+      };
+      mediaRecorder.start();
+      setRecording(true);
+    } catch (cause) {
+      microphoneStream?.getTracks().forEach((track) => track.stop());
+      microphoneStream = null;
+      mediaRecorder = null;
+      setRecording(false);
+      if (!disposed && token === microphoneRequestToken) {
+        setError(cause instanceof Error ? cause.message : "Microphone access failed.");
+      }
+    } finally {
+      if (!disposed && token === microphoneRequestToken) setRequestingMicrophone(false);
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorder?.state === "recording") mediaRecorder.stop();
+  };
+
+  const submitRecordedAudio = async (audio: Blob) => {
+    const current = conversation();
+    if (!current || audio.size === 0) {
+      setError("No microphone audio was recorded.");
+      return;
+    }
+    setSubmitting(true);
+    setError("");
+    const finish = appStore.beginOperation();
+    try {
+      const next = await respondToConversationAudio(current.conversation_id, audio);
+      if (disposed) return;
+      setConversation(next);
+      playLatestWhenEnabled(next);
+    } catch (cause) {
+      if (!disposed) setError(conversationError(cause, "transcribe your response"));
+    } finally {
+      finish();
+      if (!disposed) setSubmitting(false);
+    }
   };
 
   return (
@@ -149,6 +298,9 @@ export function ConversationView(props: { conversationId?: string }) {
               <button class="secondary-button" type="button" aria-pressed={readerFocus()} onClick={() => setReaderFocus(!readerFocus())}>
                 {readerFocus() ? "Exit reader focus" : "Reader focus"}
               </button>
+              <button class="secondary-button" type="button" aria-pressed={audioFirst()} onClick={toggleAudioFirst}>
+                {audioFirst() ? "Audio-first on" : "Audio-first"}
+              </button>
               <span class="repair-depth" data-active={detail().repair_depth > 0}>
                 {detail().repair_depth > 0 ? `Repair depth ${detail().repair_depth}` : "Main story"}
               </span>
@@ -167,7 +319,7 @@ export function ConversationView(props: { conversationId?: string }) {
                         <p class="greek-passage" lang="el">{turn.greek_text}</p>
                       </Show>
                       <div class="turn-actions">
-                        <button class="secondary-button" type="button" disabled={speakingTurn() === turn.turn_id} onClick={() => speak(turn)}>
+                        <button class="secondary-button" type="button" disabled={!turn.audio_url || speakingTurn() === turn.turn_id} onClick={() => void speak(turn)}>
                           {speakingTurn() === turn.turn_id ? "Playing…" : "Listen"}
                         </button>
                       </div>
@@ -185,7 +337,7 @@ export function ConversationView(props: { conversationId?: string }) {
                 id="conversation-response"
                 rows="4"
                 value={input()}
-                disabled={submitting()}
+                disabled={submitting() || recording() || requestingMicrophone()}
                 placeholder="Give your best English translation. You can also say exactly what you didn't understand."
                 onInput={(event) => setInput(event.currentTarget.value)}
                 onKeyDown={(event) => {
@@ -196,10 +348,26 @@ export function ConversationView(props: { conversationId?: string }) {
                 }}
               />
               <div class="conversation-submit-row">
-                <p>Type for now · speech input plugs into this same turn next.</p>
-                <button class="primary-button" type="submit" disabled={!input().trim() || submitting()}>
-                  {submitting() ? "Thinking…" : "Send response"}
-                </button>
+                <p aria-live="polite">
+                  {recording()
+                    ? "Recording your interpretation…"
+                    : requestingMicrophone()
+                      ? "Opening your microphone…"
+                      : "Speak or type your best interpretation."}
+                </p>
+                <div class="conversation-response-actions">
+                  <button
+                    class={recording() ? "danger-button" : "secondary-button"}
+                    type="button"
+                    disabled={submitting() || requestingMicrophone()}
+                    onClick={() => recording() ? stopRecording() : void startRecording()}
+                  >
+                    {recording() ? "Stop & send" : requestingMicrophone() ? "Opening…" : "Use microphone"}
+                  </button>
+                  <button class="primary-button" type="submit" disabled={!input().trim() || submitting() || recording() || requestingMicrophone()}>
+                    {submitting() ? "Transcribing / thinking…" : "Send response"}
+                  </button>
+                </div>
               </div>
             </form>
           </>
@@ -219,7 +387,9 @@ function turnLabel(turn: ConversationTurn): string {
 
 function conversationError(cause: unknown, action: string): string {
   if (cause instanceof APIError) {
-    if (cause.status === 503) return "The Greek story coach needs an LLM connection before it can run.";
+    if (cause.status === 503 && cause.message.includes("generation")) {
+      return "The Greek story coach needs an LLM connection before it can run.";
+    }
     if (cause.status === 404) return "That conversation could not be found.";
     return cause.message;
   }

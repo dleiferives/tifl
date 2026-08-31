@@ -115,6 +115,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/conversations/{id}/respond/audio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Transcribe a spoken interpretation and advance the story
+         * @description Proxies the recorded audio to the configured audio-server STT endpoint, stores its transcript as the learner turn, then runs the same adaptive assessment and depth-first transition as a typed response.
+         */
+        post: operations["respondToConversationAudio"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/conversations/{id}/turns/{turn_id}/audio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Generate speech for an assistant Greek passage
+         * @description Authorizes the conversation and turn, then proxies the passage to the configured audio-server TTS endpoint. The machine-specific audio-server address is never exposed to the browser.
+         */
+        get: operations["getConversationTurnAudio"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/register": {
         parameters: {
             query?: never;
@@ -989,6 +1029,13 @@ export interface components {
             /** @description The learner's best English translation and any unclear parts. */
             text: string;
         };
+        ConversationAudioResponseRequest: {
+            /**
+             * Format: binary
+             * @description Browser-recorded audio in a format supported by the configured audio-server.
+             */
+            file: string;
+        };
         Conversation: {
             conversation_id: string;
             /** @constant */
@@ -1023,9 +1070,9 @@ export interface components {
             prompt_text?: string;
             /** @description Typed learner response. */
             input_text?: string;
-            /** @description Future STT transcript for spoken learner input. */
+            /** @description STT output for spoken learner input. */
             transcript?: string;
-            /** @description Future server-issued URL for assistant TTS audio. */
+            /** @description API-root-relative authenticated path that generates assistant TTS audio. */
             audio_url?: string;
             /** @description The specific word or construction targeted by a repair story. */
             focus?: string;
@@ -2045,6 +2092,65 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    respondToConversationAudio: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["ConversationAudioResponseRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated conversation and transcript */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Conversation"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getConversationTurnAudio: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                turn_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Synthesized passage audio */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/mpeg": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
             502: components["responses"]["BadGateway"];
             503: components["responses"]["ServiceUnavailable"];
         };

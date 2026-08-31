@@ -5,17 +5,21 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/dleiferives/tifl/internal/conversation"
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/handler/oapigen"
+	"github.com/dleiferives/tifl/internal/speech"
 )
 
 const (
 	maxConversationRequestBytes = 16 << 10
 	maxConversationInputRunes   = 8_000
+	maxConversationAudioBytes   = 24 << 20
 )
 
 type (
@@ -58,7 +62,7 @@ func (h *Handler) startConversation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, toConversationDTO(detail))
+	writeJSON(w, http.StatusCreated, h.toConversationDTO(detail))
 }
 
 func (h *Handler) getConversation(w http.ResponseWriter, r *http.Request) {
@@ -71,7 +75,7 @@ func (h *Handler) getConversation(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	writeJSON(w, http.StatusOK, toConversationDTO(detail))
+	writeJSON(w, http.StatusOK, h.toConversationDTO(detail))
 }
 
 func (h *Handler) respondToConversation(w http.ResponseWriter, r *http.Request) {
@@ -98,7 +102,125 @@ func (h *Handler) respondToConversation(w http.ResponseWriter, r *http.Request) 
 		h.writeConversationError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toConversationDTO(detail))
+	writeJSON(w, http.StatusOK, h.toConversationDTO(detail))
+}
+
+func (h *Handler) conversationTurnAudio(w http.ResponseWriter, r *http.Request) {
+	if h.speech == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("conversation audio is not configured"))
+		return
+	}
+	detail, err := h.conversations.Get(r.Context(), h.currentUserID(r), r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			writeError(w, http.StatusNotFound, errors.New("conversation not found"))
+		} else {
+			writeError(w, http.StatusInternalServerError, err)
+		}
+		return
+	}
+	var selected *domain.ConversationTurn
+	for i := range detail.Turns {
+		turn := &detail.Turns[i]
+		if turn.TurnID == r.PathValue("turn_id") && turn.Role == domain.ConversationRoleAssistant && strings.TrimSpace(turn.GreekText) != "" {
+			selected = turn
+			break
+		}
+	}
+	if selected == nil {
+		writeError(w, http.StatusNotFound, errors.New("conversation turn not found"))
+		return
+	}
+	audio, err := h.speech.Synthesize(r.Context(), selected.GreekText, detail.Conversation.Language)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	w.Header().Set("Content-Type", audio.ContentType)
+	w.Header().Set("Content-Length", strconv.Itoa(len(audio.Data)))
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(audio.Data)
+}
+
+func (h *Handler) respondToConversationAudio(w http.ResponseWriter, r *http.Request) {
+	if !h.llmEnabled {
+		writeError(w, http.StatusServiceUnavailable, errors.New("conversation generation is not configured (no LLM gateway)"))
+		return
+	}
+	if h.speech == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("conversation speech input is not configured"))
+		return
+	}
+	conversationID := r.PathValue("id")
+	if _, err := h.conversations.Get(r.Context(), h.currentUserID(r), conversationID); err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			writeError(w, http.StatusNotFound, errors.New("conversation not found"))
+		} else {
+			writeError(w, http.StatusInternalServerError, err)
+		}
+		return
+	}
+	input, err := readConversationAudio(w, r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	transcript, err := h.speech.Transcribe(r.Context(), input)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	if len([]rune(transcript)) > maxConversationInputRunes {
+		writeError(w, http.StatusBadGateway, errors.New("audio transcription is too long"))
+		return
+	}
+	detail, err := h.conversations.RespondTranscript(r.Context(), h.currentUserID(r), conversationID, transcript)
+	if err != nil {
+		h.writeConversationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, h.toConversationDTO(detail))
+}
+
+func readConversationAudio(w http.ResponseWriter, r *http.Request) (speech.TranscriptionInput, error) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxConversationAudioBytes)
+	reader, err := r.MultipartReader()
+	if err != nil {
+		return speech.TranscriptionInput{}, errors.New("expected multipart audio upload")
+	}
+	for {
+		part, err := reader.NextPart()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return speech.TranscriptionInput{}, errors.New("invalid multipart audio upload")
+		}
+		if part.FormName() != "file" {
+			_, _ = io.Copy(io.Discard, io.LimitReader(part, maxConversationRequestBytes))
+			_ = part.Close()
+			continue
+		}
+		filename := part.FileName()
+		contentType := part.Header.Get("Content-Type")
+		data, err := io.ReadAll(io.LimitReader(part, maxConversationAudioBytes+1))
+		_ = part.Close()
+		if err != nil {
+			return speech.TranscriptionInput{}, errors.New("could not read audio upload")
+		}
+		if len(data) == 0 {
+			return speech.TranscriptionInput{}, errors.New("audio file is empty")
+		}
+		if len(data) > maxConversationAudioBytes {
+			return speech.TranscriptionInput{}, errors.New("audio file is too large")
+		}
+		return speech.TranscriptionInput{
+			Data: data, Filename: filename, ContentType: contentType,
+		}, nil
+	}
+	return speech.TranscriptionInput{}, errors.New("audio file is required")
 }
 
 func decodeOptionalStartConversation(w http.ResponseWriter, r *http.Request) (startConversationRequest, error) {
@@ -143,7 +265,7 @@ func (h *Handler) writeConversationError(w http.ResponseWriter, err error) {
 	}
 }
 
-func toConversationDTO(detail domain.ConversationDetail) conversationDTO {
+func (h *Handler) toConversationDTO(detail domain.ConversationDetail) conversationDTO {
 	dto := conversationDTO{
 		ConversationId: detail.Conversation.ConversationID,
 		Language:       detail.Conversation.Language,
@@ -160,12 +282,18 @@ func toConversationDTO(detail domain.ConversationDetail) conversationDTO {
 		if turn.ReplyToTurnID != nil {
 			replyTo = *turn.ReplyToTurnID
 		}
+		audioURL := ""
+		if h.speech != nil && turn.Role == domain.ConversationRoleAssistant && strings.TrimSpace(turn.GreekText) != "" {
+			audioURL = "/conversations/" + url.PathEscape(detail.Conversation.ConversationID) +
+				"/turns/" + url.PathEscape(turn.TurnID) + "/audio"
+		}
 		dto.Turns = append(dto.Turns, conversationTurnDTO{
 			TurnId: turn.TurnID, Role: oapigen.ConversationTurnRole(turn.Role), Kind: oapigen.ConversationTurnKind(turn.Kind),
 			Action: oapigen.ConversationTurnAction(turn.Action), Assessment: oapigen.ConversationTurnAssessment(turn.Assessment),
 			GreekText: turn.GreekText, EnglishText: turn.EnglishText,
 			PromptText: turn.PromptText, InputText: turn.InputText,
 			Transcript: turn.Transcript, Focus: turn.Focus,
+			AudioUrl:      audioURL,
 			ReplyToTurnId: replyTo, CreatedAt: turn.CreatedAt,
 		})
 	}

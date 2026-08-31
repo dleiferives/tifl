@@ -1,0 +1,16 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Tifl API (prometheus audio)",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/cmd/server",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "AUDIO_BASE_URL": "http://prometheus:8010"
+      }
+    }
+  ]
+}

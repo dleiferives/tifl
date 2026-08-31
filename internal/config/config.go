@@ -58,6 +58,12 @@ type Config struct {
 	LLMBaseURL                string                // where the LLM gateway is listening
 	LLMAPIKey                 string                // optional gateway auth
 	LLMModel                  string                // model name sent to the gateway (blank = gateway default)
+	AudioBaseURL              string                // optional audio-server base URL; blank disables TTS/STT
+	AudioAPIKey               string                // optional audio-server bearer token
+	AudioTTSModel             string                // provider id or OpenAI-compatible TTS alias
+	AudioTTSVoice             string                // provider voice id or auto
+	AudioTTSSpeed             float64               // synthesis speed multiplier
+	AudioSTTModel             string                // provider id or OpenAI-compatible STT alias
 	AuthMode                  AuthMode              // jwt (cloud) or none (desktop-local)
 	JWTSecret                 string                // signing key when AuthMode == jwt
 	AllowInsecureAuthCookie   bool                  // development-only: permit refresh cookie over HTTP
@@ -112,21 +118,27 @@ type GatewayEntry struct {
 // the one it needs.
 type file struct {
 	Server struct {
-		Addr                      string `yaml:"addr"`
-		StorageMode               string `yaml:"storage_mode"`
-		DBPath                    string `yaml:"db_path"`
-		DatabaseURL               string `yaml:"database_url"`
-		LLMBaseURL                string `yaml:"llm_base_url"`
-		LLMAPIKey                 string `yaml:"llm_api_key"`
-		LLMModel                  string `yaml:"llm_model"`
-		AuthMode                  string `yaml:"auth_mode"`
-		JWTSecret                 string `yaml:"jwt_secret"`
-		AllowInsecureAuthCookie   bool   `yaml:"allow_insecure_auth_cookie"`
-		FrontendDir               string `yaml:"frontend_dir"`
-		LLMBudgetTokens           int64  `yaml:"llm_budget_tokens"`
-		LLMBudgetWindowHours      int    `yaml:"llm_budget_window_hours"`
-		PredictorMode             string `yaml:"predictor_mode"`
-		TaskReportRegenerationCap *int   `yaml:"task_report_regeneration_cap"`
+		Addr                      string  `yaml:"addr"`
+		StorageMode               string  `yaml:"storage_mode"`
+		DBPath                    string  `yaml:"db_path"`
+		DatabaseURL               string  `yaml:"database_url"`
+		LLMBaseURL                string  `yaml:"llm_base_url"`
+		LLMAPIKey                 string  `yaml:"llm_api_key"`
+		LLMModel                  string  `yaml:"llm_model"`
+		AudioBaseURL              string  `yaml:"audio_base_url"`
+		AudioAPIKey               string  `yaml:"audio_api_key"`
+		AudioTTSModel             string  `yaml:"audio_tts_model"`
+		AudioTTSVoice             string  `yaml:"audio_tts_voice"`
+		AudioTTSSpeed             float64 `yaml:"audio_tts_speed"`
+		AudioSTTModel             string  `yaml:"audio_stt_model"`
+		AuthMode                  string  `yaml:"auth_mode"`
+		JWTSecret                 string  `yaml:"jwt_secret"`
+		AllowInsecureAuthCookie   bool    `yaml:"allow_insecure_auth_cookie"`
+		FrontendDir               string  `yaml:"frontend_dir"`
+		LLMBudgetTokens           int64   `yaml:"llm_budget_tokens"`
+		LLMBudgetWindowHours      int     `yaml:"llm_budget_window_hours"`
+		PredictorMode             string  `yaml:"predictor_mode"`
+		TaskReportRegenerationCap *int    `yaml:"task_report_regeneration_cap"`
 		ModelPricing              map[string]struct {
 			InputPerMillion  float64 `yaml:"input_per_million"`
 			OutputPerMillion float64 `yaml:"output_per_million"`
@@ -191,6 +203,12 @@ func Load(path string) (Config, error) {
 		LLMBaseURL:                pick("LLM_BASE_URL", s.LLMBaseURL, "http://127.0.0.1:8001"),
 		LLMAPIKey:                 pick("LLM_API_KEY", s.LLMAPIKey, ""),
 		LLMModel:                  pick("LLM_MODEL", s.LLMModel, ""),
+		AudioBaseURL:              strings.TrimRight(pick("AUDIO_BASE_URL", s.AudioBaseURL, ""), "/"),
+		AudioAPIKey:               pick("AUDIO_API_KEY", s.AudioAPIKey, ""),
+		AudioTTSModel:             pick("AUDIO_TTS_MODEL", s.AudioTTSModel, "auto"),
+		AudioTTSVoice:             pick("AUDIO_TTS_VOICE", s.AudioTTSVoice, "auto"),
+		AudioTTSSpeed:             pickFloatDefault("AUDIO_TTS_SPEED", s.AudioTTSSpeed, 0.9),
+		AudioSTTModel:             pick("AUDIO_STT_MODEL", s.AudioSTTModel, "auto"),
 		AuthMode:                  AuthMode(pick("AUTH_MODE", s.AuthMode, string(AuthNone))),
 		JWTSecret:                 pick("JWT_SECRET", s.JWTSecret, ""),
 		AllowInsecureAuthCookie:   allowInsecureCookie,
@@ -214,6 +232,9 @@ func Load(path string) (Config, error) {
 	}
 	if cfg.TaskReportRegenerationCap < 0 {
 		return Config{}, fmt.Errorf("config: task_report_regeneration_cap must be >= 0")
+	}
+	if cfg.AudioTTSSpeed < 0.25 || cfg.AudioTTSSpeed > 4 {
+		return Config{}, fmt.Errorf("config: audio_tts_speed must be between 0.25 and 4")
 	}
 	if cfg.AuthMode != AuthNone && cfg.AuthMode != AuthJWT {
 		return Config{}, fmt.Errorf("config: unknown auth_mode %q", cfg.AuthMode)
@@ -324,6 +345,20 @@ func readFile(path string) (file, error) {
 func pickInt64(envKey string, fileVal int64, def int64) int64 {
 	if v := os.Getenv(envKey); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return n
+		}
+	}
+	if fileVal != 0 {
+		return fileVal
+	}
+	return def
+}
+
+// pickFloatDefault resolves a float setting: env var wins, then a non-zero file
+// value, then the built-in default.
+func pickFloatDefault(envKey string, fileVal, def float64) float64 {
+	if v := os.Getenv(envKey); v != "" {
+		if n, err := strconv.ParseFloat(v, 64); err == nil {
 			return n
 		}
 	}

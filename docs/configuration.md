@@ -40,6 +40,12 @@ server:   # cmd/server
   llm_base_url: http://127.0.0.1:8001
   llm_api_key: ""
   llm_model: ""
+  audio_base_url: ""
+  audio_api_key: ""
+  audio_tts_model: auto
+  audio_tts_voice: auto
+  audio_tts_speed: 0.9
+  audio_stt_model: auto
   auth_mode: none
   jwt_secret: ""
   allow_insecure_auth_cookie: false
@@ -88,6 +94,12 @@ only, the `-addr` command-line flag is a final one-off override.
 | `llm_base_url` | `LLM_BASE_URL` | `http://127.0.0.1:8001` | where the gateway listens |
 | `llm_api_key` | `LLM_API_KEY` | — | optional gateway auth token |
 | `llm_model` | `LLM_MODEL` | — | model the server requests (blank ⇒ gateway default) |
+| `audio_base_url` | `AUDIO_BASE_URL` | — | OpenAI-compatible audio-server base URL; blank disables conversation TTS/STT |
+| `audio_api_key` | `AUDIO_API_KEY` | — | optional audio-server bearer token |
+| `audio_tts_model` | `AUDIO_TTS_MODEL` | `auto` | model sent to `/v1/audio/speech` |
+| `audio_tts_voice` | `AUDIO_TTS_VOICE` | `auto` | voice sent to `/v1/audio/speech` |
+| `audio_tts_speed` | `AUDIO_TTS_SPEED` | `0.9` | speech speed multiplier (`0.25`–`4`) |
+| `audio_stt_model` | `AUDIO_STT_MODEL` | `auto` | model sent to `/v1/audio/transcriptions` |
 | `auth_mode` | `AUTH_MODE` | `none` | `none` (synthetic local user) or `jwt` (cloud) |
 | `jwt_secret` | `JWT_SECRET` | — | JWT signing key (required when `auth_mode: jwt`) |
 | `allow_insecure_auth_cookie` | `ALLOW_INSECURE_AUTH_COOKIE` | `false` | development-only: allow the refresh cookie over HTTP |
@@ -104,6 +116,12 @@ only, the `-addr` command-line flag is a final one-off override.
 
 The server never calls a model provider directly — only the gateway at
 `llm_base_url`. See [backend-server](../context/backend-server.md).
+
+Conversation audio is also server-proxied: browsers use authenticated Tifl
+routes while the API server calls the service at `audio_base_url`. This keeps
+machine-local hostnames and audio credentials out of the web client. The checked-in
+VS Code launch profile supplies the development-only `http://prometheus:8010`
+value; deployments should set their own URL or leave audio disabled.
 
 Media object rows should store stable object keys such as
 `story_audio/{story_id}/{audio_id}.mp3`, not absolute filesystem paths or
