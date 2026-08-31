@@ -187,7 +187,7 @@ func TestLoad_EnvOverridesFile(t *testing.T) {
 	t.Setenv("TIFL_ADDR", "2.2.2.2:2")
 	t.Setenv("MEDIA_STORAGE_MODE", "s3")
 	t.Setenv("MEDIA_S3_SIGNED_URLS", "false")
-	t.Setenv("AUDIO_BASE_URL", "http://prometheus:8010/")
+	t.Setenv("AUDIO_BASE_URL", "http://audio.local:8010/")
 	t.Setenv("AUDIO_TTS_SPEED", "1.1")
 	cfg, err := config.Load(path)
 	if err != nil {
@@ -199,7 +199,7 @@ func TestLoad_EnvOverridesFile(t *testing.T) {
 	if cfg.MediaStorageMode != config.MediaStorageS3 || cfg.MediaS3SignedURLs {
 		t.Fatalf("media env should override file/default: %+v", cfg)
 	}
-	if cfg.AudioBaseURL != "http://prometheus:8010" || cfg.AudioTTSSpeed != 1.1 {
+	if cfg.AudioBaseURL != "http://audio.local:8010" || cfg.AudioTTSSpeed != 1.1 {
 		t.Fatalf("audio env should override file/default: %+v", cfg)
 	}
 }

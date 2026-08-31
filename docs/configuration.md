@@ -119,9 +119,9 @@ The server never calls a model provider directly — only the gateway at
 
 Conversation audio is also server-proxied: browsers use authenticated Tifl
 routes while the API server calls the service at `audio_base_url`. This keeps
-machine-local hostnames and audio credentials out of the web client. The checked-in
-VS Code launch profile supplies the development-only `http://prometheus:8010`
-value; deployments should set their own URL or leave audio disabled.
+machine-local hostnames and audio credentials out of the web client. Put a local
+audio endpoint in the git-ignored `tifl.yaml`; deployments should set their own
+URL or leave audio disabled.
 
 Media object rows should store stable object keys such as
 `story_audio/{story_id}/{audio_id}.mp3`, not absolute filesystem paths or
