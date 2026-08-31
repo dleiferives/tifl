@@ -193,8 +193,8 @@ export function LibraryView() {
             <input type="checkbox" checked={allLanguages()} onChange={(event) => setAllLanguages(event.currentTarget.checked)} />
             <span>All languages</span>
           </label>
-          <a class="button-link secondary-link" href={routeHref("/import")}>Import text</a>
-          <a class="button-link secondary-link" href={routeHref("/start")}>Start session</a>
+          <a class="button-link" href={routeHref("/import")}>Add story</a>
+          <a class="button-link secondary-link" href={routeHref("/start")}>Generate a story</a>
         </div>
       </header>
 
@@ -203,49 +203,10 @@ export function LibraryView() {
       </Show>
 
       <div class="library-sections">
-        <section class="library-section" aria-labelledby="library-imports">
+        <section class="library-section" aria-labelledby="library-stories">
           <header class="library-section-heading">
             <div>
-              <h2 id="library-imports">Imported texts</h2>
-              <p>{imports().length} shown</p>
-            </div>
-          </header>
-          <LibrarySectionState
-            loading={importsLoading()}
-            error={importsError()}
-            empty={imports().length === 0}
-            loadingText="Loading imported texts..."
-            emptyTitle="No imported texts"
-            emptyText="Texts you import will appear here."
-            emptyHref={routeHref("/import")}
-            emptyAction="Import text"
-            onRetry={() => void loadImports(true)}
-          >
-            <div class="session-list">
-              <For each={imports()}>
-                {(story) => (
-                  <ImportedStoryRow
-                    story={story}
-                    busyAction={busyAction()}
-                    onDelete={deleteImported}
-                  />
-                )}
-              </For>
-            </div>
-            <Show when={importsHasMore()}>
-              <div class="load-more-row">
-                <button class="secondary-button" type="button" disabled={importsLoadingMore()} onClick={() => void loadImports(false)}>
-                  {importsLoadingMore() ? "Loading..." : "Load more"}
-                </button>
-              </div>
-            </Show>
-          </LibrarySectionState>
-        </section>
-
-        <section class="library-section" aria-labelledby="library-generated">
-          <header class="library-section-heading">
-            <div>
-              <h2 id="library-generated">Generated stories</h2>
+              <h2 id="library-stories">Stories</h2>
               <p>{sessions().length} shown</p>
             </div>
             <div class="segmented-control compact-segmented">
@@ -261,11 +222,11 @@ export function LibraryView() {
             loading={sessionsLoading()}
             error={sessionsError()}
             empty={sessions().length === 0}
-            loadingText="Loading generated stories..."
-            emptyTitle={generatedArchived() ? "No archived sessions" : "No sessions yet"}
-            emptyText={generatedArchived() ? "Archived sessions will appear here." : "Start a session to generate your first story and tasks."}
-            emptyHref={routeHref("/start")}
-            emptyAction={generatedArchived() ? "" : "Start session"}
+            loadingText="Loading stories..."
+            emptyTitle={generatedArchived() ? "No archived stories" : "No stories yet"}
+            emptyText={generatedArchived() ? "Archived stories will appear here." : "Add a story of your own to start reading and practicing."}
+            emptyHref={routeHref("/import")}
+            emptyAction={generatedArchived() ? "" : "Add story"}
             onRetry={() => void loadSessionsPage(true)}
           >
             <div class="session-list">
@@ -288,6 +249,45 @@ export function LibraryView() {
               <div class="load-more-row">
                 <button class="secondary-button" type="button" disabled={sessionsLoadingMore()} onClick={() => void loadSessionsPage(false)}>
                   {sessionsLoadingMore() ? "Loading..." : "Load more"}
+                </button>
+              </div>
+            </Show>
+          </LibrarySectionState>
+        </section>
+
+        <section class="library-section" aria-labelledby="library-imports">
+          <header class="library-section-heading">
+            <div>
+              <h2 id="library-imports">Legacy standalone imports</h2>
+              <p>{imports().length} shown</p>
+            </div>
+          </header>
+          <LibrarySectionState
+            loading={importsLoading()}
+            error={importsError()}
+            empty={imports().length === 0}
+            loadingText="Loading legacy imports..."
+            emptyTitle="No legacy imports"
+            emptyText="Texts added before stories became session-backed will appear here."
+            emptyHref=""
+            emptyAction=""
+            onRetry={() => void loadImports(true)}
+          >
+            <div class="session-list">
+              <For each={imports()}>
+                {(story) => (
+                  <ImportedStoryRow
+                    story={story}
+                    busyAction={busyAction()}
+                    onDelete={deleteImported}
+                  />
+                )}
+              </For>
+            </div>
+            <Show when={importsHasMore()}>
+              <div class="load-more-row">
+                <button class="secondary-button" type="button" disabled={importsLoadingMore()} onClick={() => void loadImports(false)}>
+                  {importsLoadingMore() ? "Loading..." : "Load more"}
                 </button>
               </div>
             </Show>
@@ -411,9 +411,9 @@ function LibrarySectionState(props: {
 
 function libraryListErrorMessage(kind: "imports" | "sessions", error: unknown): string {
   if (error instanceof APIError && error.status === 401) {
-    return kind === "imports" ? "Sign in again to load imported texts." : "Sign in again to load generated stories.";
+    return kind === "imports" ? "Sign in again to load imported texts." : "Sign in again to load stories.";
   }
-  return kind === "imports" ? "Imported texts could not be loaded." : "Generated stories could not be loaded.";
+  return kind === "imports" ? "Imported texts could not be loaded." : "Stories could not be loaded.";
 }
 
 function retrySessionErrorMessage(error: unknown): string {

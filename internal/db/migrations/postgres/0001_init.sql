@@ -117,8 +117,8 @@ CREATE TABLE sessions (
     level              TEXT NOT NULL,
     selected_targets   JSONB,
     selected_new       JSONB,
-    session_type       TEXT NOT NULL DEFAULT 'system',
-    topic              TEXT,
+    session_type       TEXT NOT NULL DEFAULT 'system', -- system | topic_guided | expression_guided | user_added
+    topic              TEXT,                           -- generated topic or user-added title
     user_expressions   JSONB,
     expression_output  TEXT,
     status             TEXT NOT NULL DEFAULT 'pending',

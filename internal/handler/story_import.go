@@ -11,6 +11,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/document"
 	"github.com/dleiferives/tifl/internal/domain"
 	"github.com/dleiferives/tifl/internal/handler/oapigen"
@@ -88,10 +89,80 @@ func (h *Handler) importStory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, importStoryResponse{
-		StoryId:  imported.StoryID,
-		Language: imported.Language,
-		Title:    strings.TrimSpace(req.Title),
+		StoryId:   imported.Story.StoryID,
+		SessionId: imported.Session.SessionID,
+		Language:  imported.Story.Language,
+		Title:     strings.TrimSpace(req.Title),
 	})
+}
+
+// generateStoryTasks starts only the task stages for a user-added story. The
+// import path has already persisted and tokenized the source text, so the retry
+// pipeline treats those content checkpoints as complete and cannot overwrite it.
+func (h *Handler) generateStoryTasks(w http.ResponseWriter, r *http.Request) {
+	if h.broker == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("task generation is not configured (no LLM gateway)"))
+		return
+	}
+
+	userID := h.currentUserID(r)
+	imported, err := h.repo.GetStory(r.Context(), r.PathValue("id"))
+	if err != nil || imported.UserID != userID {
+		if err == nil {
+			err = db.ErrNotFound
+		}
+		h.writeStoryLookupError(w, err)
+		return
+	}
+	if imported.SessionID == nil {
+		writeError(w, http.StatusConflict, errors.New("story is not attached to a study session"))
+		return
+	}
+	sess, err := h.repo.GetSession(r.Context(), *imported.SessionID)
+	if err != nil || sess.UserID != userID {
+		if err == nil {
+			err = db.ErrNotFound
+		}
+		h.writeSessionLookupError(w, err)
+		return
+	}
+	if sess.SessionType != domain.SessionUserAdded {
+		writeError(w, http.StatusConflict, errors.New("tasks can only be added through this endpoint for user-added stories"))
+		return
+	}
+	if sess.Status == domain.StatusPending || sess.Status == domain.StatusGenerating {
+		writeJSON(w, http.StatusAccepted, sessionResponse{SessionId: sess.SessionID, Status: string(domain.StatusGenerating)})
+		return
+	}
+	if sess.Status == domain.StatusComplete {
+		writeError(w, http.StatusConflict, errors.New("completed sessions cannot generate new tasks"))
+		return
+	}
+	existing, err := h.repo.ListSessionTasks(r.Context(), sess.SessionID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if len(existing) > 0 {
+		writeError(w, http.StatusConflict, errors.New("story already has generated tasks"))
+		return
+	}
+
+	previousStatus := sess.Status
+	if err := h.repo.UpdateSessionStatus(r.Context(), sess.SessionID, domain.StatusGenerating); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if h.generationQueue != nil {
+		if err := h.generationQueue.EnqueueGeneration(r.Context(), sess.SessionID, userID); err != nil {
+			_ = h.repo.UpdateSessionStatus(r.Context(), sess.SessionID, previousStatus)
+			writeError(w, http.StatusInternalServerError, fmt.Errorf("queueing task generation: %w", err))
+			return
+		}
+	} else {
+		h.broker.StartRetry(sess.SessionID)
+	}
+	writeJSON(w, http.StatusAccepted, sessionResponse{SessionId: sess.SessionID, Status: string(domain.StatusGenerating)})
 }
 
 func decodeImportStoryRequest(w http.ResponseWriter, r *http.Request) (importStoryRequest, error) {

@@ -442,8 +442,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List the current user's imported (standalone) stories
-         * @description Newest-first page of the current user's standalone imported stories — rows in the stories table with no generation session. Generated (session-backed) stories are listed via GET /sessions, not here. The title is a clean display label (the "Imported: " topic prefix is stripped; untitled imports fall back to the first words of the text). By default all languages are included; pass language to scope the page to one language.
+         * List the current user's legacy standalone imports
+         * @description Newest-first page of legacy standalone imported stories — rows in the stories table with no study session. New user-added stories are session-backed and are listed via GET /sessions. The title is a clean display label (the "Imported: " topic prefix is stripped; untitled imports fall back to the first words of the text). By default all languages are included; pass language to scope the page to one language.
          */
         get: operations["listImportedStories"];
         put?: never;
@@ -464,8 +464,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Import text as a reader story
-         * @description Persists caller-provided target-language text as a tokenized story the normal reader can load via GET /stories/{id}. Clients may send pasted text as JSON or upload one UTF-8 text/plain .txt file with multipart/form-data. PDF/EPUB extraction is deferred. If language or level is omitted, the current profile defaults are used. Imported stories are standalone reader content and do not create generation sessions or tasks.
+         * Add user-provided text as a story
+         * @description Persists caller-provided target-language text as a first-class, session-backed story the normal reader can load via GET /stories/{id}. The response includes both story_id and session_id. Clients may send pasted text as JSON or upload one UTF-8 text/plain .txt file with multipart/form-data. PDF/EPUB extraction is deferred. If language or level is omitted, the current profile defaults are used. Tasks are generated separately through POST /stories/{id}/tasks/generate.
          */
         post: operations["importStory"];
         delete?: never;
@@ -490,9 +490,29 @@ export interface paths {
         post?: never;
         /**
          * Delete a story (imported or generated)
-         * @description Deletes the owner's story. One endpoint, two meanings: a standalone imported story deletes the story row and its tokens/glossary/audio and the caller's reader events for it; a generated (session-backed) story deletes the whole session via the existing session-delete cascade (story, tasks, phrases, generation stages). Ownership is enforced — another user's story returns 404.
+         * @description Deletes the owner's story. One endpoint, two meanings: a standalone imported story deletes the story row and its tokens/glossary/audio and the caller's reader events for it; a session-backed story (generated or user-added) deletes the whole session via the existing session-delete cascade (story, tasks, phrases, generation stages). Ownership is enforced — another user's story returns 404.
          */
         delete: operations["deleteStory"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stories/{id}/tasks/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate practice tasks for a user-added story
+         * @description Starts the existing checkpointed task-generation pipeline against the caller's persisted user-added story. The source text is never regenerated or replaced. Repeated requests while generation is active are idempotent; a story that already has tasks returns 409.
+         */
+        post: operations["generateStoryTasks"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -962,6 +982,7 @@ export interface components {
         };
         ImportStoryResponse: {
             story_id: string;
+            session_id: string;
             language: string;
             title?: string;
         };
@@ -1118,12 +1139,12 @@ export interface components {
         /** @description One home/resume row for the current user. */
         SessionOverview: {
             session_id: string;
-            /** @description present once story generation has persisted a story */
+            /** @description present once a story has been persisted for the session */
             story_id?: string;
             language: string;
             level: string;
             /** @enum {string} */
-            session_type: "system" | "topic_guided" | "expression_guided";
+            session_type: "system" | "topic_guided" | "expression_guided" | "user_added";
             /**
              * @description what the session's content is — a narrative story or a phrase set. Derived from the session shape (expression-guided + expression_output phrases is a phrase set; everything else is a story). Tells the client whether to load /stories/{id} or the phrase set via /sessions/{id}/content.
              * @enum {string}
@@ -1351,7 +1372,7 @@ export interface components {
         };
         /** @description One SSE progress message (the JSON in each data line). Non-terminal events report a pipeline stage status. The terminal `stage: done` event reports the final session status plus enough persisted state for the client to navigate to reader/tasks or show retry/error UI without guessing. */
         GenerationEvent: {
-            /** @description scope_check|selection|story_generation|phrase_generation|tokenization|task_<type>|done */
+            /** @description scope_check|selection|story_import|story_generation|phrase_generation|tokenization|task_<type>|done */
             stage: string;
             /**
              * @description stage status for progress events; final session status for stage=done
@@ -2475,6 +2496,33 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
+        };
+    };
+    generateStoryTasks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Task generation started */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionRef"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     getDefinition: {

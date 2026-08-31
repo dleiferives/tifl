@@ -3,18 +3,14 @@ import {
   APIError,
   archiveSession,
   deleteSession,
-  generateSession,
   listSessions,
   retrySession,
   unarchiveSession,
-  type APIRequest,
 } from "../api";
 import { ConfirmDialog, type ConfirmDialogRequest } from "../components/confirm_dialog";
 import { routeHref, sessionHref } from "../router";
 import { appStore } from "../store";
 import { formatLevel, SessionRow, sessionTitle, type SessionOverview, type SessionStatus } from "./session_rows";
-
-type GenerateRequest = APIRequest<"generateSession">;
 
 interface SessionGroup {
   id: string;
@@ -27,8 +23,8 @@ const PAGE_SIZE = 20;
 const SESSION_GROUPS: SessionGroup[] = [
   {
     id: "active",
-    title: "Generating",
-    description: "Sessions waiting on the generation pipeline.",
+    title: "Preparing",
+    description: "Stories and tasks that are still being prepared.",
     statuses: ["generating", "pending"],
   },
   {
@@ -58,7 +54,6 @@ export function HomeView() {
   const [hasMore, setHasMore] = createSignal(false);
   const [listError, setListError] = createSignal("");
   const [actionError, setActionError] = createSignal("");
-  const [starting, setStarting] = createSignal(false);
   const [retryingSessionID, setRetryingSessionID] = createSignal("");
   const [archivedView, setArchivedView] = createSignal(false);
   const [busyAction, setBusyAction] = createSignal("");
@@ -104,28 +99,6 @@ export function HomeView() {
     setHasMore(false);
     setActionError("");
     void loadSessions(true, archived);
-  };
-
-  const startSystemSession = async () => {
-    setActionError("");
-    setStarting(true);
-    const finish = appStore.beginOperation();
-    try {
-      const request: GenerateRequest = { session_type: "system" };
-      if (appStore.activeLanguage()) {
-        request.language = appStore.activeLanguage();
-      }
-      if (appStore.currentLevel()) {
-        request.level = appStore.currentLevel();
-      }
-      const next = await generateSession(request);
-      window.location.hash = sessionHref(next.session_id, "read");
-    } catch (error) {
-      setActionError(startSessionErrorMessage(error));
-    } finally {
-      finish();
-      setStarting(false);
-    }
   };
 
   const retryFailedSession = async (sessionID: string) => {
@@ -182,15 +155,12 @@ export function HomeView() {
     <section class="home-view">
       <header class="view-heading home-heading">
         <div>
-          <h1>Home</h1>
+          <h1>Your stories</h1>
           <p>{homeSubtitle()}</p>
         </div>
         <div class="home-start-actions">
-          <button class="primary-button" type="button" disabled={starting()} onClick={startSystemSession}>
-            {starting() ? "Starting..." : "Start session"}
-          </button>
-          <a class="button-link secondary-link" href={routeHref("/start")}>Guided session…</a>
-          <a class="button-link secondary-link" href={routeHref("/import")}>Import text</a>
+          <a class="button-link" href={routeHref("/import")}>Add story</a>
+          <a class="button-link secondary-link" href={routeHref("/start")}>Generate a story</a>
           <a class="button-link secondary-link" href={routeHref("/library")}>Library</a>
         </div>
       </header>
@@ -199,7 +169,7 @@ export function HomeView() {
         <p class="form-error" role="alert">{actionError()}</p>
       </Show>
 
-      <div class="home-metrics" aria-label="Session summary">
+      <div class="home-metrics" aria-label="Story and task summary">
         <Metric label="Resume" value={resumeCount()} />
         <Metric label="Failed" value={failedCount()} />
         <Metric label="Tasks" value={`${completedTasks()}/${totalTasks()}`} />
@@ -230,8 +200,14 @@ export function HomeView() {
         </Match>
         <Match when={sessions().length === 0}>
           <div class="home-state empty-state">
-            <h2>{archivedView() ? "No archived sessions" : "No sessions yet"}</h2>
-            <p>{archivedView() ? "Archived sessions will appear here." : "Start a session to generate your first story and tasks."}</p>
+            <h2>{archivedView() ? "No archived stories" : "No stories yet"}</h2>
+            <p>{archivedView() ? "Archived stories will appear here." : "Add a story you want to study, or generate one with Tifl."}</p>
+            <Show when={!archivedView()}>
+              <div class="home-start-actions">
+                <a class="button-link" href={routeHref("/import")}>Add your first story</a>
+                <a class="button-link secondary-link" href={routeHref("/start")}>Generate one instead</a>
+              </div>
+            </Show>
           </div>
         </Match>
         <Match when={sessions().length > 0}>
@@ -298,9 +274,9 @@ function homeSubtitle(): string {
   const language = appStore.activeLanguage();
   const level = appStore.currentLevel();
   if (language && level) {
-    return `${language.toUpperCase()} · ${formatLevel(level)} default`;
+    return `${language.toUpperCase()} · ${formatLevel(level)} reading`;
   }
-  return "Sessions and study controls.";
+  return "Add your own text and turn it into reading practice.";
 }
 
 function sessionListErrorMessage(error: unknown): string {
@@ -308,18 +284,6 @@ function sessionListErrorMessage(error: unknown): string {
     return "Sign in again to load your sessions.";
   }
   return "Sessions could not be loaded.";
-}
-
-function startSessionErrorMessage(error: unknown): string {
-  if (error instanceof APIError) {
-    if (error.status === 503) {
-      return "Generation is not configured. Use existing demo sessions or start the gateway.";
-    }
-    if (error.status === 400) {
-      return "Your current language or level cannot start a session.";
-    }
-  }
-  return "A new session could not be started.";
 }
 
 function retrySessionErrorMessage(error: unknown): string {

@@ -2,6 +2,7 @@ package story
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -131,6 +132,12 @@ func (p *Pipeline) Generate(ctx context.Context, sessionID string, emit emitter)
 	if err != nil {
 		return err
 	}
+	// User-added sessions already own their source text. Route every entry point
+	// through retry/checkpoint logic so no caller can accidentally invoke story
+	// generation and replace the session's content.
+	if sess.SessionType == domain.SessionUserAdded {
+		return p.Retry(ctx, sessionID, emit)
+	}
 	ctx = p.callContext(ctx, sess)
 
 	if err := p.deps.Repo.UpdateSessionStatus(ctx, sess.SessionID, domain.StatusGenerating); err != nil {
@@ -238,6 +245,10 @@ func (p *Pipeline) Retry(ctx context.Context, sessionID string, emit emitter) er
 	stages := p.stageIndex(ctx, sessionID)
 	sourceText, contentDone := p.completedContent(ctx, sess, stages)
 	if !contentDone {
+		if sess.SessionType == domain.SessionUserAdded {
+			p.markSession(ctx, sessionID, domain.StatusFailed)
+			return fail(ErrCodePersist, errors.New("user-added story content checkpoints are incomplete"))
+		}
 		return p.Generate(ctx, sessionID, emit)
 	}
 
@@ -320,8 +331,12 @@ func (p *Pipeline) completedContent(ctx context.Context, sess domain.Session, st
 		}
 		return joinPhraseTexts(ps.Items, func(it domain.PhraseItem) string { return it.TargetText }), true
 	}
+	contentStage := domain.StageStoryGeneration
+	if sess.SessionType == domain.SessionUserAdded {
+		contentStage = domain.StageStoryImport
+	}
 	storyDone := sess.StoryID != nil &&
-		stages[domain.StageStoryGeneration].Status == domain.StageComplete &&
+		stages[contentStage].Status == domain.StageComplete &&
 		stages[domain.StageTokenization].Status == domain.StageComplete
 	if !storyDone {
 		return "", false

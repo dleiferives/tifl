@@ -185,7 +185,8 @@ not a requirement.
 
 ### `stories`
 
-Generated story content. One story is produced per learning session.
+Story content, either generated or supplied by the user. Session-backed stories
+belong to one learning session.
 
 ```
 stories
@@ -518,7 +519,7 @@ failing stage. See `session-types.md`.
 ```
 session_generation_stages
   session_id    TEXT  NOT NULL    FK → sessions.session_id
-  stage         TEXT  NOT NULL    'scope_check' | 'story_generation' |
+  stage         TEXT  NOT NULL    'scope_check' | 'story_import' | 'story_generation' |
                                   'tokenization' | 'task_{type_id}'
   status        TEXT  NOT NULL    'pending' | 'in_progress' | 'complete' | 'failed'
   started_at    REAL
@@ -539,8 +540,9 @@ The `sessions` table gains columns for session type and generation status:
 ```
 sessions (additions to existing table)
   session_type        TEXT  NOT NULL  DEFAULT 'system'
-                            'system' | 'topic_guided' | 'expression_guided'
-  topic               TEXT            user-provided topic (topic_guided only)
+                            'system' | 'topic_guided' | 'expression_guided' |
+                            'user_added'
+  topic               TEXT            generated topic or user-added story title
   user_expressions    JSON            list of L1 expressions (expression_guided only)
   expression_output   TEXT            'phrases' | 'story' (expression_guided only)
   status              TEXT  NOT NULL  DEFAULT 'pending'

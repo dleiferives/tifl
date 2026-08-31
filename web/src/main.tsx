@@ -124,8 +124,8 @@ function AppLayout(props: { route: Route; children: JSX.Element }) {
         <a class="brand" href={routeHref("/")}>tifl</a>
         <nav class="app-nav" aria-label="Main navigation">
           <a href={routeHref("/")} aria-current={isCurrent("home")}>Home</a>
+          <a href={routeHref("/import")} aria-current={isCurrent("import")}>Add story</a>
           <a href={routeHref("/library")} aria-current={isCurrent("library")}>Library</a>
-          <a href={routeHref("/import")} aria-current={isCurrent("import")}>Import</a>
           <a href={routeHref("/skills")} aria-current={isCurrent("skills")}>Skills</a>
           <a href={routeHref("/settings")} aria-current={isCurrent("settings")}>Settings</a>
           <Show when={appStore.isAdmin()}>

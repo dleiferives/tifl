@@ -55,20 +55,36 @@ func TestImportTextCreatesStoryAndTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	story, err := ImportText(ctx, repo, importLang{}, ImportRequest{
+	imported, err := ImportText(ctx, repo, importLang{}, ImportRequest{
 		UserID: domain.LocalUserID, Language: "xx", Level: "beginner", Title: "Note", Text: " Alpha beta ",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if story.StoryID == "" || story.Text != "Alpha beta" || story.Topic != "Imported: Note" {
-		t.Fatalf("unexpected story: %+v", story)
+	if imported.Story.StoryID == "" || imported.Story.Text != "Alpha beta" || imported.Story.Topic != "Imported: Note" {
+		t.Fatalf("unexpected story: %+v", imported.Story)
 	}
-	tokens, err := repo.ListStoryTokens(ctx, story.StoryID)
+	if imported.Session.SessionID == "" || imported.Session.SessionType != domain.SessionUserAdded ||
+		imported.Session.StoryID == nil || *imported.Session.StoryID != imported.Story.StoryID ||
+		imported.Story.SessionID == nil || *imported.Story.SessionID != imported.Session.SessionID {
+		t.Fatalf("story was not attached to a user-added session: %+v / %+v", imported.Story, imported.Session)
+	}
+	if len(imported.Session.SelectedTargets) != 2 {
+		t.Fatalf("selected targets = %v, want two imported words", imported.Session.SelectedTargets)
+	}
+	tokens, err := repo.ListStoryTokens(ctx, imported.Story.StoryID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(tokens) != 2 || tokens[1].Surface != "beta" || tokens[1].ItemKey != "beta" || tokens[1].SurfaceKey != "beta" {
 		t.Fatalf("unexpected tokens: %+v", tokens)
+	}
+	stages, err := repo.ListStages(ctx, imported.Session.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stages) != 2 || stages[0].Stage != domain.StageStoryImport || stages[0].Status != domain.StageComplete ||
+		stages[1].Stage != domain.StageTokenization || stages[1].Status != domain.StageComplete {
+		t.Fatalf("unexpected import checkpoints: %+v", stages)
 	}
 }

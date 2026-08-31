@@ -145,7 +145,7 @@ export function StartView() {
     <section class="start-view">
       <header class="view-heading">
         <div>
-          <h1>New session</h1>
+          <h1>Generate with Tifl</h1>
           <p>{contextSubtitle()}</p>
         </div>
         <a class="button-link secondary-link" href={routeHref("/")}>Cancel</a>
@@ -153,8 +153,8 @@ export function StartView() {
 
       <form class="start-form" onSubmit={start}>
         <fieldset class="start-modes" disabled={starting()}>
-          <legend>How do you want to start?</legend>
-          <div class="mode-grid" role="radiogroup" aria-label="Session type">
+          <legend>What should Tifl create?</legend>
+          <div class="mode-grid" role="radiogroup" aria-label="Generation type">
             <For each={MODES}>
               {(option) => (
                 <label class="mode-card" data-selected={mode() === option.id}>
@@ -246,7 +246,7 @@ export function StartView() {
 
         <div class="start-actions">
           <button class="primary-button" type="submit" disabled={starting()}>
-            {starting() ? "Starting…" : startLabel(mode())}
+            {starting() ? "Generating…" : startLabel(mode(), expressionOutput())}
           </button>
         </div>
       </form>
@@ -254,14 +254,12 @@ export function StartView() {
   );
 }
 
-function startLabel(mode: SessionMode): string {
+function startLabel(mode: SessionMode, expressionOutput: ExpressionOutput): string {
   switch (mode) {
-    case "topic_guided":
-      return "Generate story";
     case "expression_guided":
-      return "Generate session";
+      return expressionOutput === "story" ? "Generate story" : "Generate phrases";
     default:
-      return "Start session";
+      return "Generate story";
   }
 }
 
@@ -269,9 +267,9 @@ function contextSubtitle(): string {
   const language = appStore.activeLanguage();
   const level = appStore.currentLevel();
   if (language && level) {
-    return `${language.toUpperCase()} · ${formatLevel(level)}. Change defaults in Settings.`;
+    return `${language.toUpperCase()} · ${formatLevel(level)}. Tifl will create something at this level.`;
   }
-  return "Choose how this session begins.";
+  return "Create a story or phrase set when you do not have your own text to add.";
 }
 
 function formatLevel(level: string): string {
@@ -281,11 +279,11 @@ function formatLevel(level: string): string {
 function startSessionErrorMessage(error: unknown): string {
   if (error instanceof APIError) {
     if (error.status === 503) {
-      return "Generation is not configured. Start the gateway, or use existing demo sessions.";
+      return "Generation is not configured. Start the gateway, or add your own story instead.";
     }
     if (error.status === 400) {
-      return "Your current language or level cannot start a session. Check Settings.";
+      return "Your current language or level cannot generate this. Check Settings.";
     }
   }
-  return "A new session could not be started.";
+  return "Tifl could not generate this right now.";
 }

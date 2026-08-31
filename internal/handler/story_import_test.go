@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	authn "github.com/dleiferives/tifl/internal/auth"
 	"github.com/dleiferives/tifl/internal/db"
@@ -49,14 +50,15 @@ func TestImportStoryCreatesTokenizedReaderStory(t *testing.T) {
 		t.Fatalf("want 201, got %d", resp.StatusCode)
 	}
 	var out struct {
-		StoryID  string `json:"story_id"`
-		Language string `json:"language"`
-		Title    string `json:"title"`
+		StoryID   string `json:"story_id"`
+		SessionID string `json:"session_id"`
+		Language  string `json:"language"`
+		Title     string `json:"title"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatal(err)
 	}
-	if out.StoryID == "" || out.Language != "xx" || out.Title != "Market note" {
+	if out.StoryID == "" || out.SessionID == "" || out.Language != "xx" || out.Title != "Market note" {
 		t.Fatalf("unexpected response: %+v", out)
 	}
 
@@ -65,8 +67,24 @@ func TestImportStoryCreatesTokenizedReaderStory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("story not persisted: %v", err)
 	}
-	if st.UserID != domain.LocalUserID || st.Text != "Alpha beta" || st.Topic != "Imported: Market note" || st.SessionID != nil {
+	if st.UserID != domain.LocalUserID || st.Text != "Alpha beta" || st.Topic != "Imported: Market note" ||
+		st.SessionID == nil || *st.SessionID != out.SessionID {
 		t.Fatalf("unexpected story row: %+v", st)
+	}
+	sess, err := repo.GetSession(ctx, out.SessionID)
+	if err != nil {
+		t.Fatalf("session not persisted: %v", err)
+	}
+	if sess.SessionType != domain.SessionUserAdded || sess.Status != domain.StatusReady ||
+		sess.StoryID == nil || *sess.StoryID != out.StoryID || len(sess.SelectedTargets) != 2 {
+		t.Fatalf("unexpected session row: %+v", sess)
+	}
+	standalone, err := repo.ListImportedStories(ctx, domain.LocalUserID, domain.ListImportedStoriesOptions{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(standalone) != 0 {
+		t.Fatalf("new user-added story leaked into standalone imports: %+v", standalone)
 	}
 	tokens, err := repo.ListStoryTokens(ctx, out.StoryID)
 	if err != nil {
@@ -83,6 +101,113 @@ func TestImportStoryCreatesTokenizedReaderStory(t *testing.T) {
 	defer loadResp.Body.Close()
 	if loadResp.StatusCode != http.StatusOK {
 		t.Fatalf("reader load = %d, want 200", loadResp.StatusCode)
+	}
+}
+
+func TestGenerateTasksForUserAddedStoryKeepsOriginalText(t *testing.T) {
+	srv, repo := newServer(t, true)
+
+	resp, err := http.Post(srv.URL+"/api/v1/stories/import", "application/json",
+		bytes.NewReader([]byte(`{"language":"xx","level":"beginner","title":"My story","text":"Alpha beta gamma"}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("import = %d, want 201", resp.StatusCode)
+	}
+	var imported struct {
+		StoryID   string `json:"story_id"`
+		SessionID string `json:"session_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&imported); err != nil {
+		t.Fatal(err)
+	}
+
+	generateResp, err := http.Post(srv.URL+"/api/v1/stories/"+imported.StoryID+"/tasks/generate", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generateResp.Body.Close()
+	if generateResp.StatusCode != http.StatusAccepted {
+		t.Fatalf("generate tasks = %d, want 202", generateResp.StatusCode)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		sess, err := repo.GetSession(context.Background(), imported.SessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		generated, err := repo.ListSessionTasks(context.Background(), imported.SessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sess.Status == domain.StatusReady && len(generated) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("task generation did not finish: status=%s tasks=%d", sess.Status, len(generated))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	persisted, err := repo.GetStory(context.Background(), imported.StoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Text != "Alpha beta gamma" {
+		t.Fatalf("user text changed during task generation: %q", persisted.Text)
+	}
+	stages, err := repo.ListStages(context.Background(), imported.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stageStatus := make(map[string]domain.StageStatus, len(stages))
+	for _, stage := range stages {
+		stageStatus[stage.Stage] = stage.Status
+	}
+	if stageStatus[domain.StageStoryImport] != domain.StageComplete ||
+		stageStatus[domain.StageTokenization] != domain.StageComplete ||
+		stageStatus[domain.StageForTask(tasks.TypeComprehensionMC)] != domain.StageComplete {
+		t.Fatalf("unexpected task-generation checkpoints: %+v", stages)
+	}
+	if _, regenerated := stageStatus[domain.StageStoryGeneration]; regenerated {
+		t.Fatalf("task generation must not run story generation: %+v", stages)
+	}
+
+	duplicateResp, err := http.Post(srv.URL+"/api/v1/stories/"+imported.StoryID+"/tasks/generate", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicateResp.Body.Close()
+	if duplicateResp.StatusCode != http.StatusConflict {
+		t.Fatalf("duplicate task generation = %d, want 409", duplicateResp.StatusCode)
+	}
+}
+
+func TestGenerateTasksForUserAddedStoryRequiresLLM(t *testing.T) {
+	srv, _ := newServer(t, false)
+	resp, err := http.Post(srv.URL+"/api/v1/stories/import", "application/json",
+		bytes.NewReader([]byte(`{"language":"xx","level":"beginner","text":"Alpha beta"}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var imported struct {
+		StoryID string `json:"story_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&imported); err != nil {
+		t.Fatal(err)
+	}
+
+	generateResp, err := http.Post(srv.URL+"/api/v1/stories/"+imported.StoryID+"/tasks/generate", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generateResp.Body.Close()
+	if generateResp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("generate tasks without LLM = %d, want 503", generateResp.StatusCode)
 	}
 }
 
@@ -103,14 +228,15 @@ func TestImportStoryUploadsTextFile(t *testing.T) {
 		t.Fatalf("want 201, got %d", resp.StatusCode)
 	}
 	var out struct {
-		StoryID  string `json:"story_id"`
-		Language string `json:"language"`
-		Title    string `json:"title"`
+		StoryID   string `json:"story_id"`
+		SessionID string `json:"session_id"`
+		Language  string `json:"language"`
+		Title     string `json:"title"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatal(err)
 	}
-	if out.StoryID == "" || out.Language != "xx" || out.Title != "Uploaded note" {
+	if out.StoryID == "" || out.SessionID == "" || out.Language != "xx" || out.Title != "Uploaded note" {
 		t.Fatalf("unexpected response: %+v", out)
 	}
 
@@ -119,7 +245,8 @@ func TestImportStoryUploadsTextFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("story not persisted: %v", err)
 	}
-	if st.UserID != domain.LocalUserID || st.Text != "Gamma delta" || st.Topic != "Imported: Uploaded note" || st.SessionID != nil {
+	if st.UserID != domain.LocalUserID || st.Text != "Gamma delta" || st.Topic != "Imported: Uploaded note" ||
+		st.SessionID == nil || *st.SessionID != out.SessionID {
 		t.Fatalf("unexpected story row: %+v", st)
 	}
 	tokens, err := repo.ListStoryTokens(ctx, out.StoryID)

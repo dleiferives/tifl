@@ -3,6 +3,7 @@ import { createStore, reconcile } from "solid-js/store";
 import {
   APIError,
   completeSession,
+  generateStoryTasks,
   getSessionContent,
   getSessionDetail,
   getSessionTasks,
@@ -64,6 +65,7 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
     review: false,
   });
   const [completing, setCompleting] = createSignal(false);
+  const [generatingTasks, setGeneratingTasks] = createSignal(false);
   const [actionError, setActionError] = createSignal("");
   const [referencePeeked, setReferencePeeked] = createStore<Record<string, boolean>>({});
   const [submittingTasks, setSubmittingTasks] = createStore<Record<string, boolean>>({});
@@ -135,6 +137,12 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
   });
   const canUseReview = createMemo(() => state.detail?.status === "complete");
   const activeLocked = createMemo(() => !isStepUnlocked(props.step, canUseTasks(), canUseReview()));
+  const canGenerateTasks = createMemo(() => {
+    const detail = state.detail;
+    return detail?.session_type === "user_added" &&
+      detail.tasks.total === 0 &&
+      (detail.status === "ready" || detail.status === "reading");
+  });
 
   async function loadSession(sessionID: string) {
     const seq = ++loadSeq;
@@ -399,6 +407,30 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
     }
   }
 
+  async function generateTasksForCurrentStory() {
+    const detail = state.detail;
+    if (!detail?.story_id || generatingTasks()) {
+      return;
+    }
+    const sessionID = detail.session_id;
+    setActionError("");
+    setGeneratingTasks(true);
+    const finish = appStore.beginOperation();
+    try {
+      await generateStoryTasks(detail.story_id);
+      if (isActiveSession(sessionID)) {
+        setState("detail", "status", "generating");
+      }
+    } catch (error) {
+      if (isActiveSession(sessionID)) {
+        setActionError(generateTasksErrorMessage(error));
+      }
+    } finally {
+      finish();
+      setGeneratingTasks(false);
+    }
+  }
+
   function noteCompleted() {
     if (!state.detail) {
       return;
@@ -413,7 +445,7 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
 
   function startNextSession() {
     const detail = state.detail;
-    if (detail) {
+    if (detail && detail.session_type !== "user_added") {
       writeStartDraft({
         mode: detail.session_type,
         topic: detail.topic,
@@ -508,6 +540,16 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
                       )}
                     </Show>
                   </dl>
+                  <Show when={canGenerateTasks()}>
+                    <button
+                      class="secondary-button session-story-task-action"
+                      type="button"
+                      disabled={generatingTasks()}
+                      onClick={() => void generateTasksForCurrentStory()}
+                    >
+                      {generatingTasks() ? "Starting task generation..." : "Generate practice tasks"}
+                    </button>
+                  </Show>
                 </div>
                 <SessionStepper
                   sessionId={props.sessionId}
@@ -933,6 +975,16 @@ function shouldLoadSessionData(detail: SessionDetail): boolean {
 
 function isAbort(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
+}
+
+function generateTasksErrorMessage(error: unknown): string {
+  if (error instanceof APIError && error.status === 503) {
+    return "Task generation is not configured. Start the gateway and try again.";
+  }
+  if (error instanceof APIError && error.status === 409) {
+    return error.body?.error || "Tasks cannot be generated for this story right now.";
+  }
+  return "Task generation could not be started.";
 }
 
 function unixNow(): number {

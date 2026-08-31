@@ -146,6 +146,13 @@ export async function deleteStory(storyID: string): Promise<void> {
   return apiFetch<void>(`/stories/${encodeURIComponent(storyID)}`, { method: "DELETE" });
 }
 
+export async function generateStoryTasks(storyID: string): Promise<APIResponse<"generateStoryTasks", 202>> {
+  return apiFetch<APIResponse<"generateStoryTasks", 202>>(
+    `/stories/${encodeURIComponent(storyID)}/tasks/generate`,
+    { method: "POST" },
+  );
+}
+
 export interface ImportStoryFileRequest {
   language?: string;
   level?: string;

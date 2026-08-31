@@ -116,8 +116,8 @@ CREATE TABLE sessions (
     selected_targets   TEXT,                           -- JSON: item_ids in targets[]
     selected_new       TEXT,                           -- JSON: item_ids in new[]
     -- session type (context/session-types.md)
-    session_type       TEXT NOT NULL DEFAULT 'system', -- system | topic_guided | expression_guided
-    topic              TEXT,                           -- topic_guided only
+    session_type       TEXT NOT NULL DEFAULT 'system', -- system | topic_guided | expression_guided | user_added
+    topic              TEXT,                           -- generated topic or user-added title
     user_expressions   TEXT,                           -- JSON list; expression_guided only
     expression_output  TEXT,                           -- phrases | story; expression_guided only
     status             TEXT NOT NULL DEFAULT 'pending',-- pending|generating|ready|reading|complete|failed
@@ -128,7 +128,7 @@ CREATE TABLE sessions (
 
 CREATE TABLE session_generation_stages (
     session_id   TEXT NOT NULL REFERENCES sessions(session_id),
-    stage        TEXT NOT NULL,            -- scope_check|story_generation|tokenization|task_{type_id}
+    stage        TEXT NOT NULL,            -- scope_check|story_import|story_generation|tokenization|task_{type_id}
     status       TEXT NOT NULL,            -- pending|in_progress|complete|failed
     started_at   REAL,
     completed_at REAL,

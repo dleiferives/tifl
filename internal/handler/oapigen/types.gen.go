@@ -712,6 +712,7 @@ const (
 	SessionDetailSessionTypeExpressionGuided SessionDetailSessionType = "expression_guided"
 	SessionDetailSessionTypeSystem           SessionDetailSessionType = "system"
 	SessionDetailSessionTypeTopicGuided      SessionDetailSessionType = "topic_guided"
+	SessionDetailSessionTypeUserAdded        SessionDetailSessionType = "user_added"
 )
 
 // Valid indicates whether the value is a known member of the SessionDetailSessionType enum.
@@ -722,6 +723,8 @@ func (e SessionDetailSessionType) Valid() bool {
 	case SessionDetailSessionTypeSystem:
 		return true
 	case SessionDetailSessionTypeTopicGuided:
+		return true
+	case SessionDetailSessionTypeUserAdded:
 		return true
 	default:
 		return false
@@ -799,6 +802,7 @@ const (
 	ExpressionGuided SessionOverviewSessionType = "expression_guided"
 	System           SessionOverviewSessionType = "system"
 	TopicGuided      SessionOverviewSessionType = "topic_guided"
+	UserAdded        SessionOverviewSessionType = "user_added"
 )
 
 // Valid indicates whether the value is a known member of the SessionOverviewSessionType enum.
@@ -809,6 +813,8 @@ func (e SessionOverviewSessionType) Valid() bool {
 	case System:
 		return true
 	case TopicGuided:
+		return true
+	case UserAdded:
 		return true
 	default:
 		return false
@@ -1197,7 +1203,7 @@ type GenerationEvent struct {
 	// SessionId present on stage=done
 	SessionId string `json:"session_id,omitempty"`
 
-	// Stage scope_check|selection|story_generation|phrase_generation|tokenization|task_<type>|done
+	// Stage scope_check|selection|story_import|story_generation|phrase_generation|tokenization|task_<type>|done
 	Stage        string        `json:"stage"`
 	StageSummary *StageSummary `json:"stage_summary,omitempty"`
 
@@ -1268,9 +1274,10 @@ type ImportStoryRequest struct {
 
 // ImportStoryResponse defines model for ImportStoryResponse.
 type ImportStoryResponse struct {
-	Language string `json:"language"`
-	StoryId  string `json:"story_id"`
-	Title    string `json:"title,omitempty"`
+	Language  string `json:"language"`
+	SessionId string `json:"session_id"`
+	StoryId   string `json:"story_id"`
+	Title     string `json:"title,omitempty"`
 }
 
 // ImportStoryUploadRequest defines model for ImportStoryUploadRequest.
@@ -1654,7 +1661,7 @@ type SessionDetail struct {
 	Stages         []GenerationStageRecord  `json:"stages"`
 	Status         SessionDetailStatus      `json:"status"`
 
-	// StoryId present once story generation has persisted a story
+	// StoryId present once a story has been persisted for the session
 	StoryId string `json:"story_id,omitempty"`
 
 	// TargetPreview Selected targets and any ungraded preview attempts for this session.
@@ -1703,7 +1710,7 @@ type SessionOverview struct {
 	SessionType    SessionOverviewSessionType `json:"session_type"`
 	Status         SessionOverviewStatus      `json:"status"`
 
-	// StoryId present once story generation has persisted a story
+	// StoryId present once a story has been persisted for the session
 	StoryId         string       `json:"story_id,omitempty"`
 	Tasks           TaskProgress `json:"tasks"`
 	Topic           string       `json:"topic,omitempty"`

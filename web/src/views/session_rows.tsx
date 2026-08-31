@@ -203,6 +203,9 @@ function SessionActions(props: {
 
 export function sessionTitle(session: SessionOverview): string {
   if (session.topic) {
+    if (session.session_type === "user_added" && session.topic.startsWith("Imported:")) {
+      return session.topic.slice("Imported:".length).trim() || "Untitled story";
+    }
     return session.topic;
   }
   if (session.session_type === "expression_guided" && session.user_expressions?.length) {
@@ -324,6 +327,8 @@ function formatSessionType(sessionType: SessionOverview["session_type"]): string
       return "Topic-guided";
     case "expression_guided":
       return "Expression-guided";
+    case "user_added":
+      return "User-added";
     default:
       return "System";
   }

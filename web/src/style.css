@@ -2732,6 +2732,10 @@ select {
   margin: 0;
 }
 
+.session-story-task-action {
+  justify-self: start;
+}
+
 .session-shell-meta {
   display: flex;
   flex-wrap: wrap;

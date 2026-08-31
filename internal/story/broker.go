@@ -129,7 +129,7 @@ func (b *Broker) RunGeneration(ctx context.Context, sessionID string) error {
 	defer b.release(sessionID)
 
 	var runErr error
-	if sess.Status == domain.StatusFailed {
+	if sess.Status == domain.StatusFailed || sess.SessionType == domain.SessionUserAdded {
 		b.runLocked(ctx, sessionID, func(ctx context.Context, emit emitter) {
 			runErr = b.pipeline.Retry(ctx, sessionID, emit)
 		})

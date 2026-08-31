@@ -586,6 +586,74 @@ func TestPipeline_TaskTargetsPopulated(t *testing.T) {
 	}
 }
 
+func TestBrokerQueuedGenerationRunsOnlyTasksForUserAddedStory(t *testing.T) {
+	ctx := context.Background()
+	ctrl := &clientControl{stories: []string{"this must not be generated"}}
+	h := newHarness(t, ctrl, []string{tasks.TypeComprehensionMC})
+	sess, err := h.repo.CreateSession(ctx, domain.Session{
+		UserID: h.userID, Language: "xx", Level: "beginner",
+		SessionType: domain.SessionUserAdded, Status: domain.StatusGenerating,
+		SelectedTargets: h.targets,
+	})
+	must(t, err)
+	persisted, err := h.repo.CreateStory(ctx, domain.Story{
+		UserID: h.userID, Language: "xx", Level: "beginner",
+		Text: "the user's exact story", SessionID: &sess.SessionID,
+	})
+	must(t, err)
+	must(t, h.repo.SetSessionSelection(ctx, sess.SessionID, persisted.StoryID, h.targets, nil))
+	now := float64(100)
+	for _, stage := range []string{domain.StageStoryImport, domain.StageTokenization} {
+		must(t, h.repo.UpsertStage(ctx, domain.GenerationStage{
+			SessionID: sess.SessionID, Stage: stage, Status: domain.StageComplete,
+			StartedAt: &now, CompletedAt: &now,
+		}))
+	}
+
+	broker := story.NewBroker(h.pipeline)
+	must(t, broker.RunGeneration(ctx, sess.SessionID))
+
+	if ctrl.calls(h.client, "story_generator") != 0 {
+		t.Fatalf("queued user-added task generation called the story generator: %+v", h.client.Calls)
+	}
+	if ctrl.calls(h.client, "task_comprehension_mc") == 0 {
+		t.Fatalf("queued user-added task generation did not call task generation: %+v", h.client.Calls)
+	}
+	after, err := h.repo.GetStory(ctx, persisted.StoryID)
+	must(t, err)
+	if after.Text != persisted.Text {
+		t.Fatalf("queued task generation changed user text: %q", after.Text)
+	}
+	final, err := h.repo.GetSession(ctx, sess.SessionID)
+	must(t, err)
+	if final.Status != domain.StatusReady {
+		t.Fatalf("session status = %q, want ready", final.Status)
+	}
+}
+
+func TestPipeline_UserAddedStoryNeverFallsBackToStoryGeneration(t *testing.T) {
+	ctx := context.Background()
+	ctrl := &clientControl{}
+	h := newHarness(t, ctrl, []string{tasks.TypeComprehensionMC})
+	sess, err := h.repo.CreateSession(ctx, domain.Session{
+		UserID: h.userID, Language: "xx", Level: "beginner",
+		SessionType: domain.SessionUserAdded, Status: domain.StatusGenerating,
+	})
+	must(t, err)
+
+	if err := h.pipeline.Generate(ctx, sess.SessionID, nil); err == nil {
+		t.Fatal("user-added session with missing import checkpoints should fail")
+	}
+	if ctrl.calls(h.client, "story_generator") != 0 {
+		t.Fatalf("missing user-added checkpoints fell back to story generation: %+v", h.client.Calls)
+	}
+	final, err := h.repo.GetSession(ctx, sess.SessionID)
+	must(t, err)
+	if final.Status != domain.StatusFailed {
+		t.Fatalf("session status = %q, want failed", final.Status)
+	}
+}
+
 func TestPipeline_RegenerateTaskReplacesInPlaceAndStaysGradeable(t *testing.T) {
 	ctx := context.Background()
 	repo := dbtest.NewRepo(t)

@@ -14,11 +14,12 @@ const (
 	SessionSystem           SessionType = "system"            // system picks topic + targets
 	SessionTopicGuided      SessionType = "topic_guided"      // user-provided topic
 	SessionExpressionGuided SessionType = "expression_guided" // user-provided L1 expressions
+	SessionUserAdded        SessionType = "user_added"        // user-provided story text
 )
 
-// SessionStatus is the session-level state machine. `ready` means the story plus
-// at least one task type completed, so the user can start reading while the rest
-// of task generation finishes.
+// SessionStatus is the session-level state machine. `ready` means the content is
+// readable; generated sessions also require at least one completed task type,
+// while user-added sessions may be ready before optional task generation starts.
 type SessionStatus string
 
 const (
@@ -39,7 +40,7 @@ type Session struct {
 	Language         string
 	Level            string
 	SessionType      SessionType
-	Topic            string   // topic_guided only
+	Topic            string   // topic_guided topic or user_added title
 	UserExpressions  []string // expression_guided only
 	ExpressionOutput string   // "phrases" | "story"; expression_guided only
 	SelectedTargets  []string // item_ids chosen as targets
@@ -124,6 +125,7 @@ const (
 // tokenization) or phrase_generation, depending on its ContentType.
 const (
 	StageScopeCheck       = "scope_check"
+	StageStoryImport      = "story_import"
 	StageStoryGeneration  = "story_generation"
 	StagePhraseGeneration = "phrase_generation"
 	StageTokenization     = "tokenization"

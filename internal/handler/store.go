@@ -69,6 +69,7 @@ type Store interface {
 	SetSessionArchived(ctx context.Context, userID, sessionID string, archived bool) error
 	UpdateContentReportOutcome(ctx context.Context, reportID, outcome, detail, replacementTaskID string) error
 	UpsertTargetPreviewGuess(ctx context.Context, userID, sessionID string, guess domain.TargetPreviewGuess) (domain.TargetPreviewGuess, error)
+	UpdateSessionStatus(ctx context.Context, sessionID string, status domain.SessionStatus) error
 	UpdateUserProfile(ctx context.Context, userID string, patch domain.UserProfilePatch) (domain.UserProfile, error)
 	UpsertUserDefinition(ctx context.Context, d domain.UserDefinition) (domain.UserDefinition, error)
 }

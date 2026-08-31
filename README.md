@@ -1,11 +1,11 @@
 # tifl — Thinking In Foreign Languages
 
-A language **acquisition** platform (not memorization). The learner reads
-AI-generated stories at their level, does tasks derived from those stories, and
-every interaction sharpens the system's model of what they know — which drives
-the next round of generation. The pedagogy is comprehensible input and
-phrase-based learning, not flashcards. See [`context/`](context/) for the full
-design.
+A language **acquisition** platform (not memorization). The learner adds stories
+they want to read, optionally generates practice tasks for them, and every
+interaction sharpens the system's model of what they know. Tifl can also generate
+a story at the learner's level when they want one. The pedagogy is comprehensible
+input and phrase-based learning, not flashcards. See [`context/`](context/) for
+the full design.
 
 > **Status:** ground-up rewrite in progress. The Python proof-of-concept was
 > replaced by this Go + SolidJS implementation. The pre-rewrite code is preserved

@@ -765,7 +765,7 @@ func stageOrder(stage string) int {
 	switch stage {
 	case domain.StageScopeCheck:
 		return 10
-	case domain.StageStoryGeneration, domain.StagePhraseGeneration:
+	case domain.StageStoryImport, domain.StageStoryGeneration, domain.StagePhraseGeneration:
 		return 20
 	case domain.StageTokenization:
 		return 30

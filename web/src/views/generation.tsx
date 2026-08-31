@@ -28,6 +28,7 @@ interface StageState {
 const STAGE_RANK: Record<string, number> = {
   scope_check: 0,
   selection: 1,
+  story_import: 2,
   story_generation: 2,
   phrase_generation: 2,
   tokenization: 3,
@@ -36,6 +37,7 @@ const STAGE_RANK: Record<string, number> = {
 const STAGE_LABELS: Record<string, string> = {
   scope_check: "Checking the topic",
   selection: "Choosing target words",
+  story_import: "Saving your story",
   story_generation: "Writing the story",
   phrase_generation: "Writing the phrases",
   tokenization: "Preparing the text",
@@ -554,6 +556,9 @@ async function draftFromSession(sessionID: string): Promise<{
 } | null> {
   try {
     const detail = await getSessionDetail(sessionID);
+    if (detail.session_type === "user_added") {
+      return null;
+    }
     return {
       mode: detail.session_type,
       topic: detail.topic,

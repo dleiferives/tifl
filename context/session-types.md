@@ -4,34 +4,40 @@ _Status: active design notes — designed during architecture expansion session_
 
 ## Overview
 
-Every learning session generates a story (or phrase set) and a set of tasks. What
-varies is how the session is initiated and what content is produced. There are
-three session types, all going through the same generation pipeline and producing
-the same downstream signals.
+Every learning session contains a story (or phrase set) and may contain a set of
+tasks. What varies is how the session is initiated and what content is produced.
+There are four session types. Generated content uses the full pipeline;
+user-added content joins it at the optional task stages.
+
+The current product entry point is user-added content: adding a story is the
+primary action, and generation is an explicit secondary option.
 
 ```
 System-driven    — system chooses topic and targets based on knowledge state
 Topic-guided     — user requests a topic; system generates a story on it
 Expression-guided — user provides L1 ideas they want to express; system generates
                     phrases or a story that teaches those expressions
+User-added        — user supplies the complete story text; the system persists it
+                    and can generate tasks from it without rewriting it
 ```
 
-The session type is recorded on the session row and affects the prompt builder
-inputs, not the pipeline structure.
+The session type is recorded on the session row. Generated types change prompt
+inputs; `user_added` skips content generation because its story already exists.
 
 ---
 
 ## Session Type 1: System-Driven
 
-The default. The user starts a session without input. The selection layer runs as
-normal, picks targets/background/new items, and the story generator produces a
-story based purely on the user's knowledge state and skill profile.
+When selected, the user generates a session without providing content. The
+selection layer runs as normal, picks targets/background/new items, and the story
+generator produces a story based purely on the user's knowledge state and skill
+profile.
 
 The system picks a topic internally — based on recent session history (avoid
 repeating the same setting) and user level. No user configuration needed.
 
-This is the most common session type and the one that requires no UX beyond a
-"start session" button.
+This remains the lowest-setup generation option, exposed through the secondary
+"Generate a story" flow.
 
 ---
 
@@ -118,9 +124,23 @@ sessions.expression_output  = 'phrases' | 'story'
 
 ---
 
+## Session Type 4: User-Added
+
+The user pastes or uploads target-language story text. Import creates a normal
+`sessions` row (`session_type = 'user_added'`) and a linked, tokenized `stories`
+row in one transaction. The `story_import` and `tokenization` checkpoints are
+immediately complete, so the story is readable even when no LLM is configured.
+
+Task generation is optional. When requested, retry/checkpoint logic loads the
+persisted story and starts at `task_<type>` stages. It never invokes story
+generation and never replaces the user's text.
+
+---
+
 ## Generation Pipeline
 
-All three session types go through the same pipeline. The pipeline is a sequence
+The three generated session types go through the full pipeline. User-added
+sessions enter at the optional task step. The pipeline is a sequence
 of discrete stages. Each stage that involves an LLM call is individually
 checkpointed — if a stage fails, the retry resumes from that stage, not from the
 beginning.
@@ -149,9 +169,12 @@ beginning.
    └─ each call is an independent checkpoint
 ```
 
-Stages 1 and 3 have no LLM call — they cannot fail in an LLM-related way and
-do not need independent retry. They re-run as part of the nearest upstream stage
-retry.
+User-added sessions persist `story_import` and `tokenization` as completed
+checkpoints during import, then run stage 4 only when the learner asks for tasks.
+
+In the full generation path, stages 1 and 3 have no LLM call — they cannot fail
+in an LLM-related way and do not need independent retry. They re-run as part of
+the nearest upstream stage retry.
 
 Stage 4 is N independent calls. If task generation for `comprehension_mc` succeeds
 but `fill_blank` fails, only the `fill_blank` call is retried. The session is
@@ -164,7 +187,7 @@ Stage status is stored per session:
 ```
 session_generation_stages
   session_id    TEXT  NOT NULL
-  stage         TEXT  NOT NULL    'scope_check' | 'story_generation' |
+  stage         TEXT  NOT NULL    'scope_check' | 'story_import' | 'story_generation' |
                                   'tokenization' | 'task_{type_id}'
   status        TEXT  NOT NULL    'pending' | 'in_progress' | 'complete' | 'failed'
   started_at    REAL
@@ -182,8 +205,9 @@ The session itself also carries a status:
 sessions.status   'pending' | 'generating' | 'ready' | 'reading' | 'complete' | 'failed'
 ```
 
-`ready` means story + at least one task type completed successfully. The user can
-begin reading even if some task generation is still in progress.
+`ready` means content is readable. Generated sessions require at least one task
+type to complete successfully; user-added sessions can be ready before optional
+task generation begins.
 
 ---
 
@@ -243,8 +267,9 @@ state:
 ```
 sessions (additions)
   session_type        TEXT  NOT NULL  DEFAULT 'system'
-                            'system' | 'topic_guided' | 'expression_guided'
-  topic               TEXT            user-provided topic (topic_guided only)
+                            'system' | 'topic_guided' | 'expression_guided' |
+                            'user_added'
+  topic               TEXT            generated topic or user-added story title
   user_expressions    JSON            list of L1 expressions (expression_guided only)
   expression_output   TEXT            'phrases' | 'story' (expression_guided only)
   status              TEXT  NOT NULL  DEFAULT 'pending'

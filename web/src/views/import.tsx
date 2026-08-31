@@ -1,13 +1,14 @@
 import { createSignal, For, onMount, Show } from "solid-js";
 import {
   APIError,
+  generateStoryTasks,
   importStoryFile,
   importStory,
   listLanguages,
   type APIRequest,
   type APISchema,
 } from "../api";
-import { routeHref } from "../router";
+import { routeHref, sessionHref } from "../router";
 import { appStore } from "../store";
 
 type ImportStoryRequest = APIRequest<"importStory">;
@@ -24,6 +25,7 @@ export function ImportView() {
   const [title, setTitle] = createSignal("");
   const [text, setText] = createSignal("");
   const [file, setFile] = createSignal<File | null>(null);
+  const [generateTasks, setGenerateTasks] = createSignal(true);
   const [fieldError, setFieldError] = createSignal("");
   const [actionError, setActionError] = createSignal("");
   const [importing, setImporting] = createSignal(false);
@@ -79,7 +81,7 @@ export function ImportView() {
         title: title().trim() || undefined,
         file: selectedFile,
       });
-      window.location.hash = routeHref(`/reader/${encodeURIComponent(imported.story_id)}`);
+      await openAddedStory(imported);
     } catch (error) {
       setActionError(importErrorMessage(error));
     } finally {
@@ -113,7 +115,7 @@ export function ImportView() {
         title: title().trim() || undefined,
         text: rawText,
       });
-      window.location.hash = routeHref(`/reader/${encodeURIComponent(imported.story_id)}`);
+      await openAddedStory(imported);
     } catch (error) {
       setActionError(importErrorMessage(error));
     } finally {
@@ -122,19 +124,30 @@ export function ImportView() {
     }
   };
 
+  const openAddedStory = async (imported: { story_id: string; session_id: string }) => {
+    if (generateTasks()) {
+      try {
+        await generateStoryTasks(imported.story_id);
+      } catch {
+        appStore.showToast("Story added, but task generation could not start.", "error");
+      }
+    }
+    window.location.hash = sessionHref(imported.session_id, "read");
+  };
+
   return (
     <section class="import-view">
       <header class="view-heading">
         <div>
-          <h1>Import text</h1>
-          <p>Paste target-language text and read it with lookups and sentence breakdowns.</p>
+          <h1>Add a story</h1>
+          <p>Paste target-language text, save it to your stories, and optionally generate practice tasks.</p>
         </div>
         <a class="button-link secondary-link" href={routeHref("/")}>Cancel</a>
       </header>
 
       <form class="import-form" onSubmit={submit}>
         <fieldset class="import-settings" disabled={importing()}>
-          <legend>Reader content</legend>
+          <legend>Story</legend>
           <div class="import-grid">
             <label class="field">
               <span>Language</span>
@@ -179,6 +192,15 @@ export function ImportView() {
             />
           </label>
 
+          <label class="toggle-control import-task-toggle">
+            <input
+              type="checkbox"
+              checked={generateTasks()}
+              onChange={(event) => setGenerateTasks(event.currentTarget.checked)}
+            />
+            <span>Generate practice tasks for this story</span>
+          </label>
+
           <label class="field">
             <span>Text</span>
             <textarea
@@ -199,7 +221,7 @@ export function ImportView() {
               />
             </label>
             <button class="secondary-button" type="button" disabled={importing()} onClick={() => void uploadFile()}>
-              Upload .txt
+              Add .txt
             </button>
           </div>
         </fieldset>
@@ -213,7 +235,7 @@ export function ImportView() {
 
         <div class="import-actions">
           <button class="primary-button" type="submit" disabled={importing()}>
-            {importing() ? "Importing..." : "Open in reader"}
+            {importing() ? "Adding story..." : "Add story"}
           </button>
         </div>
       </form>
@@ -250,8 +272,8 @@ function importErrorMessage(error: unknown): string {
       return error.body?.error || "Check the language, level, and text.";
     }
     if (error.status === 401) {
-      return "Sign in again before importing text.";
+      return "Sign in again before adding a story.";
     }
   }
-  return "Text could not be imported right now.";
+  return "The story could not be added right now.";
 }

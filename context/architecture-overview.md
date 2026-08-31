@@ -4,11 +4,12 @@ _Status: active design notes — last updated during initial architecture sessio
 
 ## What This System Is
 
-A language acquisition platform built around comprehensible input. The user reads
-AI-generated stories in a target language, does tasks derived from those stories,
-and the system uses every interaction to build a model of what they know. That
-model drives the next round of generation. The loop tightens over time: better
-knowledge of the user → better-targeted content → faster acquisition.
+A language acquisition platform built around comprehensible input. The primary
+workflow lets the user add stories in a target language and optionally generate
+tasks derived from them. The system uses every interaction to build a model of
+what they know. When the user wants new material, Tifl can generate a targeted
+story from that model. The loop tightens over time: better knowledge of the user
+→ better-targeted practice and generated content → faster acquisition.
 
 The pedagogical foundation is not memorization. It is acquisition through
 massive, contextually rich, level-appropriate exposure — the learner encounters
