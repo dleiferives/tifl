@@ -72,9 +72,10 @@ type SyntaxTreeBranch = {
 const FLUSH_DELAY_MS = 4000;
 const READER_POSITION_PREFIX = "tifl.reader.position.";
 const AUDIO_TTS_CONCURRENCY = 4;
-// Prometheus reliably runs three MFA jobs in parallel; a fourth concurrent
-// process can fail under resource contention instead of waiting in its queue.
-const AUDIO_ALIGNMENT_CONCURRENCY = 3;
+// Prometheus is configured for two concurrent jobs, and its MFA endpoint runs
+// outside the provider queue against a shared MFA root. Exceeding that limit
+// can make alignments fail instead of waiting safely.
+const AUDIO_ALIGNMENT_CONCURRENCY = 2;
 
 // 1-5 are self-rating; w/i are the well-known / ignored shortcuts. The reader
 // event log wants the keystroke ("w"/"i"); the knowledge write wants the level.
