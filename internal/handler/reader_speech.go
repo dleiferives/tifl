@@ -23,14 +23,20 @@ type readerSpeechAsset struct {
 }
 
 type readerSpeechCache struct {
-	mu      sync.Mutex
-	limit   int
-	entries map[string]readerSpeechAsset
-	order   []string
+	mu         sync.Mutex
+	maxEntries int
+	maxBytes   int
+	usedBytes  int
+	entries    map[string]readerSpeechAsset
+	order      []string
 }
 
-func newReaderSpeechCache(limit int) *readerSpeechCache {
-	return &readerSpeechCache{limit: limit, entries: make(map[string]readerSpeechAsset)}
+func newReaderSpeechCache(maxEntries, maxBytes int) *readerSpeechCache {
+	return &readerSpeechCache{
+		maxEntries: maxEntries,
+		maxBytes:   maxBytes,
+		entries:    make(map[string]readerSpeechAsset),
+	}
 }
 
 func (c *readerSpeechCache) get(key string) (readerSpeechAsset, bool) {
@@ -43,15 +49,40 @@ func (c *readerSpeechCache) get(key string) (readerSpeechAsset, bool) {
 func (c *readerSpeechCache) put(key string, asset readerSpeechAsset) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if _, exists := c.entries[key]; !exists {
-		if c.limit > 0 && len(c.entries) >= c.limit {
-			oldest := c.order[0]
-			c.order = c.order[1:]
-			delete(c.entries, oldest)
+	if existing, exists := c.entries[key]; exists {
+		c.usedBytes -= readerSpeechAssetSize(existing)
+		delete(c.entries, key)
+		for i, orderedKey := range c.order {
+			if orderedKey == key {
+				c.order = append(c.order[:i], c.order[i+1:]...)
+				break
+			}
 		}
-		c.order = append(c.order, key)
 	}
+
+	assetBytes := readerSpeechAssetSize(asset)
+	if c.maxBytes > 0 && assetBytes > c.maxBytes {
+		return
+	}
+	for len(c.order) > 0 && ((c.maxEntries > 0 && len(c.entries) >= c.maxEntries) ||
+		(c.maxBytes > 0 && c.usedBytes+assetBytes > c.maxBytes)) {
+		oldest := c.order[0]
+		c.order = c.order[1:]
+		c.usedBytes -= readerSpeechAssetSize(c.entries[oldest])
+		delete(c.entries, oldest)
+	}
+
 	c.entries[key] = asset
+	c.order = append(c.order, key)
+	c.usedBytes += assetBytes
+}
+
+func readerSpeechAssetSize(asset readerSpeechAsset) int {
+	size := len(asset.Audio.Data) + len(asset.Audio.ContentType)
+	for _, word := range asset.Alignment.Words {
+		size += len(word.Text) + 16 // Two float64 timing values.
+	}
+	return size
 }
 
 type readerSentenceSpeechTarget struct {

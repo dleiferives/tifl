@@ -283,7 +283,10 @@ func New(repo Store, broker *story.Broker, client llm.Client, taskTypes *tasks.R
 		llmEnabled:                client != nil,
 		models:                    modelLister,
 		conversations:             conversationService,
-		readerSpeech:              newReaderSpeechCache(64),
+		// A long reader story can easily contain more than 100 sentences. Keep a
+		// full prepared batch resident for the TTS-then-MFA workflow, while the
+		// byte bound prevents unexpectedly large audio from growing without limit.
+		readerSpeech:              newReaderSpeechCache(512, 256<<20),
 		frontendDir:               frontendDir,
 		pricing:                   pricing.New(nil, nil),
 		adminEmails:               map[string]struct{}{},

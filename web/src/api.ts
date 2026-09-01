@@ -150,9 +150,11 @@ export async function getStorySentenceAudio(
   storyID: string,
   position: number,
   voiceModel = "default",
+  cache?: RequestCache,
 ): Promise<Blob> {
   return getAuthenticatedAudio(
     `/stories/${encodeURIComponent(storyID)}/sentences/${position}/audio?voice_model=${encodeURIComponent(voiceModel)}`,
+    cache,
   );
 }
 
@@ -166,10 +168,11 @@ export async function getStorySentenceAlignment(
   );
 }
 
-async function getAuthenticatedAudio(audioURL: string): Promise<Blob> {
-  let response = await sendRequest(audioURL, { headers: { Accept: "audio/mpeg" } });
+async function getAuthenticatedAudio(audioURL: string, cache?: RequestCache): Promise<Blob> {
+  const request: RequestInit = { headers: { Accept: "audio/mpeg" }, cache };
+  let response = await sendRequest(audioURL, request);
   if (response.status === 401 && await refreshAccessToken()) {
-    response = await sendRequest(audioURL, { headers: { Accept: "audio/mpeg" } });
+    response = await sendRequest(audioURL, request);
   }
   if (response.status === 401) {
     setAccessToken(null);

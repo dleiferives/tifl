@@ -34,7 +34,12 @@ type ReaderWordTiming = APISchema<"ReaderWordTiming">;
 
 type Loadable<T> = "loading" | "error" | T;
 type RemovalNotice = "removed" | "removed-failed";
-type AudioGeneration = { status: "idle" | "generating" | "error"; completed: number; total: number };
+type AudioGeneration = {
+  status: "idle" | "generating" | "error";
+  phase?: "tts" | "alignment";
+  completed: number;
+  total: number;
+};
 type Analysis = { mode: "sentence"; position: number } | { mode: "word"; key: string } | null;
 type SyntaxGraph = {
   version?: string;
@@ -66,7 +71,7 @@ type SyntaxTreeBranch = {
 
 const FLUSH_DELAY_MS = 4000;
 const READER_POSITION_PREFIX = "tifl.reader.position.";
-const AUDIO_GENERATION_CONCURRENCY = 2;
+const AUDIO_PHASE_CONCURRENCY = 4;
 
 // 1-5 are self-rating; w/i are the well-known / ignored shortcuts. The reader
 // event log wants the keystroke ("w"/"i"); the knowledge write wants the level.
@@ -803,15 +808,18 @@ export function ReaderView(props: {
     return request;
   }
 
-  async function loadSentenceAudioURL(span: SentenceSpan, model: string): Promise<string> {
+  async function loadSentenceAudioURL(span: SentenceSpan, model: string, warmServer = false): Promise<string> {
     const cacheKey = sentenceSpeechCacheKey(span, model);
     const cached = sentenceAudioURLs.get(cacheKey);
-    if (cached) return cached;
+    if (cached && !warmServer) return cached;
 
-    let request = sentenceAudioRequests.get(cacheKey);
+    const requestKey = warmServer ? `${cacheKey}:warm` : cacheKey;
+    let request = sentenceAudioRequests.get(requestKey);
     if (!request) {
-      request = getStorySentenceAudio(props.storyId, span.start_position, model)
+      request = getStorySentenceAudio(props.storyId, span.start_position, model, warmServer ? "reload" : undefined)
         .then((audio) => {
+          const existing = sentenceAudioURLs.get(cacheKey);
+          if (existing) return existing;
           const url = URL.createObjectURL(audio);
           if (disposed) {
             URL.revokeObjectURL(url);
@@ -821,8 +829,8 @@ export function ReaderView(props: {
           setAudioCacheVersion((version) => version + 1);
           return url;
         })
-        .finally(() => sentenceAudioRequests.delete(cacheKey));
-      sentenceAudioRequests.set(cacheKey, request);
+        .finally(() => sentenceAudioRequests.delete(requestKey));
+      sentenceAudioRequests.set(requestKey, request);
     }
     return request;
   }
@@ -849,7 +857,7 @@ export function ReaderView(props: {
   function audioGenerationLabel(): string {
     const generation = audioGeneration();
     if (generation.status === "generating") {
-      return `Generating ${generation.completed}/${generation.total}`;
+      return `${generation.phase === "alignment" ? "MFA" : "TTS"} ${generation.completed}/${generation.total}`;
     }
     const missing = missingSentenceAudio().length;
     if (missing === 0) return "Audio ready";
@@ -864,38 +872,71 @@ export function ReaderView(props: {
     if (missing.length === 0) return;
 
     const generationToken = ++audioGenerationToken;
-    let next = 0;
-    let completed = 0;
-    let failures = 0;
-    setAudioGeneration({ status: "generating", completed: 0, total: missing.length });
-
-    const worker = async () => {
-      while (!disposed && generationToken === audioGenerationToken) {
-        const index = next++;
-        if (index >= missing.length) return;
-        try {
-          await loadSentenceSpeech(missing[index], true, model);
-        } catch {
-          failures++;
-        }
-        completed++;
-        if (generationToken === audioGenerationToken) {
-          setAudioGeneration({ status: "generating", completed, total: missing.length });
-        }
-      }
-    };
-
-    await Promise.all(Array.from(
-      { length: Math.min(AUDIO_GENERATION_CONCURRENCY, missing.length) },
-      () => worker(),
-    ));
+    const ttsFailures = await runAudioGenerationPhase(
+      missing,
+      "tts",
+      generationToken,
+      (span) => loadSentenceAudioURL(span, model, true).then(() => undefined),
+    );
     if (disposed || generationToken !== audioGenerationToken) return;
-    setAudioGeneration({ status: failures ? "error" : "idle", completed, total: missing.length });
+
+    // Do not start any MFA work until every queued TTS request has settled.
+    // This keeps the audio server on one model/workload at a time and ensures
+    // alignment consumes the sentence audio just warmed in the server cache.
+    const alignmentQueue = missing.filter((span) => !ttsFailures.has(span.index));
+    const alignmentFailures = await runAudioGenerationPhase(
+      alignmentQueue,
+      "alignment",
+      generationToken,
+      async (span) => {
+        const words = await loadSentenceAlignment(span, model);
+        if (words.length === 0) throw new Error("empty sentence alignment");
+      },
+    );
+    if (disposed || generationToken !== audioGenerationToken) return;
+
+    const failures = ttsFailures.size + alignmentFailures.size;
+    setAudioGeneration({ status: failures ? "error" : "idle", completed: missing.length, total: missing.length });
     if (failures) {
       appStore.showToast(`${failures} sentence${failures === 1 ? "" : "s"} could not be prepared.`, "error");
     } else {
       appStore.showToast("Story audio is ready.");
     }
+  }
+
+  async function runAudioGenerationPhase(
+    queue: SentenceSpan[],
+    phase: "tts" | "alignment",
+    generationToken: number,
+    prepare: (span: SentenceSpan) => Promise<void>,
+  ): Promise<Set<number>> {
+    let next = 0;
+    let completed = 0;
+    const failures = new Set<number>();
+    setAudioGeneration({ status: "generating", phase, completed: 0, total: queue.length });
+
+    const worker = async () => {
+      while (!disposed && generationToken === audioGenerationToken) {
+        const index = next++;
+        if (index >= queue.length) return;
+        const span = queue[index];
+        try {
+          await prepare(span);
+        } catch {
+          failures.add(span.index);
+        }
+        completed++;
+        if (generationToken === audioGenerationToken) {
+          setAudioGeneration({ status: "generating", phase, completed, total: queue.length });
+        }
+      }
+    };
+
+    await Promise.all(Array.from(
+      { length: Math.min(AUDIO_PHASE_CONCURRENCY, queue.length) },
+      () => worker(),
+    ));
+    return failures;
   }
 
   function beginSpeechPlayback(): number {
