@@ -128,6 +128,79 @@ func TestGetStoryReturnsTokensAndKnowledge(t *testing.T) {
 	}
 }
 
+func TestGetStoryPagedReturnsBoundedGlobalWindow(t *testing.T) {
+	srv, repo := newServer(t, false)
+	ctx := context.Background()
+	story, err := repo.CreateStory(ctx, domain.Story{
+		UserID: domain.LocalUserID, Language: "xx", Text: "long story", Level: "beginner",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokens := make([]domain.StoryToken, 0, 2_500)
+	for position := 0; position < 2_500; position++ {
+		token := domain.StoryToken{StoryID: story.StoryID, Position: position, Surface: " "}
+		if position%2 == 0 {
+			token.Surface = "word"
+			token.ItemKey = "word"
+			token.SurfaceKey = "word"
+			token.IsWord = true
+		}
+		if position%40 == 39 {
+			token.Surface = ". "
+		}
+		tokens = append(tokens, token)
+	}
+	if err := repo.ReplaceStoryTokens(ctx, story.StoryID, tokens); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(srv.URL + "/api/v1/stories/" + story.StoryID + "?paged=true&position=1700")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("paged story = %d, want 200", resp.StatusCode)
+	}
+	var out struct {
+		Tokens []struct {
+			Position int `json:"position"`
+		} `json:"tokens"`
+		Sentences []struct {
+			StartPosition int `json:"start_position"`
+			EndPosition   int `json:"end_position"`
+		} `json:"sentences"`
+		Window *struct {
+			StartPosition int  `json:"start_position"`
+			EndPosition   int  `json:"end_position"`
+			TotalTokens   int  `json:"total_tokens"`
+			PageIndex     int  `json:"page_index"`
+			PageCount     int  `json:"page_count"`
+			HasPrevious   bool `json:"has_previous"`
+			HasNext       bool `json:"has_next"`
+		} `json:"window"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Window == nil || out.Window.TotalTokens != len(tokens) || out.Window.PageCount < 3 ||
+		!out.Window.HasPrevious || !out.Window.HasNext {
+		t.Fatalf("unexpected page metadata: %+v", out.Window)
+	}
+	if len(out.Tokens) == 0 || len(out.Tokens) > 1_200 ||
+		out.Window.StartPosition != out.Tokens[0].Position ||
+		out.Window.EndPosition != out.Tokens[len(out.Tokens)-1].Position+1 ||
+		out.Window.StartPosition > 1700 || out.Window.EndPosition <= 1700 {
+		t.Fatalf("requested position is not in a bounded page: tokens=%d window=%+v", len(out.Tokens), out.Window)
+	}
+	for _, span := range out.Sentences {
+		if span.EndPosition <= out.Window.StartPosition || span.StartPosition >= out.Window.EndPosition {
+			t.Fatalf("non-intersecting sentence leaked into page: %+v window=%+v", span, out.Window)
+		}
+	}
+}
+
 func TestSaveReadingProgressAndFinish(t *testing.T) {
 	srv, repo := newServer(t, false)
 	storyID := seedStory(t, repo)

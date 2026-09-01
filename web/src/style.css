@@ -1680,6 +1680,23 @@ select {
   background: var(--surface);
 }
 
+.reader-task-generation-notice {
+  width: min(100%, 48rem);
+  margin: 0 auto 1rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 0.4rem;
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.reader-task-generation-notice[data-tone="error"] {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+
 .reader-story-editor label {
   font-weight: 650;
 }
@@ -2629,6 +2646,31 @@ select {
   position: relative;
   min-width: 0;
   padding: clamp(1.5rem, 5vw, 4.5rem) clamp(1rem, 4vw, 3.5rem) 6rem;
+}
+
+.reader-page-nav {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 1rem;
+  width: min(100%, 48rem);
+  margin: 0 auto 1rem;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.035em;
+  text-align: center;
+}
+
+.reader-page-nav button:first-child { justify-self: start; }
+.reader-page-nav button:last-child { justify-self: end; }
+
+.reader-page-continue {
+  display: flex;
+  justify-content: center;
+  margin-top: 4rem;
+  padding-top: 2rem;
+  border-top: 1px solid var(--border);
 }
 
 .reader-paper {

@@ -82,15 +82,22 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
   let lastPanelSession = "";
   let previousPanelStep: SessionStep | undefined;
   let readingStartPending = false;
+  let taskGenerationPollTimer: number | undefined;
+  let reviewStoryLoadID = "";
 
   onCleanup(() => {
     loadAbort?.abort();
+    if (taskGenerationPollTimer !== undefined) clearTimeout(taskGenerationPollTimer);
     taskReports.dispose();
   });
 
   createEffect(() => {
     const sessionID = props.sessionId;
     if (sessionID !== activeSessionID) {
+      if (taskGenerationPollTimer !== undefined) {
+        clearTimeout(taskGenerationPollTimer);
+        taskGenerationPollTimer = undefined;
+      }
       activeSessionID = sessionID;
       setReferencePeeked(reconcile({}));
       setSubmittingTasks(reconcile({}));
@@ -99,6 +106,22 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
       return;
     }
     setVisited(props.step, true);
+  });
+
+  createEffect(() => {
+    const storyID = state.detail?.story_id;
+    if (props.step !== "review" || !storyID || !state.story?.window || reviewStoryLoadID === storyID) return;
+    reviewStoryLoadID = storyID;
+    void getStory(storyID)
+      .then((story) => {
+        if (props.step === "review" && activeSessionID === props.sessionId && state.detail?.story_id === storyID) {
+          setState("story", reconcile(story));
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (reviewStoryLoadID === storyID) reviewStoryLoadID = "";
+      });
   });
 
   createEffect(() => {
@@ -140,12 +163,13 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
   const canGenerateTasks = createMemo(() => {
     const detail = state.detail;
     return detail?.session_type === "user_added" &&
-      (detail.status === "ready" || detail.status === "reading");
+      (detail.status === "ready" || detail.status === "reading" || detail.status === "failed");
   });
   const readerShellActive = createMemo(() => {
     const detail = state.detail;
     return props.step === "read" && detail?.content_type === "story" &&
-      (detail.status === "ready" || detail.status === "reading" || detail.status === "complete");
+      (detail.status === "ready" || detail.status === "reading" || detail.status === "complete" ||
+        (detail.session_type === "user_added" && Boolean(detail.story_id)));
   });
 
   async function loadSession(sessionID: string) {
@@ -185,6 +209,9 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
           loadTasks(sessionID, seq, controller),
         ]);
       }
+      if (detail.session_type === "user_added" && detail.status === "generating") {
+        scheduleTaskGenerationPoll(sessionID);
+      }
     } catch (error) {
       if (isAbort(error)) {
         return;
@@ -212,7 +239,7 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
         setState("contentStatus", "ready");
       });
       if (content.story?.story_id) {
-        await loadStory(content.story.story_id, seq, controller);
+        await loadStory(content.story.story_id, seq, controller, props.step === "read");
       }
     } catch (error) {
       if (!isAbort(error) && isCurrentLoad(seq, controller)) {
@@ -224,9 +251,9 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
     }
   }
 
-  async function loadStory(storyID: string, seq: number, controller: AbortController) {
+  async function loadStory(storyID: string, seq: number, controller: AbortController, paged: boolean) {
     try {
-      const story = await getStory(storyID, { signal: controller.signal });
+      const story = await getStory(storyID, { signal: controller.signal, paged });
       if (!isCurrentLoad(seq, controller)) {
         return;
       }
@@ -423,7 +450,7 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
     try {
       await generateStoryTasks(detail.story_id);
       if (isActiveSession(sessionID)) {
-        setState("detail", "status", "generating");
+        noteTasksGenerating();
       }
     } catch (error) {
       if (isActiveSession(sessionID)) {
@@ -433,6 +460,33 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
       finish();
       setGeneratingTasks(false);
     }
+  }
+
+  function noteTasksGenerating() {
+    const sessionID = state.detail?.session_id;
+    if (!sessionID) return;
+    setState("detail", "status", "generating");
+    scheduleTaskGenerationPoll(sessionID);
+  }
+
+  function scheduleTaskGenerationPoll(sessionID: string) {
+    if (taskGenerationPollTimer !== undefined || activeSessionID !== sessionID) return;
+    taskGenerationPollTimer = window.setTimeout(async () => {
+      taskGenerationPollTimer = undefined;
+      if (activeSessionID !== sessionID) return;
+      try {
+        const detail = await getSessionDetail(sessionID);
+        if (!isActiveSession(sessionID)) return;
+        if (detail.session_type === "user_added" && detail.status === "generating") {
+          setState("detail", reconcile(detail));
+          scheduleTaskGenerationPoll(sessionID);
+          return;
+        }
+        void loadSession(sessionID);
+      } catch {
+        scheduleTaskGenerationPoll(sessionID);
+      }
+    }, 1500);
   }
 
   function noteCompleted() {
@@ -588,7 +642,7 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
                       onReady={refreshFromGeneration}
                       onReadingStarted={noteReadingStarted}
                       onStoryUpdated={() => void loadSession(props.sessionId)}
-                      onTasksGenerating={() => setState("detail", "status", "generating")}
+                      onTasksGenerating={noteTasksGenerating}
                       onOpenTasks={() => { window.location.hash = sessionHref(props.sessionId, "tasks"); }}
                     />
                   </div>
@@ -701,7 +755,8 @@ function ReadPanel(props: {
   onTasksGenerating: () => void;
   onOpenTasks: () => void;
 }) {
-  if (props.detail.status === "pending" || props.detail.status === "generating" || props.detail.status === "failed") {
+  if ((props.detail.status === "pending" || props.detail.status === "generating" || props.detail.status === "failed") &&
+    (props.detail.session_type !== "user_added" || !props.detail.story_id)) {
     return <GenerationView sessionId={props.detail.session_id} onReady={props.onReady} />;
   }
   if (props.detail.content_type === "phrase_set") {
@@ -733,11 +788,14 @@ function ReadPanel(props: {
               sessionId={props.detail.session_id}
               title={props.title}
               pendingTasks={props.pendingTasks}
+              taskGenerationState={props.detail.status === "generating"
+                ? "generating"
+                : (props.detail.stage_summary?.failed ?? 0) > 0 ? "failed" : undefined}
               story={props.story}
               active={props.active}
               editable={props.detail.session_type === "user_added"}
               canGenerateTasks={props.detail.session_type === "user_added" &&
-                (props.detail.status === "ready" || props.detail.status === "reading")}
+                (props.detail.status === "ready" || props.detail.status === "reading" || props.detail.status === "failed")}
               onReadingStarted={props.onReadingStarted}
               onStoryUpdated={props.onStoryUpdated}
               onTasksGenerating={props.onTasksGenerating}
@@ -988,7 +1046,8 @@ function isStepUnlocked(step: SessionStep, tasksUnlocked: boolean, reviewUnlocke
 }
 
 function shouldLoadSessionData(detail: SessionDetail): boolean {
-  return detail.status === "ready" || detail.status === "reading" || detail.status === "complete";
+  return detail.status === "ready" || detail.status === "reading" || detail.status === "complete" ||
+    (detail.session_type === "user_added" && Boolean(detail.story_id));
 }
 
 function isAbort(error: unknown): boolean {

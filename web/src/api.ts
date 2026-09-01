@@ -501,10 +501,14 @@ function parseSSEFrame(frame: string): GenerationEvent | null {
 
 export async function getStory(
   storyID: string,
-  options: APIRequestOptions = {},
+  options: APIRequestOptions & { paged?: boolean; position?: number } = {},
 ): Promise<APIResponse<"getStory", 200>> {
+  const query = new URLSearchParams();
+  if (options.paged) query.set("paged", "true");
+  if (options.position !== undefined) query.set("position", String(options.position));
+  const suffix = query.size > 0 ? `?${query}` : "";
   return apiFetch<APIResponse<"getStory", 200>>(
-    `/stories/${encodeURIComponent(storyID)}`,
+    `/stories/${encodeURIComponent(storyID)}${suffix}`,
     { signal: options.signal },
   );
 }

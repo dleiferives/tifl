@@ -920,6 +920,17 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - name: paged
+          in: query
+          description: >
+            Return one bounded, sentence-aligned reader page instead of the
+            entire token stream. The page containing the saved reading position
+            is used unless position is supplied.
+          schema: { type: boolean, default: false }
+        - name: position
+          in: query
+          description: Global story-token position whose page should be returned when paged=true.
+          schema: { type: integer, minimum: 0 }
       responses:
         "200":
           description: Story tokens + knowledge
@@ -2991,7 +3002,28 @@ components:
           additionalProperties: { $ref: "#/components/schemas/ReaderSurfaceKnowledge" }
         reading_progress:
           $ref: "#/components/schemas/ReadingProgress"
+        window:
+          allOf: [{ $ref: "#/components/schemas/StoryPageWindow" }]
+          x-go-type-skip-optional-pointer: false
       required: [story_id, language, tokens, sentences, knowledge, surface_knowledge, reading_progress]
+    StoryPageWindow:
+      type: object
+      description: >
+        Global bounds for a bounded reader response. Token positions remain
+        stable across pages, so progress, lookups, tasks, and audio continue to
+        address the full story.
+      properties:
+        start_position: { type: integer, minimum: 0 }
+        end_position:
+          type: integer
+          minimum: 0
+          description: Half-open global token position immediately after this page.
+        total_tokens: { type: integer, minimum: 0 }
+        page_index: { type: integer, minimum: 0 }
+        page_count: { type: integer, minimum: 1 }
+        has_previous: { type: boolean }
+        has_next: { type: boolean }
+      required: [start_position, end_position, total_tokens, page_index, page_count, has_previous, has_next]
     ReadingProgress:
       type: object
       description: >

@@ -1811,6 +1811,18 @@ export interface components {
                 [key: string]: components["schemas"]["ReaderSurfaceKnowledge"];
             };
             reading_progress: components["schemas"]["ReadingProgress"];
+            window?: components["schemas"]["StoryPageWindow"];
+        };
+        /** @description Global bounds for a bounded reader response. Token positions remain stable across pages, so progress, lookups, tasks, and audio continue to address the full story. */
+        StoryPageWindow: {
+            start_position: number;
+            /** @description Half-open global token position immediately after this page. */
+            end_position: number;
+            total_tokens: number;
+            page_index: number;
+            page_count: number;
+            has_previous: boolean;
+            has_next: boolean;
         };
         /** @description Server-backed current bookmark for one story. finished_at is independent from session completion and archiving. */
         ReadingProgress: {
@@ -3034,7 +3046,12 @@ export interface operations {
     };
     getStory: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Return one bounded, sentence-aligned reader page instead of the entire token stream. The page containing the saved reading position is used unless position is supplied. */
+                paged?: boolean;
+                /** @description Global story-token position whose page should be returned when paged=true. */
+                position?: number;
+            };
             header?: never;
             path: {
                 id: string;

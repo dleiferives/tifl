@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,11 +17,16 @@ import (
 	"github.com/dleiferives/tifl/internal/reader"
 )
 
-const maxReaderSentenceTTSRunes = 4_000
+const (
+	maxReaderSentenceTTSRunes = 4_000
+	readerPageTargetTokens    = 800
+	readerPageMaximumTokens   = 1_200
+)
 
-// Reader endpoints. The reader loads a whole story plus the user's knowledge for
-// that language in a single call, then runs entirely client-side, flushing
-// behavioural signals back in batches. See context/reader-mode.md.
+// Reader endpoints. Short-form and legacy consumers may load a whole story;
+// book-scale reader views request a bounded page plus knowledge for the forms in
+// that page. The client flushes behavioural signals back in batches. See
+// context/reader-mode.md.
 
 // Wire types are spec-generated (#213).
 type (
@@ -51,7 +57,7 @@ func (h *Handler) getStory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokens, err := h.repo.ListStoryTokens(r.Context(), id)
+	allTokens, err := h.repo.ListStoryTokens(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -68,10 +74,46 @@ func (h *Handler) getStory(w http.ResponseWriter, r *http.Request) {
 	}
 	progress, err := h.repo.GetReadingProgress(r.Context(), userID, id)
 	if errors.Is(err, db.ErrNotFound) {
-		progress = domain.ReadingProgress{UserID: userID, StoryID: id, Position: firstReaderPosition(tokens)}
+		progress = domain.ReadingProgress{UserID: userID, StoryID: id, Position: firstReaderPosition(allTokens)}
 	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
+	}
+
+	allSpans := reader.SentenceSpans(allTokens)
+	tokens := allTokens
+	spans := allSpans
+	var pageWindow *oapigen.StoryPageWindow
+	paged, err := parseQueryBool(r, "paged", false)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if paged && len(allTokens) > 0 {
+		position := progress.Position
+		if raw := strings.TrimSpace(r.URL.Query().Get("position")); raw != "" {
+			position, err = strconv.Atoi(raw)
+			if err != nil || position < 0 {
+				writeError(w, http.StatusBadRequest, errors.New("position must be a non-negative integer"))
+				return
+			}
+		}
+		pages := storyTokenPages(allTokens, allSpans)
+		pageIndex := storyTokenPageAt(allTokens, pages, position)
+		page := pages[pageIndex]
+		tokens = allTokens[page.start:page.end]
+		startPosition := tokens[0].Position
+		endPosition := tokens[len(tokens)-1].Position + 1
+		spans = sentenceSpansForWindow(allSpans, startPosition, endPosition)
+		pageWindow = &oapigen.StoryPageWindow{
+			StartPosition: startPosition,
+			EndPosition:   endPosition,
+			TotalTokens:   len(allTokens),
+			PageIndex:     pageIndex,
+			PageCount:     len(pages),
+			HasPrevious:   pageIndex > 0,
+			HasNext:       pageIndex+1 < len(pages),
+		}
 	}
 
 	resp := storyLoadResponse{
@@ -82,6 +124,7 @@ func (h *Handler) getStory(w http.ResponseWriter, r *http.Request) {
 		Knowledge:        make(map[string]readerKnowledgeDTO, len(knowledge)),
 		SurfaceKnowledge: make(map[string]readerLevelDTO, len(surfaceLevels)),
 		ReadingProgress:  readingProgressFromDomain(progress),
+		Window:           pageWindow,
 	}
 	for i, t := range tokens {
 		surfaceKey := readerTokenSurfaceKey(t)
@@ -91,16 +134,88 @@ func (h *Handler) getStory(w http.ResponseWriter, r *http.Request) {
 			IsWord: t.IsWord,
 		}
 	}
-	for _, s := range reader.SentenceSpans(tokens) {
+	for _, s := range spans {
 		resp.Sentences = append(resp.Sentences, sentenceSpanFromReader(s))
 	}
+	pageKeys, pageForms := readerPageKnowledgeKeys(tokens)
 	for _, k := range knowledge {
+		if paged && !pageKeys[k.ItemKey] {
+			continue
+		}
 		resp.Knowledge[k.ItemKey] = readerKnowledgeDTO{Level: oapigen.ReaderKnowledgeLevel(k.Level), LookupCount: k.LookupCount}
 	}
 	for _, s := range surfaceLevels {
-		resp.SurfaceKnowledge[readerFormKey(s.ItemKey, s.SurfaceKey)] = readerLevelDTO{Level: oapigen.ReaderSurfaceKnowledgeLevel(s.Level)}
+		formKey := readerFormKey(s.ItemKey, s.SurfaceKey)
+		if paged && !pageForms[formKey] {
+			continue
+		}
+		resp.SurfaceKnowledge[formKey] = readerLevelDTO{Level: oapigen.ReaderSurfaceKnowledgeLevel(s.Level)}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+type storyTokenPage struct {
+	start int
+	end   int
+}
+
+func storyTokenPages(tokens []domain.StoryToken, spans []reader.SentenceSpan) []storyTokenPage {
+	if len(tokens) == 0 {
+		return nil
+	}
+	pages := make([]storyTokenPage, 0, len(tokens)/readerPageTargetTokens+1)
+	for start := 0; start < len(tokens); {
+		end := min(start+readerPageTargetTokens, len(tokens))
+		if end < len(tokens) {
+			boundary := tokens[end].Position
+			for _, span := range spans {
+				if span.StartPosition < boundary && boundary < span.EndPosition {
+					for end < len(tokens) && tokens[end].Position < span.EndPosition && end-start < readerPageMaximumTokens {
+						end++
+					}
+					break
+				}
+			}
+		}
+		if end <= start {
+			end = min(start+readerPageMaximumTokens, len(tokens))
+		}
+		pages = append(pages, storyTokenPage{start: start, end: end})
+		start = end
+	}
+	return pages
+}
+
+func storyTokenPageAt(tokens []domain.StoryToken, pages []storyTokenPage, position int) int {
+	for i, page := range pages {
+		if position <= tokens[page.end-1].Position {
+			return i
+		}
+	}
+	return len(pages) - 1
+}
+
+func sentenceSpansForWindow(spans []reader.SentenceSpan, startPosition, endPosition int) []reader.SentenceSpan {
+	out := make([]reader.SentenceSpan, 0)
+	for _, span := range spans {
+		if span.EndPosition > startPosition && span.StartPosition < endPosition {
+			out = append(out, span)
+		}
+	}
+	return out
+}
+
+func readerPageKnowledgeKeys(tokens []domain.StoryToken) (map[string]bool, map[string]bool) {
+	keys := make(map[string]bool)
+	forms := make(map[string]bool)
+	for _, token := range tokens {
+		if token.ItemKey == "" {
+			continue
+		}
+		keys[token.ItemKey] = true
+		forms[readerFormKey(token.ItemKey, readerTokenSurfaceKey(token))] = true
+	}
+	return keys, forms
 }
 
 // saveReadingProgress persists a server-backed bookmark without conflating an

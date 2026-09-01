@@ -155,17 +155,19 @@ function SessionActions(props: {
   onDelete: (session: SessionOverview) => Promise<void>;
 }) {
   const session = props.session;
+  const readableUserStory = hasReadableUserStory(session);
   return (
     <>
-      <Show when={session.status === "pending" || session.status === "generating"}>
+      <Show when={!readableUserStory && (session.status === "pending" || session.status === "generating")}>
         <a class="button-link secondary-link" href={generationHref(session.session_id)}>Generation</a>
       </Show>
-      <Show when={session.status === "complete"}>
+      <Show when={session.status === "complete" && !readableUserStory}>
         <a class="button-link" href={reviewHref(session.session_id)}>Review</a>
       </Show>
-      <Show when={session.story_id && (session.status === "ready" || session.status === "reading")}>
+      <Show when={session.story_id &&
+        (session.status === "ready" || session.status === "reading" || readableUserStory)}>
         <a class="button-link" href={readerHref(session.story_id || "", session.session_id)}>
-          {session.status === "reading" ? "Continue reading" : "Start reading"}
+          {session.reading_started_at ? "Continue reading" : "Start reading"}
         </a>
       </Show>
       <Show when={session.content_type === "phrase_set" && (session.status === "ready" || session.status === "reading")}>
@@ -217,6 +219,11 @@ export function sessionTitle(session: SessionOverview): string {
 }
 
 export function sessionPrimaryHref(session: SessionOverview): string {
+  // Imported text is durable content. Optional generation work must never make
+  // its library row unopenable or redirect a finished story away from reading.
+  if (hasReadableUserStory(session)) {
+    return readerHref(session.story_id || "", session.session_id);
+  }
   if (!(session.status === "ready" || session.status === "reading" || session.status === "complete")) {
     return "";
   }
@@ -311,6 +318,12 @@ export function RowMenu(props: { label: string; children: JSX.Element }) {
 
 function sessionDetailLine(session: SessionOverview): string {
   const selected = `${session.selected_counts.targets} targets, ${session.selected_counts.new} new`;
+  if (hasReadableUserStory(session) && session.status === "failed") {
+    return `${selected}. The story is available; practice-task generation failed.`;
+  }
+  if (hasReadableUserStory(session) && (session.status === "generating" || session.status === "pending")) {
+    return `${selected}. The story is available while practice tasks are generated.`;
+  }
   if (session.status === "failed") {
     return `${selected}. Retry generation or open the generation route for failure details.`;
   }
@@ -321,6 +334,10 @@ function sessionDetailLine(session: SessionOverview): string {
     return `${selected}. No tasks are attached yet.`;
   }
   return `${selected}. ${session.tasks.pending} tasks pending.`;
+}
+
+function hasReadableUserStory(session: SessionOverview): boolean {
+  return session.session_type === "user_added" && Boolean(session.story_id);
 }
 
 function formatSessionType(sessionType: SessionOverview["session_type"]): string {

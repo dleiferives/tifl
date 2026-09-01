@@ -27,6 +27,7 @@ import { appStore } from "../store";
 
 type StoryToken = APISchema<"StoryToken">;
 type StoryLoad = APISchema<"StoryLoad">;
+type StoryPageWindow = NonNullable<StoryLoad["window"]>;
 type ReaderKnowledge = APISchema<"ReaderKnowledge">;
 type ReaderSurfaceKnowledge = APISchema<"ReaderSurfaceKnowledge">;
 type KnowledgeLevel = ReaderKnowledge["level"];
@@ -107,6 +108,7 @@ export function ReaderView(props: {
   sessionId?: string;
   title?: string;
   pendingTasks?: number;
+  taskGenerationState?: "generating" | "failed";
   story?: StoryLoad | null;
   active?: boolean;
   editable?: boolean;
@@ -124,6 +126,9 @@ export function ReaderView(props: {
   const [tokens, setTokens] = createSignal<StoryToken[]>([]);
   const [sentenceSpans, setSentenceSpans] = createSignal<SentenceSpan[]>([]);
   const [language, setLanguage] = createSignal("");
+  const [readerDOMVersion, setReaderDOMVersion] = createSignal(0);
+  const [pageWindow, setPageWindow] = createSignal<StoryPageWindow | undefined>();
+  const [pageLoading, setPageLoading] = createSignal(false);
   const [knowledge, setKnowledge] = createStore<Record<string, ReaderKnowledge>>({});
   const [surfaceKnowledge, setSurfaceKnowledge] = createStore<Record<string, ReaderSurfaceKnowledge>>({});
   const [cursor, setCursor] = createSignal(0);
@@ -141,6 +146,7 @@ export function ReaderView(props: {
   const [audioGeneration, setAudioGeneration] = createSignal<AudioGeneration>({ status: "idle", completed: 0, total: 0 });
   const [audioCacheVersion, setAudioCacheVersion] = createSignal(0);
   const [storyEditorOpen, setStoryEditorOpen] = createSignal(false);
+  const [storyEditLoading, setStoryEditLoading] = createSignal(false);
   const [storyDraft, setStoryDraft] = createSignal("");
   const [storySaving, setStorySaving] = createSignal(false);
   const [storyActionError, setStoryActionError] = createSignal("");
@@ -165,6 +171,10 @@ export function ReaderView(props: {
   const tokenEls: (HTMLElement | undefined)[] = [];
   let readerTextEl: HTMLDivElement | undefined;
   let popupEl: HTMLElement | undefined;
+  let selectableCursorIndices: number[] = [];
+  let scrollCursorFrame: number | undefined;
+  let scrollCursorSuppressedUntil = 0;
+  let preserveScrollForCursorUpdate = false;
   let pending: ReaderEvent[] = [];
   let flushTimer: number | undefined;
   let progressSaveTimer: number | undefined;
@@ -193,6 +203,7 @@ export function ReaderView(props: {
     window.addEventListener("beforeunload", onBeforeUnload);
     window.addEventListener("resize", repositionPopup);
     window.addEventListener("scroll", repositionPopup, true);
+    window.addEventListener("scroll", scheduleMidpointCursorCapture, { passive: true });
     document.addEventListener("selectionchange", captureTaskSelection);
     void load();
   });
@@ -205,10 +216,12 @@ export function ReaderView(props: {
     window.removeEventListener("beforeunload", onBeforeUnload);
     window.removeEventListener("resize", repositionPopup);
     window.removeEventListener("scroll", repositionPopup, true);
+    window.removeEventListener("scroll", scheduleMidpointCursorCapture);
     document.removeEventListener("selectionchange", captureTaskSelection);
     sentencePlaybackToken++;
     sentenceAudio?.pause();
     if (sentenceAnimationFrame !== undefined) cancelAnimationFrame(sentenceAnimationFrame);
+    if (scrollCursorFrame !== undefined) cancelAnimationFrame(scrollCursorFrame);
     clearSpeakingWord();
     for (const objectURL of sentenceAudioURLs.values()) URL.revokeObjectURL(objectURL);
     sentenceAudioURLs.clear();
@@ -217,7 +230,7 @@ export function ReaderView(props: {
     sentenceAlignmentRequests.clear();
     if (progressSaveTimer !== undefined) clearTimeout(progressSaveTimer);
     if (status() === "ready" && !suppressFinalProgressSave) {
-      void saveProgressSnapshot(currentProgressPosition(), false, true).catch(() => undefined);
+      void saveProgressSnapshot(leavingProgressPosition(), false, true).catch(() => undefined);
     }
     void flush(true);
   });
@@ -231,7 +244,9 @@ export function ReaderView(props: {
             appStore.showToast("This session could not be marked as started.", "error");
           });
       }
-      const story = props.story?.story_id === props.storyId ? props.story : await getStory(props.storyId);
+      const story = props.story?.story_id === props.storyId
+        ? props.story
+        : await getStory(props.storyId, { paged: true });
       applyStory(story);
       setStatus("ready");
     } catch {
@@ -239,7 +254,7 @@ export function ReaderView(props: {
     }
   }
 
-  function applyStory(story: StoryLoad) {
+  function applyStory(story: StoryLoad, preferredPosition?: number) {
     // Seed every canonical key and exact-form key so per-span subscriptions are
     // fine-grained from the first render; untouched words stay unseen ("").
     const seeded: Record<string, ReaderKnowledge> = {};
@@ -253,16 +268,21 @@ export function ReaderView(props: {
     setKnowledge(seeded);
     setSurfaceKnowledge(seededSurface);
     setTokens(story.tokens);
+    selectableCursorIndices = story.tokens.flatMap((token, index) => isSelectableToken(token) ? [index] : []);
     setSentenceSpans(story.sentences);
     setLanguage(story.language);
+    setPageWindow(story.window);
     const localProgress = readSavedCursor(props.storyId);
     const serverProgress = story.reading_progress;
-    const resumePosition = localProgress && localProgress.savedAt > serverProgress.updated_at
+    const resumePosition = preferredPosition ?? (localProgress && localProgress.savedAt > serverProgress.updated_at
       ? localProgress.position
-      : serverProgress.position;
+      : serverProgress.position);
     setFinishedAt(serverProgress.finished_at);
     setFinishStatus(serverProgress.finished_at ? "done" : "idle");
     setCursor(resolveCursorIndex(story.tokens, resumePosition));
+    queueMicrotask(() => {
+      if (!disposed) setReaderDOMVersion((version) => version + 1);
+    });
   }
 
   function captureTaskSelection() {
@@ -299,13 +319,24 @@ export function ReaderView(props: {
     return !!selected && position >= selected.startPosition && position < selected.endPosition;
   }
 
-  function beginStoryEdit() {
-    setStoryDraft(tokens().map((token) => token.surface).join(""));
+  async function beginStoryEdit() {
+    if (storyEditLoading()) return;
+    setStoryEditLoading(true);
     setStoryActionError("");
-    setTaskSelection(null);
-    window.getSelection()?.removeAllRanges();
-    closeOverlays();
-    setStoryEditorOpen(true);
+    try {
+      // Editing is a whole-document operation even when reading is paged.
+      // Never seed the editor with only the visible page and overwrite a book.
+      const source = pageWindow() ? await getStory(props.storyId) : undefined;
+      setStoryDraft((source?.tokens ?? tokens()).map((token) => token.surface).join(""));
+      setTaskSelection(null);
+      window.getSelection()?.removeAllRanges();
+      closeOverlays();
+      setStoryEditorOpen(true);
+    } catch (error) {
+      setStoryActionError(readerStoryActionMessage(error, "The full story could not be loaded for editing."));
+    } finally {
+      setStoryEditLoading(false);
+    }
   }
 
   function cancelStoryEdit() {
@@ -366,6 +397,7 @@ export function ReaderView(props: {
   let prevCursor: number | undefined;
   createEffect(() => {
     const c = cursor();
+    readerDOMVersion();
     if (status() !== "ready") {
       return;
     }
@@ -380,8 +412,11 @@ export function ReaderView(props: {
     const el = wordElementForCursor(c);
     if (el) {
       el.setAttribute("data-cursor", "");
-      el.scrollIntoView({ block: "nearest", inline: "nearest" });
+      if (!preserveScrollForCursorUpdate && !wordIsComfortablyVisible(el)) {
+        el.scrollIntoView({ block: "center", inline: "nearest" });
+      }
     }
+    preserveScrollForCursorUpdate = false;
     prevCursor = c;
   });
 
@@ -394,7 +429,7 @@ export function ReaderView(props: {
   // up and the ordinary debounce would probably save it shortly afterward.
   createEffect(() => {
     if (props.active === false && status() === "ready") {
-      void queueProgressSave(currentProgressPosition()).catch(() => undefined);
+      void queueProgressSave(leavingProgressPosition()).catch(() => undefined);
     }
   });
 
@@ -429,9 +464,14 @@ export function ReaderView(props: {
     const list = tokens();
     for (let i = cursor() + direction; i >= 0 && i < list.length; i += direction) {
       if (list[i].is_word && list[i].key) {
+        suppressMidpointCursorCapture();
         setCursor(i);
         return;
       }
+    }
+    const window = pageWindow();
+    if ((direction === 1 && window?.has_next) || (direction === -1 && window?.has_previous)) {
+      void navigatePage(direction);
     }
   }
 
@@ -439,7 +479,103 @@ export function ReaderView(props: {
     if (editing()) {
       return; // edit mode pins the popup to its word
     }
+    suppressMidpointCursorCapture();
     setCursor(resolveCursorIndex(tokens(), position));
+  }
+
+  function scheduleMidpointCursorCapture() {
+    if (scrollCursorFrame !== undefined || performance.now() < scrollCursorSuppressedUntil ||
+      status() !== "ready" || storyEditorOpen()) return;
+    scrollCursorFrame = requestAnimationFrame(() => {
+      scrollCursorFrame = undefined;
+      const next = viewportMidpointCursorIndex();
+      if (next === undefined || next === cursor()) return;
+      preserveScrollForCursorUpdate = true;
+      setCursor(next);
+    });
+  }
+
+  function suppressMidpointCursorCapture() {
+    scrollCursorSuppressedUntil = performance.now() + 250;
+    if (scrollCursorFrame !== undefined) {
+      cancelAnimationFrame(scrollCursorFrame);
+      scrollCursorFrame = undefined;
+    }
+  }
+
+  async function navigatePage(direction: 1 | -1) {
+    const currentWindow = pageWindow();
+    if (!currentWindow || pageLoading() ||
+      (direction === 1 && !currentWindow.has_next) ||
+      (direction === -1 && !currentWindow.has_previous)) return;
+    setPageLoading(true);
+    setStoryActionError("");
+    try {
+      await queueProgressSave(leavingProgressPosition());
+      const position = direction === 1
+        ? currentWindow.end_position
+        : Math.max(0, currentWindow.start_position - 1);
+      const story = await getStory(props.storyId, { paged: true, position });
+      const preferred = direction === 1
+        ? firstSelectablePosition(story.tokens)
+        : lastSelectablePosition(story.tokens);
+      setTaskSelection(null);
+      window.getSelection()?.removeAllRanges();
+      closeOverlays();
+      suppressMidpointCursorCapture();
+      applyStory(story, preferred);
+    } catch (error) {
+      setStoryActionError(readerStoryActionMessage(error, "That page could not be loaded."));
+    } finally {
+      setPageLoading(false);
+    }
+  }
+
+  function viewportMidpointCursorIndex(): number | undefined {
+    if (!readerTextEl || selectableCursorIndices.length === 0) return undefined;
+    const textRect = readerTextEl.getBoundingClientRect();
+    const topBoundary = readerViewportTopBoundary();
+    if (textRect.bottom <= topBoundary || textRect.top >= window.innerHeight) return undefined;
+    const targetY = Math.min(
+      Math.max(window.innerHeight / 2, Math.max(textRect.top, topBoundary)),
+      Math.min(textRect.bottom, window.innerHeight),
+    );
+
+    let low = 0;
+    let high = selectableCursorIndices.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      const element = wordElementForCursor(selectableCursorIndices[middle]);
+      const rect = element?.getBoundingClientRect();
+      const center = rect ? rect.top + rect.height / 2 : Number.POSITIVE_INFINITY;
+      if (center < targetY) low = middle + 1;
+      else high = middle;
+    }
+
+    let best: number | undefined;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const candidate of [low - 2, low - 1, low, low + 1]) {
+      if (candidate < 0 || candidate >= selectableCursorIndices.length) continue;
+      const index = selectableCursorIndices[candidate];
+      const element = wordElementForCursor(index);
+      if (!element) continue;
+      const rect = element.getBoundingClientRect();
+      const distance = Math.abs(rect.top + rect.height / 2 - targetY);
+      if (distance < bestDistance) {
+        best = index;
+        bestDistance = distance;
+      }
+    }
+    return best;
+  }
+
+  function wordIsComfortablyVisible(element: HTMLElement): boolean {
+    const rect = element.getBoundingClientRect();
+    return rect.top >= readerViewportTopBoundary() && rect.bottom <= window.innerHeight - 16;
+  }
+
+  function readerViewportTopBoundary(): number {
+    return Math.min(96, window.innerHeight * 0.2);
   }
 
   function wordElementForCursor(index: number): HTMLElement | undefined {
@@ -1280,6 +1416,16 @@ export function ReaderView(props: {
     return currentToken()?.position ?? firstSelectablePosition(tokens());
   }
 
+  // A final browser event can run before the requestAnimationFrame that turns
+  // the viewport midpoint into the active cursor. Resolve it synchronously on
+  // exit so the bookmark always reflects what the learner was actually viewing.
+  function leavingProgressPosition(): number {
+    const midpoint = viewportMidpointCursorIndex();
+    return midpoint === undefined
+      ? currentProgressPosition()
+      : tokens()[midpoint]?.position ?? currentProgressPosition();
+  }
+
   function lastProgressPosition(): number {
     const list = tokens();
     const index = findSelectableToken(list, list.length - 1, -1);
@@ -1311,7 +1457,7 @@ export function ReaderView(props: {
     const finish = appStore.beginOperation();
     const results = await Promise.allSettled([
       flush(),
-      queueProgressSave(currentProgressPosition()),
+      queueProgressSave(leavingProgressPosition()),
     ]);
     if (results[1].status === "rejected") {
       appStore.showToast("Your position is saved on this device, but could not be synced.", "error");
@@ -1345,7 +1491,7 @@ export function ReaderView(props: {
     setStoryActionError("");
     const finish = appStore.beginOperation();
     try {
-      await queueProgressSave(currentProgressPosition());
+      await queueProgressSave(leavingProgressPosition());
       await archiveSession(props.sessionId);
       window.location.hash = routeHref("/library");
     } catch {
@@ -1411,7 +1557,7 @@ export function ReaderView(props: {
   function onVisibilityChange() {
     if (document.visibilityState === "hidden") {
       if (status() === "ready") {
-        void saveProgressSnapshot(currentProgressPosition(), false, true).catch(() => undefined);
+        void saveProgressSnapshot(leavingProgressPosition(), false, true).catch(() => undefined);
       }
       void flush(true);
     }
@@ -1419,7 +1565,7 @@ export function ReaderView(props: {
 
   function onBeforeUnload() {
     if (status() === "ready") {
-      void saveProgressSnapshot(currentProgressPosition(), false, true).catch(() => undefined);
+      void saveProgressSnapshot(leavingProgressPosition(), false, true).catch(() => undefined);
     }
     void flush(true);
   }
@@ -1539,6 +1685,11 @@ export function ReaderView(props: {
   }
 
   function readingProgressPercent(): number {
+    const window = pageWindow();
+    const globalPosition = currentToken()?.position;
+    if (window && globalPosition !== undefined && window.total_tokens > 0) {
+      return Math.min(100, Math.max(0, Math.round(((globalPosition + 1) / window.total_tokens) * 100)));
+    }
     const selectable = tokens().filter(isSelectableToken);
     const current = currentToken()?.position;
     if (!selectable.length || current === undefined) return 0;
@@ -1613,7 +1764,13 @@ export function ReaderView(props: {
           <summary aria-label="Reader actions">•••</summary>
           <div>
             <Show when={props.editable}>
-              <button type="button" disabled={status() !== "ready" || storySaving()} onClick={beginStoryEdit}>Edit story</button>
+              <button
+                type="button"
+                disabled={status() !== "ready" || storySaving() || storyEditLoading()}
+                onClick={() => void beginStoryEdit()}
+              >
+                {storyEditLoading() ? "Loading full story…" : "Edit story"}
+              </button>
             </Show>
             <Show when={props.canGenerateTasks}>
               <button
@@ -1679,6 +1836,17 @@ export function ReaderView(props: {
             </aside>
           </Show>
 
+          <Show when={props.taskGenerationState === "generating"}>
+            <p class="reader-task-generation-notice" role="status" aria-live="polite">
+              Generating practice tasks in the background. You can keep reading.
+            </p>
+          </Show>
+          <Show when={props.taskGenerationState === "failed"}>
+            <p class="reader-task-generation-notice" data-tone="error" role="alert">
+              Practice-task generation failed. Your story is unchanged; select a passage and try again when you want.
+            </p>
+          </Show>
+
           <Show when={storyActionError()}>
             {(message) => <p class="form-error reader-story-action-error" role="alert">{message()}</p>}
           </Show>
@@ -1709,8 +1877,40 @@ export function ReaderView(props: {
                 <div class="reader-status reader-status-error" role="alert"><p>This story could not be loaded.</p><p><a href={routeHref("/")}>Back home</a></p></div>
               </Match>
               <Match when={status() === "ready"}>
+                <Show when={pageWindow() && pageWindow()!.page_count > 1 ? pageWindow() : undefined}>
+                  {(window) => (
+                    <nav class="reader-page-nav" aria-label="Story pages">
+                      <button
+                        class="secondary-button"
+                        type="button"
+                        disabled={!window().has_previous || pageLoading()}
+                        onClick={() => void navigatePage(-1)}
+                      >Previous page</button>
+                      <span>Page {window().page_index + 1} of {window().page_count}</span>
+                      <button
+                        class="secondary-button"
+                        type="button"
+                        disabled={!window().has_next || pageLoading()}
+                        onClick={() => void navigatePage(1)}
+                      >Next page</button>
+                    </nav>
+                  )}
+                </Show>
                 <article class="reader-paper">
-                  <div class="reader-text" lang={language()} ref={readerTextEl}>
+                  <div
+                    class="reader-text"
+                    lang={language()}
+                    ref={(element) => {
+                      readerTextEl = element;
+                      // Word refs are populated during the same render pass.
+                      // Re-run cursor placement once that pass has settled.
+                      queueMicrotask(() => {
+                        if (!disposed && readerTextEl === element && element.isConnected) {
+                          setReaderDOMVersion((version) => version + 1);
+                        }
+                      });
+                    }}
+                  >
                     <For each={tokens()}>
                       {(token) => (
                         <Show
@@ -1734,19 +1934,27 @@ export function ReaderView(props: {
                       )}
                     </For>
                   </div>
-                  <div class="reader-finish-panel">
-                    <Show when={finishedAt()} fallback={
-                      <button class="primary-button reader-finish-button" type="button" disabled={finishStatus() === "saving"} onClick={() => void finishReading()}>
-                        {finishStatus() === "saving" ? "Saving…" : "Finished reading"}
+                  <Show when={pageWindow()?.has_next} fallback={
+                    <div class="reader-finish-panel">
+                      <Show when={finishedAt()} fallback={
+                        <button class="primary-button reader-finish-button" type="button" disabled={finishStatus() === "saving"} onClick={() => void finishReading()}>
+                          {finishStatus() === "saving" ? "Saving…" : "Finished reading"}
+                        </button>
+                      }>
+                        <p><strong>Finished reading</strong></p>
+                        <div class="reader-finish-actions">
+                          <button class="secondary-button" type="button" disabled={exitStatus() === "saving"} onClick={() => void exitReader()}>{exitStatus() === "saving" ? "Saving…" : "Exit reader"}</button>
+                          <Show when={props.sessionId}><button class="secondary-button" type="button" disabled={archiveStatus() === "saving"} onClick={() => void archiveFinishedStory()}>{archiveStatus() === "saving" ? "Archiving…" : "Archive story"}</button></Show>
+                        </div>
+                      </Show>
+                    </div>
+                  }>
+                    <div class="reader-page-continue">
+                      <button class="primary-button" type="button" disabled={pageLoading()} onClick={() => void navigatePage(1)}>
+                        {pageLoading() ? "Loading page…" : "Continue to next page"}
                       </button>
-                    }>
-                      <p><strong>Finished reading</strong></p>
-                      <div class="reader-finish-actions">
-                        <button class="secondary-button" type="button" disabled={exitStatus() === "saving"} onClick={() => void exitReader()}>{exitStatus() === "saving" ? "Saving…" : "Exit reader"}</button>
-                        <Show when={props.sessionId}><button class="secondary-button" type="button" disabled={archiveStatus() === "saving"} onClick={() => void archiveFinishedStory()}>{archiveStatus() === "saving" ? "Archiving…" : "Archive story"}</button></Show>
-                      </div>
-                    </Show>
-                  </div>
+                    </div>
+                  </Show>
                 </article>
               </Match>
             </Switch>
@@ -1923,6 +2131,11 @@ function resolveCursorIndex(list: StoryToken[], position: number | undefined): n
 function firstSelectablePosition(list: StoryToken[]): number {
   const index = findSelectableToken(list, 0, 1);
   return index === undefined ? 0 : list[index].position;
+}
+
+function lastSelectablePosition(list: StoryToken[]): number {
+  const index = findSelectableToken(list, list.length - 1, -1);
+  return index === undefined ? firstSelectablePosition(list) : list[index].position;
 }
 
 function findSelectableToken(list: StoryToken[], start: number, direction: 1 | -1): number | undefined {

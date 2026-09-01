@@ -632,6 +632,49 @@ func TestBrokerQueuedGenerationRunsOnlyTasksForUserAddedStory(t *testing.T) {
 	}
 }
 
+func TestBrokerUserAddedTaskFailureKeepsImportedStoryReadable(t *testing.T) {
+	ctx := context.Background()
+	ctrl := &clientControl{failKind: map[string]bool{"task_comprehension_mc": true}}
+	h := newHarness(t, ctrl, []string{tasks.TypeComprehensionMC})
+	readingStarted := float64(90)
+	sess, err := h.repo.CreateSession(ctx, domain.Session{
+		UserID: h.userID, Language: "xx", Level: "beginner",
+		SessionType: domain.SessionUserAdded, Status: domain.StatusGenerating,
+		SelectedTargets: h.targets, ReadingStartedAt: &readingStarted,
+	})
+	must(t, err)
+	persisted, err := h.repo.CreateStory(ctx, domain.Story{
+		UserID: h.userID, Language: "xx", Level: "beginner",
+		Text: "the user's exact story", SessionID: &sess.SessionID,
+	})
+	must(t, err)
+	must(t, h.repo.SetSessionSelection(ctx, sess.SessionID, persisted.StoryID, h.targets, nil))
+	now := float64(100)
+	for _, stage := range []string{domain.StageStoryImport, domain.StageTokenization} {
+		must(t, h.repo.UpsertStage(ctx, domain.GenerationStage{
+			SessionID: sess.SessionID, Stage: stage, Status: domain.StageComplete,
+			StartedAt: &now, CompletedAt: &now,
+		}))
+	}
+
+	broker := story.NewBroker(h.pipeline)
+	must(t, broker.RunGeneration(ctx, sess.SessionID))
+
+	final, err := h.repo.GetSession(ctx, sess.SessionID)
+	must(t, err)
+	if final.Status != domain.StatusReading {
+		t.Fatalf("session status = %q, want reading despite optional task failure", final.Status)
+	}
+	after, err := h.repo.GetStory(ctx, persisted.StoryID)
+	must(t, err)
+	if after.Text != persisted.Text {
+		t.Fatalf("failed task generation changed imported text: %q", after.Text)
+	}
+	if h.stageStatus(t, sess.SessionID, domain.StageForTask(tasks.TypeComprehensionMC)) != domain.StageFailed {
+		t.Fatal("failed task stage should remain visible for retry and diagnostics")
+	}
+}
+
 func TestPipeline_UserAddedStoryNeverFallsBackToStoryGeneration(t *testing.T) {
 	ctx := context.Background()
 	ctrl := &clientControl{}

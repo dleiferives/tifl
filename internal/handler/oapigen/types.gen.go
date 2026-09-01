@@ -2203,6 +2203,19 @@ type StoryLoad struct {
 	// SurfaceKnowledge StoryToken.form_key → exact-form level; unseen forms are absent
 	SurfaceKnowledge map[string]ReaderSurfaceKnowledge `json:"surface_knowledge"`
 	Tokens           []StoryToken                      `json:"tokens"`
+	Window           *StoryPageWindow                  `json:"window,omitempty"`
+}
+
+// StoryPageWindow Global bounds for a bounded reader response. Token positions remain stable across pages, so progress, lookups, tasks, and audio continue to address the full story.
+type StoryPageWindow struct {
+	// EndPosition Half-open global token position immediately after this page.
+	EndPosition   int  `json:"end_position"`
+	HasNext       bool `json:"has_next"`
+	HasPrevious   bool `json:"has_previous"`
+	PageCount     int  `json:"page_count"`
+	PageIndex     int  `json:"page_index"`
+	StartPosition int  `json:"start_position"`
+	TotalTokens   int  `json:"total_tokens"`
 }
 
 // StoryToken One token of the server-tokenized story; non-word tokens carry no key.
@@ -2496,6 +2509,15 @@ type ListImportedStoriesParams struct {
 
 	// Language registered language code to scope the page to; omitted lists all languages
 	Language string `form:"language,omitempty" json:"language,omitempty"`
+}
+
+// GetStoryParams defines parameters for GetStory.
+type GetStoryParams struct {
+	// Paged Return one bounded, sentence-aligned reader page instead of the entire token stream. The page containing the saved reading position is used unless position is supplied.
+	Paged bool `form:"paged,omitempty" json:"paged,omitempty"`
+
+	// Position Global story-token position whose page should be returned when paged=true.
+	Position int `form:"position,omitempty" json:"position,omitempty"`
 }
 
 // GetDefinitionParams defines parameters for GetDefinition.

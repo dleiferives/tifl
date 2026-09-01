@@ -281,10 +281,26 @@ func (p *Pipeline) Retry(ctx context.Context, sessionID string, emit emitter) er
 		}
 	}
 	final := domain.StatusReady
-	if completed == 0 {
+	if sess.SessionType == domain.SessionUserAdded {
+		// Task generation is optional enrichment for an imported story. A failed
+		// task batch must never make already-persisted reader content unavailable.
+		// Preserve the learner's reading lifecycle while the failed task stages
+		// remain recorded for diagnostics and a later retry.
+		final = readableUserStoryStatus(sess)
+	} else if completed == 0 {
 		final = domain.StatusFailed
 	}
 	return p.markSession(ctx, sessionID, final)
+}
+
+func readableUserStoryStatus(sess domain.Session) domain.SessionStatus {
+	if sess.CompletedAt != nil {
+		return domain.StatusComplete
+	}
+	if sess.ReadingStartedAt != nil {
+		return domain.StatusReading
+	}
+	return domain.StatusReady
 }
 
 func (p *Pipeline) callContext(ctx context.Context, sess domain.Session) context.Context {
