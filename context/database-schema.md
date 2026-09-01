@@ -399,6 +399,31 @@ reading session for debugging or model training.
 
 ---
 
+### `reading_progress`
+
+The current server-backed bookmark for a user and story. This mutable projection
+answers “where should the reader resume?”; it is not the append-only analytics
+history and does not overload session completion or archive state.
+
+```
+reading_progress
+  user_id           TEXT  NOT NULL    FK → users.user_id
+  story_id          TEXT  NOT NULL    FK → stories.story_id ON DELETE CASCADE
+  position          INT   NOT NULL    selectable story_tokens.position
+  progress_fraction REAL  NOT NULL    0..1 word-position projection
+  finished_at       REAL              explicit Finished reading action
+  updated_at        REAL  NOT NULL    server save time
+
+  PRIMARY KEY (user_id, story_id)
+```
+
+Ordinary bookmark saves preserve an existing `finished_at`, allowing a learner
+to reread or move around a finished story without erasing the historical fact.
+User-story edits delete the row because positions from the old tokenization are
+not meaningful in the new text.
+
+---
+
 ### `conversations`
 
 Session-level state for the adaptive story conversation. The main narrative is
@@ -731,6 +756,10 @@ CREATE INDEX idx_story_tokens_story
 -- Reader events: bulk insert, then aggregate
 CREATE INDEX idx_reader_events_user_story
   ON reader_events(user_id, story_id, occurred_at);
+
+-- Reader resume/library ordering
+CREATE INDEX idx_reading_progress_user_updated
+  ON reading_progress(user_id, updated_at DESC);
 
 -- Task queries per session
 CREATE INDEX idx_tasks_session

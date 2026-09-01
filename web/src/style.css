@@ -1646,7 +1646,8 @@ select {
   font-size: 1.25rem;
 }
 
-.reader-complete-button {
+.reader-exit-button,
+.reader-finish-button {
   white-space: nowrap;
 }
 
@@ -1744,6 +1745,27 @@ select {
   line-height: 2.1;
   white-space: pre-wrap;
   overflow-wrap: break-word;
+}
+
+.reader-finish-panel {
+  display: grid;
+  justify-items: start;
+  gap: 0.75rem;
+  width: min(100%, 42rem);
+  padding: 1.25rem 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--surface);
+}
+
+.reader-finish-panel p {
+  margin: 0;
+}
+
+.reader-finish-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .reader-gap {

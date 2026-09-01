@@ -91,6 +91,7 @@ func currentAPIRoutes() []apiRoute {
 		{Method: http.MethodGet, Path: "/api/v1/stories/{id}", Handler: (*Handler).getStory, RequireUser: true},
 		{Method: http.MethodPatch, Path: "/api/v1/stories/{id}", Handler: (*Handler).updateStory, RequireUser: true},
 		{Method: http.MethodDelete, Path: "/api/v1/stories/{id}", Handler: (*Handler).deleteStory, RequireUser: true},
+		{Method: http.MethodPut, Path: "/api/v1/stories/{id}/reading-progress", Handler: (*Handler).saveReadingProgress, RequireUser: true},
 		{Method: http.MethodPost, Path: "/api/v1/stories/{id}/tasks/generate", Handler: (*Handler).generateStoryTasks, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/stories/{id}/definition", Handler: (*Handler).getDefinition, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/stories/{id}/definition/options", Handler: (*Handler).getDefinitionOptions, RequireUser: true},

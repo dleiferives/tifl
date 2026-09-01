@@ -580,10 +580,6 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
                       onReadingStarted={noteReadingStarted}
                       onStoryUpdated={() => void loadSession(props.sessionId)}
                       onTasksGenerating={() => setState("detail", "status", "generating")}
-                      onCompleted={() => {
-                        noteCompleted();
-                        window.location.hash = sessionHref(props.sessionId, "review");
-                      }}
                     />
                   </div>
                 </Show>
@@ -689,7 +685,6 @@ function ReadPanel(props: {
   active: boolean;
   onReady: () => void;
   onReadingStarted: () => void;
-  onCompleted: () => void;
   onStoryUpdated: () => void;
   onTasksGenerating: () => void;
 }) {
@@ -729,7 +724,6 @@ function ReadPanel(props: {
               canGenerateTasks={props.detail.session_type === "user_added" &&
                 (props.detail.status === "ready" || props.detail.status === "reading")}
               onReadingStarted={props.onReadingStarted}
-              onSessionComplete={props.onCompleted}
               onStoryUpdated={props.onStoryUpdated}
               onTasksGenerating={props.onTasksGenerating}
             />

@@ -44,6 +44,7 @@ func testRepository(t *testing.T, newRepo repoFactory) {
 	run("LLMCalls", testLLMCalls)
 	run("LLMObservability", testLLMObservability)
 	run("ReaderEvents", testReaderEvents)
+	run("ReadingProgress", testReadingProgress)
 	run("DefinitionsBreakdowns", testDefinitionsBreakdowns)
 	run("Pipeline", testPipeline)
 	run("TargetPreviewGuesses", testTargetPreviewGuesses)
@@ -53,6 +54,72 @@ func testRepository(t *testing.T, newRepo repoFactory) {
 	run("ImportedStories", testImportedStories)
 	run("Tx", testTx)
 	run("LLMTokenSpend", testLLMTokenSpend)
+}
+
+func testReadingProgress(t *testing.T, repo db.Repository) {
+	ctx := context.Background()
+	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "rp", Name: "Reader progress", KeyStrategy: "surface", Enabled: true}))
+	owner, err := repo.CreateUser(ctx, domain.User{Email: "reader-progress-owner@example.com"})
+	must(t, err)
+	other, err := repo.CreateUser(ctx, domain.User{Email: "reader-progress-other@example.com"})
+	must(t, err)
+	story, err := repo.CreateStory(ctx, domain.Story{
+		UserID: owner.UserID, Language: "rp", Text: "one two", Level: "beginner",
+	})
+	must(t, err)
+	must(t, repo.ReplaceStoryTokens(ctx, story.StoryID, []domain.StoryToken{
+		{StoryID: story.StoryID, Position: 0, Surface: "one", ItemKey: "one", SurfaceKey: "one", IsWord: true},
+		{StoryID: story.StoryID, Position: 1, Surface: " ", IsWord: false},
+		{StoryID: story.StoryID, Position: 2, Surface: "two", ItemKey: "two", SurfaceKey: "two", IsWord: true},
+	}))
+
+	if _, err := repo.GetReadingProgress(ctx, owner.UserID, story.StoryID); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("missing progress error = %v, want ErrNotFound", err)
+	}
+
+	got, err := repo.UpsertReadingProgress(ctx, domain.ReadingProgress{
+		UserID: owner.UserID, StoryID: story.StoryID, Position: 0,
+		ProgressFraction: 0.5, UpdatedAt: 100,
+	})
+	must(t, err)
+	if got.Position != 0 || got.ProgressFraction != 0.5 || got.FinishedAt != nil || got.UpdatedAt != 100 {
+		t.Fatalf("initial progress mismatch: %+v", got)
+	}
+
+	finishedAt := 200.0
+	got, err = repo.UpsertReadingProgress(ctx, domain.ReadingProgress{
+		UserID: owner.UserID, StoryID: story.StoryID, Position: 2,
+		ProgressFraction: 1, FinishedAt: &finishedAt, UpdatedAt: finishedAt,
+	})
+	must(t, err)
+	if got.FinishedAt == nil || *got.FinishedAt != finishedAt {
+		t.Fatalf("finished timestamp missing: %+v", got)
+	}
+
+	// Moving the bookmark during a later reread must not erase the explicit
+	// finished-reading fact.
+	got, err = repo.UpsertReadingProgress(ctx, domain.ReadingProgress{
+		UserID: owner.UserID, StoryID: story.StoryID, Position: 0,
+		ProgressFraction: 0.5, UpdatedAt: 300,
+	})
+	must(t, err)
+	if got.Position != 0 || got.ProgressFraction != 0.5 || got.FinishedAt == nil || *got.FinishedAt != finishedAt {
+		t.Fatalf("later bookmark should preserve finished_at: %+v", got)
+	}
+
+	loaded, err := repo.GetReadingProgress(ctx, owner.UserID, story.StoryID)
+	must(t, err)
+	if loaded.Position != got.Position || loaded.FinishedAt == nil || *loaded.FinishedAt != finishedAt {
+		t.Fatalf("progress did not round-trip: %+v", loaded)
+	}
+	if _, err := repo.GetReadingProgress(ctx, other.UserID, story.StoryID); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("other user read error = %v, want ErrNotFound", err)
+	}
+	if _, err := repo.UpsertReadingProgress(ctx, domain.ReadingProgress{
+		UserID: other.UserID, StoryID: story.StoryID, Position: 0, ProgressFraction: 0.5,
+	}); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("other user write error = %v, want ErrNotFound", err)
+	}
 }
 
 func testAuthSecurityEvents(t *testing.T, repo db.Repository) {

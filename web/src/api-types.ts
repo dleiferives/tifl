@@ -640,6 +640,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/stories/{id}/reading-progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Save the caller's current position in a story
+         * @description Upserts the server-backed reader bookmark for this story. Position must identify a word token in the current story. Setting finished records an explicit finished-reading timestamp; it does not complete or archive the surrounding learning session. A later ordinary bookmark save preserves the finished timestamp.
+         */
+        put: operations["saveReadingProgress"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/stories/{id}/definition": {
         parameters: {
             query?: never;
@@ -1790,6 +1810,33 @@ export interface components {
             surface_knowledge: {
                 [key: string]: components["schemas"]["ReaderSurfaceKnowledge"];
             };
+            reading_progress: components["schemas"]["ReadingProgress"];
+        };
+        /** @description Server-backed current bookmark for one story. finished_at is independent from session completion and archiving. */
+        ReadingProgress: {
+            /** @description story token position to restore when the reader reopens */
+            position: number;
+            /** Format: double */
+            progress_fraction: number;
+            /**
+             * Format: double
+             * @description Unix seconds when the learner explicitly finished the text
+             */
+            finished_at?: number;
+            /**
+             * Format: double
+             * @description Unix seconds when this bookmark was last saved by the server
+             */
+            updated_at: number;
+        };
+        SaveReadingProgressRequest: {
+            /** @description current selectable story token position */
+            position: number;
+            /**
+             * @description record that the learner explicitly finished the text
+             * @default false
+             */
+            finished: boolean;
         };
         /** @description One logged reader interaction. */
         ReaderEvent: {
@@ -3091,6 +3138,36 @@ export interface operations {
             409: components["responses"]["Conflict"];
             500: components["responses"]["InternalError"];
             503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    saveReadingProgress: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveReadingProgressRequest"];
+            };
+        };
+        responses: {
+            /** @description Saved reading progress */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadingProgress"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
         };
     };
     getDefinition: {

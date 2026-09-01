@@ -3,7 +3,7 @@ import type { JSX } from "solid-js";
 import { createStore } from "solid-js/store";
 import {
   alignStorySentences,
-  completeSession,
+  archiveSession,
   deleteDictionaryEntry,
   getDefinition,
   getDefinitionOptions,
@@ -14,6 +14,7 @@ import {
   putDictionaryEntry,
   setReaderSurfaceKnowledge,
   sentenceBreakdown,
+  saveReadingProgress,
   startReading,
   setWordKnowledge,
   generateStoryTasks,
@@ -78,6 +79,7 @@ type SyntaxTreeBranch = {
 };
 
 const FLUSH_DELAY_MS = 4000;
+const PROGRESS_SAVE_DELAY_MS = 1200;
 const READER_POSITION_PREFIX = "tifl.reader.position.";
 const AUDIO_TTS_CONCURRENCY = 4;
 
@@ -101,12 +103,14 @@ export function ReaderView(props: {
   editable?: boolean;
   canGenerateTasks?: boolean;
   onReadingStarted?: () => void;
-  onSessionComplete?: () => void;
   onStoryUpdated?: () => void;
   onTasksGenerating?: () => void;
 }) {
   const [status, setStatus] = createSignal<"loading" | "ready" | "error">("loading");
-  const [completeStatus, setCompleteStatus] = createSignal<"idle" | "saving" | "done">("idle");
+  const [finishStatus, setFinishStatus] = createSignal<"idle" | "saving" | "done">("idle");
+  const [exitStatus, setExitStatus] = createSignal<"idle" | "saving">("idle");
+  const [archiveStatus, setArchiveStatus] = createSignal<"idle" | "saving">("idle");
+  const [finishedAt, setFinishedAt] = createSignal<number | undefined>();
   const [tokens, setTokens] = createSignal<StoryToken[]>([]);
   const [sentenceSpans, setSentenceSpans] = createSignal<SentenceSpan[]>([]);
   const [language, setLanguage] = createSignal("");
@@ -148,6 +152,8 @@ export function ReaderView(props: {
   let popupEl: HTMLElement | undefined;
   let pending: ReaderEvent[] = [];
   let flushTimer: number | undefined;
+  let progressSaveTimer: number | undefined;
+  let progressSaveChain: Promise<void> = Promise.resolve();
   let readingStart: Promise<void> | null = null;
   let dictionaryMutationSeq = 0;
   const dictionaryMutationIds: Record<string, number> = {};
@@ -161,6 +167,7 @@ export function ReaderView(props: {
   let sentenceAnimationFrame: number | undefined;
   let speakingPosition: number | undefined;
   let disposed = false;
+  let suppressFinalProgressSave = false;
 
   const currentToken = () => tokens()[cursor()];
 
@@ -192,6 +199,10 @@ export function ReaderView(props: {
     sentenceAudioRequests.clear();
     sentenceAlignments.clear();
     sentenceAlignmentRequests.clear();
+    if (progressSaveTimer !== undefined) clearTimeout(progressSaveTimer);
+    if (status() === "ready" && !suppressFinalProgressSave) {
+      void saveProgressSnapshot(currentProgressPosition(), false, true).catch(() => undefined);
+    }
     void flush(true);
   });
 
@@ -228,7 +239,14 @@ export function ReaderView(props: {
     setTokens(story.tokens);
     setSentenceSpans(story.sentences);
     setLanguage(story.language);
-    setCursor(resolveCursorIndex(story.tokens, readSavedCursor(props.storyId)));
+    const localProgress = readSavedCursor(props.storyId);
+    const serverProgress = story.reading_progress;
+    const resumePosition = localProgress && localProgress.savedAt > serverProgress.updated_at
+      ? localProgress.position
+      : serverProgress.position;
+    setFinishedAt(serverProgress.finished_at);
+    setFinishStatus(serverProgress.finished_at ? "done" : "idle");
+    setCursor(resolveCursorIndex(story.tokens, resumePosition));
   }
 
   function captureTaskSelection() {
@@ -292,8 +310,15 @@ export function ReaderView(props: {
       // Flush old positional events before the server removes them as part of
       // the edit reset. Never let a failed flush reinsert stale positions later.
       await flush();
+      if (progressSaveTimer !== undefined) {
+        clearTimeout(progressSaveTimer);
+        progressSaveTimer = undefined;
+      }
+      await progressSaveChain.catch(() => undefined);
       await updateStory(props.storyId, { text });
       pending = [];
+      suppressFinalProgressSave = true;
+      clearSavedCursor(props.storyId);
       setStoryEditorOpen(false);
       props.onStoryUpdated?.();
     } catch (error) {
@@ -331,6 +356,7 @@ export function ReaderView(props: {
     const token = tokens()[c];
     if (token) {
       writeSavedCursor(props.storyId, token.position);
+      scheduleProgressSave();
     }
     if (prevCursor !== undefined && prevCursor !== c) {
       wordElementForCursor(prevCursor)?.removeAttribute("data-cursor");
@@ -341,6 +367,15 @@ export function ReaderView(props: {
       el.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
     prevCursor = c;
+  });
+
+  // Session panels stay mounted while the learner moves to tasks. Persist the
+  // bookmark at that boundary even though the reader component is not cleaned
+  // up and the ordinary debounce would probably save it shortly afterward.
+  createEffect(() => {
+    if (props.active === false && status() === "ready") {
+      void queueProgressSave(currentProgressPosition()).catch(() => undefined);
+    }
   });
 
   // While the popup is open it follows the cursor: each word it reveals is a
@@ -1152,22 +1187,89 @@ export function ReaderView(props: {
     return active.mode === "sentence" ? sentences[active.position] : words[active.key];
   }
 
-  async function completeCurrentSession() {
-    if (!props.sessionId || completeStatus() === "saving") {
-      return;
+  function scheduleProgressSave() {
+    if (progressSaveTimer !== undefined) clearTimeout(progressSaveTimer);
+    progressSaveTimer = window.setTimeout(() => {
+      progressSaveTimer = undefined;
+      void queueProgressSave(currentProgressPosition()).catch(() => undefined);
+    }, PROGRESS_SAVE_DELAY_MS);
+  }
+
+  function currentProgressPosition(): number {
+    return currentToken()?.position ?? firstSelectablePosition(tokens());
+  }
+
+  function lastProgressPosition(): number {
+    const list = tokens();
+    const index = findSelectableToken(list, list.length - 1, -1);
+    return index === undefined ? currentProgressPosition() : list[index].position;
+  }
+
+  function queueProgressSave(position: number, finished = false): Promise<void> {
+    if (progressSaveTimer !== undefined) {
+      clearTimeout(progressSaveTimer);
+      progressSaveTimer = undefined;
     }
-    setCompleteStatus("saving");
+    const save = progressSaveChain.catch(() => undefined).then(() => saveProgressSnapshot(position, finished));
+    progressSaveChain = save;
+    return save;
+  }
+
+  async function saveProgressSnapshot(position: number, finished = false, keepalive = false) {
+    writeSavedCursor(props.storyId, position);
+    const progress = await saveReadingProgress(props.storyId, { position, finished }, { keepalive });
+    if (!disposed) {
+      setFinishedAt(progress.finished_at);
+      if (progress.finished_at) setFinishStatus("done");
+    }
+  }
+
+  async function exitReader() {
+    if (exitStatus() === "saving") return;
+    setExitStatus("saving");
+    const finish = appStore.beginOperation();
+    const results = await Promise.allSettled([
+      flush(),
+      queueProgressSave(currentProgressPosition()),
+    ]);
+    if (results[1].status === "rejected") {
+      appStore.showToast("Your position is saved on this device, but could not be synced.", "error");
+    }
+    finish();
+    window.location.hash = routeHref("/library");
+  }
+
+  async function finishReading() {
+    if (finishStatus() === "saving" || finishedAt()) return;
+    setFinishStatus("saving");
+    setStoryActionError("");
     const finish = appStore.beginOperation();
     try {
       await readingStart;
       await flush();
-      await completeSession(props.sessionId);
-      setCompleteStatus("done");
-      appStore.showToast("Session marked complete.");
-      props.onSessionComplete?.();
+      await queueProgressSave(lastProgressPosition(), true);
+      setFinishStatus("done");
+      appStore.showToast("Story marked as finished.");
     } catch {
-      setCompleteStatus("idle");
-      appStore.showToast("This session could not be completed.", "error");
+      setFinishStatus("idle");
+      setStoryActionError("Your finished-reading status could not be saved.");
+    } finally {
+      finish();
+    }
+  }
+
+  async function archiveFinishedStory() {
+    if (!props.sessionId || archiveStatus() === "saving") return;
+    setArchiveStatus("saving");
+    setStoryActionError("");
+    const finish = appStore.beginOperation();
+    try {
+      await queueProgressSave(currentProgressPosition());
+      await archiveSession(props.sessionId);
+      window.location.hash = routeHref("/library");
+    } catch {
+      setStoryActionError("This story could not be archived.");
+      setArchiveStatus("idle");
     } finally {
       finish();
     }
@@ -1227,11 +1329,17 @@ export function ReaderView(props: {
 
   function onVisibilityChange() {
     if (document.visibilityState === "hidden") {
+      if (status() === "ready") {
+        void saveProgressSnapshot(currentProgressPosition(), false, true).catch(() => undefined);
+      }
       void flush(true);
     }
   }
 
   function onBeforeUnload() {
+    if (status() === "ready") {
+      void saveProgressSnapshot(currentProgressPosition(), false, true).catch(() => undefined);
+    }
     void flush(true);
   }
 
@@ -1366,16 +1474,14 @@ export function ReaderView(props: {
           >
             {status() === "ready" ? audioGenerationLabel() : "Generate audio"}
           </button>
-          <Show when={props.sessionId}>
-            <button
-              class="primary-button reader-complete-button"
-              type="button"
-              disabled={status() !== "ready" || completeStatus() === "saving" || completeStatus() === "done"}
-              onClick={() => void completeCurrentSession()}
-            >
-              {completeStatus() === "done" ? "Completed" : completeStatus() === "saving" ? "Completing..." : "Complete session"}
-            </button>
-          </Show>
+          <button
+            class="secondary-button reader-exit-button"
+            type="button"
+            disabled={status() !== "ready" || exitStatus() === "saving"}
+            onClick={() => void exitReader()}
+          >
+            {exitStatus() === "saving" ? "Saving…" : "Exit reader"}
+          </button>
         </div>
       </header>
 
@@ -1453,6 +1559,33 @@ export function ReaderView(props: {
                   </Show>
                 )}
               </For>
+            </div>
+            <div class="reader-finish-panel">
+              <Show
+                when={finishedAt()}
+                fallback={
+                  <button
+                    class="primary-button reader-finish-button"
+                    type="button"
+                    disabled={finishStatus() === "saving"}
+                    onClick={() => void finishReading()}
+                  >
+                    {finishStatus() === "saving" ? "Saving…" : "Finished reading"}
+                  </button>
+                }
+              >
+                <p><strong>Finished reading</strong></p>
+                <div class="reader-finish-actions">
+                  <button class="secondary-button" type="button" disabled={exitStatus() === "saving"} onClick={() => void exitReader()}>
+                    {exitStatus() === "saving" ? "Saving…" : "Exit reader"}
+                  </button>
+                  <Show when={props.sessionId}>
+                    <button class="secondary-button" type="button" disabled={archiveStatus() === "saving"} onClick={() => void archiveFinishedStory()}>
+                      {archiveStatus() === "saving" ? "Archiving…" : "Archive story"}
+                    </button>
+                  </Show>
+                </div>
+              </Show>
             </div>
           </Match>
         </Switch>
@@ -1562,14 +1695,22 @@ export function ReaderView(props: {
   );
 }
 
-function readSavedCursor(storyId: string): number | undefined {
+type SavedCursor = { position: number; savedAt: number };
+
+function readSavedCursor(storyId: string): SavedCursor | undefined {
   try {
     const raw = localStorage.getItem(readerPositionKey(storyId));
     if (raw === null) {
       return undefined;
     }
-    const value = Number(raw);
-    return Number.isSafeInteger(value) ? value : undefined;
+    if (/^\d+$/.test(raw)) {
+      const position = Number(raw);
+      return Number.isSafeInteger(position) ? { position, savedAt: Date.now() / 1000 } : undefined;
+    }
+    const value = JSON.parse(raw) as Partial<SavedCursor>;
+    return Number.isSafeInteger(value.position) && Number.isFinite(value.savedAt)
+      ? { position: value.position!, savedAt: value.savedAt! }
+      : undefined;
   } catch {
     return undefined;
   }
@@ -1577,9 +1718,17 @@ function readSavedCursor(storyId: string): number | undefined {
 
 function writeSavedCursor(storyId: string, position: number) {
   try {
-    localStorage.setItem(readerPositionKey(storyId), String(position));
+    localStorage.setItem(readerPositionKey(storyId), JSON.stringify({ position, savedAt: Date.now() / 1000 } satisfies SavedCursor));
   } catch {
     // Reading should continue even when localStorage is unavailable.
+  }
+}
+
+function clearSavedCursor(storyId: string) {
+  try {
+    localStorage.removeItem(readerPositionKey(storyId));
+  } catch {
+    // The server-side edit still reset progress even if localStorage is unavailable.
   }
 }
 
@@ -1605,6 +1754,11 @@ function resolveCursorIndex(list: StoryToken[], position: number | undefined): n
     return target;
   }
   return findSelectableToken(list, target + 1, 1) ?? findSelectableToken(list, target - 1, -1) ?? first;
+}
+
+function firstSelectablePosition(list: StoryToken[]): number {
+  const index = findSelectableToken(list, 0, 1);
+  return index === undefined ? 0 : list[index].position;
 }
 
 function findSelectableToken(list: StoryToken[], start: number, direction: 1 | -1): number | undefined {

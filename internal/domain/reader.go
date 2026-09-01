@@ -65,6 +65,20 @@ type ReaderSurfaceLevel struct {
 	UpdatedAt  float64
 }
 
+// ReadingProgress is the durable current bookmark for one user and story.
+// Position is a story_tokens.position, while ProgressFraction is a convenient
+// 0..1 projection for library UI. FinishedAt is independent from session
+// completion and archiving: finishing a text does not hide it or finish its
+// practice tasks.
+type ReadingProgress struct {
+	UserID           string
+	StoryID          string
+	Position         int
+	ProgressFraction float64
+	FinishedAt       *float64
+	UpdatedAt        float64
+}
+
 // ReaderEvent is one logged reader interaction. The reader batches these
 // client-side and flushes them (on a debounce and on visibilitychange /
 // beforeunload); the server appends them append-only and derives signals from

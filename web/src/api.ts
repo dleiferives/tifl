@@ -264,6 +264,22 @@ export async function updateStory(storyID: string, request: APIRequest<"updateSt
   );
 }
 
+export async function saveReadingProgress(
+  storyID: string,
+  request: APIRequest<"saveReadingProgress">,
+  options: { keepalive?: boolean } = {},
+): Promise<APIResponse<"saveReadingProgress", 200>> {
+  const init = jsonRequest("PUT", request);
+  if (options.keepalive) {
+    init.keepalive = true;
+  }
+  return apiFetch<APIResponse<"saveReadingProgress", 200>>(
+    `/stories/${encodeURIComponent(storyID)}/reading-progress`,
+    init,
+    !options.keepalive,
+  );
+}
+
 export async function generateStoryTasks(
   storyID: string,
   request: APISchema<"GenerateStoryTasksRequest"> = {},

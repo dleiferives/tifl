@@ -488,6 +488,78 @@ func (r *SQLRepository) GetStory(ctx context.Context, storyID string) (domain.St
 	return scanStory(row)
 }
 
+func (r *SQLRepository) GetReadingProgress(ctx context.Context, userID, storyID string) (domain.ReadingProgress, error) {
+	var progress domain.ReadingProgress
+	var finishedAt sql.NullFloat64
+	err := r.queryRow(ctx,
+		`SELECT user_id, story_id, position, progress_fraction, finished_at, updated_at
+		 FROM reading_progress WHERE user_id = ? AND story_id = ?`,
+		userID, storyID).
+		Scan(&progress.UserID, &progress.StoryID, &progress.Position, &progress.ProgressFraction, &finishedAt, &progress.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.ReadingProgress{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.ReadingProgress{}, err
+	}
+	progress.FinishedAt = floatPtr(finishedAt)
+	return progress, nil
+}
+
+func (r *SQLRepository) UpsertReadingProgress(ctx context.Context, progress domain.ReadingProgress) (domain.ReadingProgress, error) {
+	if progress.UserID == "" || progress.StoryID == "" || progress.Position < 0 {
+		return domain.ReadingProgress{}, ErrInvalidReadingProgress
+	}
+	var owns int
+	if err := r.queryRow(ctx,
+		`SELECT COUNT(*) FROM stories WHERE story_id = ? AND user_id = ?`,
+		progress.StoryID, progress.UserID).Scan(&owns); err != nil {
+		return domain.ReadingProgress{}, err
+	}
+	if owns == 0 {
+		return domain.ReadingProgress{}, ErrNotFound
+	}
+	var wordCount, wordsThroughPosition, exactMatches int
+	if err := r.queryRow(ctx,
+		`SELECT COUNT(*),
+		        COALESCE(SUM(CASE WHEN position <= ? THEN 1 ELSE 0 END), 0),
+		        COALESCE(SUM(CASE WHEN position = ? THEN 1 ELSE 0 END), 0)
+		 FROM story_tokens
+		 WHERE story_id = ? AND is_word = 1 AND COALESCE(item_key, '') <> ''`,
+		progress.Position, progress.Position, progress.StoryID).
+		Scan(&wordCount, &wordsThroughPosition, &exactMatches); err != nil {
+		return domain.ReadingProgress{}, err
+	}
+	if wordCount == 0 || exactMatches == 0 {
+		return domain.ReadingProgress{}, ErrInvalidReadingProgress
+	}
+	progress.ProgressFraction = float64(wordsThroughPosition) / float64(wordCount)
+	if progress.FinishedAt != nil {
+		progress.ProgressFraction = 1
+	}
+	if progress.UpdatedAt == 0 {
+		progress.UpdatedAt = float64(time.Now().UnixMilli()) / 1000
+	}
+	var finishedAt sql.NullFloat64
+	err := r.queryRow(ctx,
+		`INSERT INTO reading_progress(user_id, story_id, position, progress_fraction, finished_at, updated_at)
+		 VALUES(?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(user_id, story_id) DO UPDATE SET
+		   position = excluded.position,
+		   progress_fraction = excluded.progress_fraction,
+		   finished_at = COALESCE(reading_progress.finished_at, excluded.finished_at),
+		   updated_at = excluded.updated_at
+		 RETURNING user_id, story_id, position, progress_fraction, finished_at, updated_at`,
+		progress.UserID, progress.StoryID, progress.Position, progress.ProgressFraction,
+		nullFloat(progress.FinishedAt), progress.UpdatedAt).
+		Scan(&progress.UserID, &progress.StoryID, &progress.Position, &progress.ProgressFraction, &finishedAt, &progress.UpdatedAt)
+	if err != nil {
+		return domain.ReadingProgress{}, err
+	}
+	progress.FinishedAt = floatPtr(finishedAt)
+	return progress, nil
+}
+
 func (r *SQLRepository) ListImportedStories(ctx context.Context, userID string, opts domain.ListImportedStoriesOptions) ([]domain.Story, error) {
 	opts = normalizeListImportedStoriesOptions(opts)
 	query := `SELECT story_id, user_id, language, text, level, topic, estimated_coverage, generated_at, session_id
@@ -612,6 +684,9 @@ func (r *SQLRepository) ReplaceUserStory(ctx context.Context, userID, sessionID,
 			return err
 		}
 		if _, err := tx.exec(ctx, `DELETE FROM session_preview_guesses WHERE session_id = ?`, sessionID); err != nil {
+			return err
+		}
+		if _, err := tx.exec(ctx, `DELETE FROM reading_progress WHERE user_id = ? AND story_id = ?`, userID, storyID); err != nil {
 			return err
 		}
 		if _, err := tx.exec(ctx, `DELETE FROM reader_events WHERE story_id = ?`, storyID); err != nil {

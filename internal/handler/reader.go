@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/domain"
@@ -28,6 +29,7 @@ type (
 	sentenceSpanDTO    = oapigen.SentenceSpan
 	storyLoadResponse  = oapigen.StoryLoad
 	readerLevelDTO     = oapigen.ReaderSurfaceKnowledge
+	readingProgressDTO = oapigen.ReadingProgress
 )
 
 // getStory returns the tokenized story plus the reader's per-item knowledge map
@@ -64,6 +66,13 @@ func (h *Handler) getStory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	progress, err := h.repo.GetReadingProgress(r.Context(), userID, id)
+	if errors.Is(err, db.ErrNotFound) {
+		progress = domain.ReadingProgress{UserID: userID, StoryID: id, Position: firstReaderPosition(tokens)}
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
 
 	resp := storyLoadResponse{
 		StoryId:          story.StoryID,
@@ -72,6 +81,7 @@ func (h *Handler) getStory(w http.ResponseWriter, r *http.Request) {
 		Sentences:        make([]sentenceSpanDTO, 0),
 		Knowledge:        make(map[string]readerKnowledgeDTO, len(knowledge)),
 		SurfaceKnowledge: make(map[string]readerLevelDTO, len(surfaceLevels)),
+		ReadingProgress:  readingProgressFromDomain(progress),
 	}
 	for i, t := range tokens {
 		surfaceKey := readerTokenSurfaceKey(t)
@@ -91,6 +101,74 @@ func (h *Handler) getStory(w http.ResponseWriter, r *http.Request) {
 		resp.SurfaceKnowledge[readerFormKey(s.ItemKey, s.SurfaceKey)] = readerLevelDTO{Level: oapigen.ReaderSurfaceKnowledgeLevel(s.Level)}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// saveReadingProgress persists a server-backed bookmark without conflating an
+// exited reader, a finished text, an archived story, and a completed task
+// session. The requested position must still identify a word in the current
+// story revision, which prevents stale clients from saving arbitrary offsets
+// after a user edits and retokenizes a story.
+func (h *Handler) saveReadingProgress(w http.ResponseWriter, r *http.Request) {
+	var req oapigen.SaveReadingProgressRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
+		return
+	}
+	storyID := r.PathValue("id")
+	userID := h.currentUserID(r)
+	story, err := h.repo.GetStory(r.Context(), storyID)
+	if err != nil {
+		h.writeStoryLookupError(w, err)
+		return
+	}
+	if story.UserID != userID {
+		writeError(w, http.StatusNotFound, errors.New("story not found"))
+		return
+	}
+	now := float64(time.Now().UnixMilli()) / 1000
+	progress := domain.ReadingProgress{
+		UserID:    userID,
+		StoryID:   storyID,
+		Position:  req.Position,
+		UpdatedAt: now,
+	}
+	if req.Finished {
+		progress.ProgressFraction = 1
+		progress.FinishedAt = &now
+	}
+	progress, err = h.repo.UpsertReadingProgress(r.Context(), progress)
+	if err != nil {
+		if errors.Is(err, db.ErrInvalidReadingProgress) {
+			writeError(w, http.StatusBadRequest, errors.New("position must identify a word in this story"))
+			return
+		}
+		if errors.Is(err, db.ErrNotFound) {
+			h.writeStoryLookupError(w, err)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, readingProgressFromDomain(progress))
+}
+
+func readingProgressFromDomain(progress domain.ReadingProgress) readingProgressDTO {
+	dto := readingProgressDTO{
+		Position: progress.Position, ProgressFraction: progress.ProgressFraction, UpdatedAt: progress.UpdatedAt,
+	}
+	if progress.FinishedAt != nil {
+		dto.FinishedAt = *progress.FinishedAt
+	}
+	return dto
+}
+
+func firstReaderPosition(tokens []domain.StoryToken) int {
+	for _, token := range tokens {
+		if token.IsWord && token.ItemKey != "" {
+			return token.Position
+		}
+	}
+	return 0
 }
 
 // storySentenceAudio synthesizes the authoritative sentence containing a token

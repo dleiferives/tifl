@@ -86,6 +86,12 @@ func TestGetStoryReturnsTokensAndKnowledge(t *testing.T) {
 		SurfaceKnowledge map[string]struct {
 			Level string `json:"level"`
 		} `json:"surface_knowledge"`
+		ReadingProgress struct {
+			Position         int     `json:"position"`
+			ProgressFraction float64 `json:"progress_fraction"`
+			FinishedAt       float64 `json:"finished_at"`
+			UpdatedAt        float64 `json:"updated_at"`
+		} `json:"reading_progress"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatal(err)
@@ -96,6 +102,10 @@ func TestGetStoryReturnsTokensAndKnowledge(t *testing.T) {
 	}
 	if len(out.Tokens) != 3 {
 		t.Fatalf("want 3 tokens (incl. the space), got %d", len(out.Tokens))
+	}
+	if out.ReadingProgress.Position != 0 || out.ReadingProgress.ProgressFraction != 0 ||
+		out.ReadingProgress.FinishedAt != 0 || out.ReadingProgress.UpdatedAt != 0 {
+		t.Fatalf("new story should have an unsaved initial bookmark: %+v", out.ReadingProgress)
 	}
 	if out.Tokens[1].IsWord || out.Tokens[1].Key != "" {
 		t.Fatalf("middle token should be a non-word space: %+v", out.Tokens[1])
@@ -115,6 +125,78 @@ func TestGetStoryReturnsTokensAndKnowledge(t *testing.T) {
 	}
 	if _, ok := out.Knowledge["b"]; ok {
 		t.Fatal("unseen word 'b' should be absent from the knowledge map")
+	}
+}
+
+func TestSaveReadingProgressAndFinish(t *testing.T) {
+	srv, repo := newServer(t, false)
+	storyID := seedStory(t, repo)
+
+	put := func(body string) (int, struct {
+		Position         int     `json:"position"`
+		ProgressFraction float64 `json:"progress_fraction"`
+		FinishedAt       float64 `json:"finished_at"`
+		UpdatedAt        float64 `json:"updated_at"`
+	}) {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPut, srv.URL+"/api/v1/stories/"+storyID+"/reading-progress", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out struct {
+			Position         int     `json:"position"`
+			ProgressFraction float64 `json:"progress_fraction"`
+			FinishedAt       float64 `json:"finished_at"`
+			UpdatedAt        float64 `json:"updated_at"`
+		}
+		if resp.StatusCode == http.StatusOK {
+			if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return resp.StatusCode, out
+	}
+
+	status, saved := put(`{"position":0,"finished":false}`)
+	if status != http.StatusOK {
+		t.Fatalf("save bookmark: want 200, got %d", status)
+	}
+	if saved.Position != 0 || saved.ProgressFraction != 0.5 || saved.FinishedAt != 0 || saved.UpdatedAt == 0 {
+		t.Fatalf("saved bookmark mismatch: %+v", saved)
+	}
+
+	status, finished := put(`{"position":2,"finished":true}`)
+	if status != http.StatusOK || finished.Position != 2 || finished.ProgressFraction != 1 || finished.FinishedAt == 0 {
+		t.Fatalf("finished bookmark mismatch (status=%d): %+v", status, finished)
+	}
+
+	resp, err := http.Get(srv.URL + "/api/v1/stories/" + storyID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var loaded struct {
+		ReadingProgress struct {
+			Position   int     `json:"position"`
+			FinishedAt float64 `json:"finished_at"`
+		} `json:"reading_progress"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&loaded); err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ReadingProgress.Position != 2 || loaded.ReadingProgress.FinishedAt == 0 {
+		t.Fatalf("saved progress missing from story load: %+v", loaded.ReadingProgress)
+	}
+
+	status, _ = put(`{"position":1,"finished":false}`) // position 1 is whitespace
+	if status != http.StatusBadRequest {
+		t.Fatalf("non-word bookmark: want 400, got %d", status)
 	}
 }
 

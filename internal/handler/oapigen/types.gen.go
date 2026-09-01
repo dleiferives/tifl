@@ -1912,10 +1912,32 @@ type ReaderWordTiming struct {
 	Surface  string  `json:"surface"`
 }
 
+// ReadingProgress Server-backed current bookmark for one story. finished_at is independent from session completion and archiving.
+type ReadingProgress struct {
+	// FinishedAt Unix seconds when the learner explicitly finished the text
+	FinishedAt float64 `json:"finished_at,omitempty"`
+
+	// Position story token position to restore when the reader reopens
+	Position         int     `json:"position"`
+	ProgressFraction float64 `json:"progress_fraction"`
+
+	// UpdatedAt Unix seconds when this bookmark was last saved by the server
+	UpdatedAt float64 `json:"updated_at"`
+}
+
 // RespondConversationRequest defines model for RespondConversationRequest.
 type RespondConversationRequest struct {
 	// Text The learner's best English translation and any unclear parts.
 	Text string `json:"text"`
+}
+
+// SaveReadingProgressRequest defines model for SaveReadingProgressRequest.
+type SaveReadingProgressRequest struct {
+	// Finished record that the learner explicitly finished the text
+	Finished bool `json:"finished,omitempty"`
+
+	// Position current selectable story token position
+	Position int `json:"position"`
 }
 
 // SelectedItemCounts Persisted SelectedItems counts; background items are not currently stored.
@@ -2170,6 +2192,9 @@ type StoryLoad struct {
 	// Knowledge canonical key → canonical knowledge state; unseen items are absent
 	Knowledge map[string]ReaderKnowledge `json:"knowledge"`
 	Language  string                     `json:"language"`
+
+	// ReadingProgress Server-backed current bookmark for one story. finished_at is independent from session completion and archiving.
+	ReadingProgress ReadingProgress `json:"reading_progress"`
 
 	// Sentences Authoritative sentence spans for highlighting and sentence breakdown requests.
 	Sentences []SentenceSpan `json:"sentences"`
@@ -2554,6 +2579,9 @@ type UpdateStoryJSONRequestBody = UpdateStoryRequest
 
 // AlignStorySentencesJSONRequestBody defines body for AlignStorySentences for application/json ContentType.
 type AlignStorySentencesJSONRequestBody = ReaderAlignmentBatchRequest
+
+// SaveReadingProgressJSONRequestBody defines body for SaveReadingProgress for application/json ContentType.
+type SaveReadingProgressJSONRequestBody = SaveReadingProgressRequest
 
 // PostSentenceBreakdownJSONRequestBody defines body for PostSentenceBreakdown for application/json ContentType.
 type PostSentenceBreakdownJSONRequestBody PostSentenceBreakdownJSONBody

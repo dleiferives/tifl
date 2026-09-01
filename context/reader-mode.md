@@ -231,6 +231,27 @@ other. Audio and alignment responses are privately browser-cacheable for one day
 
 ---
 
+## Reading Lifecycle and Resume
+
+Leaving the reader is not completion. The toolbar's **Exit reader** action saves
+the active word and returns to the library; closing or hiding the page performs
+the same best-effort save. `GET /api/v1/stories/{id}` returns the server bookmark
+as `reading_progress`, and the client keeps a timestamped local copy as an
+offline fallback. The newer copy wins when a story is reopened.
+
+The explicit **Finished reading** action lives after the text, not in the
+toolbar. It records `reading_progress.finished_at` and full progress without
+completing the surrounding task session or hiding the story. Afterward the user
+may exit or archive the session-backed story. Archive remains a separate,
+reversible library operation.
+
+Bookmarks use `story_tokens.position`, never scroll pixels. This gives current
+stories a stable structural locator and leaves a migration path for publication
+chapter/spine locators when EPUB support arrives. Editing a user story resets its
+bookmark because the token positions belong to the prior tokenization.
+
+---
+
 ## Signal Collection: What the Reader Logs
 
 Every meaningful reader action generates a signal. These signals are the training

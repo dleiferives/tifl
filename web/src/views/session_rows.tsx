@@ -164,7 +164,9 @@ function SessionActions(props: {
         <a class="button-link" href={reviewHref(session.session_id)}>Review</a>
       </Show>
       <Show when={session.story_id && (session.status === "ready" || session.status === "reading")}>
-        <a class="button-link" href={readerHref(session.story_id || "", session.session_id)}>Reader</a>
+        <a class="button-link" href={readerHref(session.story_id || "", session.session_id)}>
+          {session.status === "reading" ? "Continue reading" : "Start reading"}
+        </a>
       </Show>
       <Show when={session.content_type === "phrase_set" && (session.status === "ready" || session.status === "reading")}>
         <a class="button-link" href={phrasesHref(session.session_id)}>Phrases</a>

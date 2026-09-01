@@ -25,6 +25,8 @@ type Store interface {
 	MarkReaderEventsProcessed(ctx context.Context, eventIDs []string, at float64) error
 	HasProcessedReaderEvents(ctx context.Context, userID, storyID string) (bool, error)
 	UpsertReaderSurfaceLevel(ctx context.Context, userID string, row domain.ReaderSurfaceLevel) error
+	GetReadingProgress(ctx context.Context, userID, storyID string) (domain.ReadingProgress, error)
+	UpsertReadingProgress(ctx context.Context, progress domain.ReadingProgress) (domain.ReadingProgress, error)
 	ListDefinitions(ctx context.Context, language, itemKey string) ([]domain.Definition, error)
 	UpsertDefinition(ctx context.Context, d domain.Definition) error
 	GetUserDefinition(ctx context.Context, userID, language, itemKey string) (domain.UserDefinition, error)

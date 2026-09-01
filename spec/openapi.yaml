@@ -1031,6 +1031,42 @@ paths:
           $ref: "#/components/responses/ServiceUnavailable"
         "500":
           $ref: "#/components/responses/InternalError"
+  /stories/{id}/reading-progress:
+    put:
+      summary: Save the caller's current position in a story
+      description: >
+        Upserts the server-backed reader bookmark for this story. Position must
+        identify a word token in the current story. Setting finished records an
+        explicit finished-reading timestamp; it does not complete or archive the
+        surrounding learning session. A later ordinary bookmark save preserves
+        the finished timestamp.
+      operationId: saveReadingProgress
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveReadingProgressRequest"
+      responses:
+        "200":
+          description: Saved reading progress
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadingProgress"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /stories/{id}/definition:
     get:
       summary: Resolve a word definition for the reader popup
@@ -2953,7 +2989,45 @@ components:
           type: object
           description: "StoryToken.form_key → exact-form level; unseen forms are absent"
           additionalProperties: { $ref: "#/components/schemas/ReaderSurfaceKnowledge" }
-      required: [story_id, language, tokens, sentences, knowledge, surface_knowledge]
+        reading_progress:
+          $ref: "#/components/schemas/ReadingProgress"
+      required: [story_id, language, tokens, sentences, knowledge, surface_knowledge, reading_progress]
+    ReadingProgress:
+      type: object
+      description: >
+        Server-backed current bookmark for one story. finished_at is independent
+        from session completion and archiving.
+      properties:
+        position:
+          type: integer
+          minimum: 0
+          description: story token position to restore when the reader reopens
+        progress_fraction:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+        finished_at:
+          type: number
+          format: double
+          description: Unix seconds when the learner explicitly finished the text
+        updated_at:
+          type: number
+          format: double
+          description: Unix seconds when this bookmark was last saved by the server
+      required: [position, progress_fraction, updated_at]
+    SaveReadingProgressRequest:
+      type: object
+      properties:
+        position:
+          type: integer
+          minimum: 0
+          description: current selectable story token position
+        finished:
+          type: boolean
+          default: false
+          description: record that the learner explicitly finished the text
+      required: [position]
     ReaderEvent:
       type: object
       description: One logged reader interaction.

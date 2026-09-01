@@ -45,6 +45,10 @@ var ErrConversationConflict = errors.New("db: conversation advanced")
 // because task generation is active or the story/session relationship changed.
 var ErrUserStoryConflict = errors.New("db: user story conflict")
 
+// ErrInvalidReadingProgress means a bookmark does not identify a selectable
+// word in the story's current tokenization.
+var ErrInvalidReadingProgress = errors.New("db: invalid reading progress")
+
 // errNestedTx is returned when Tx is called from inside a Tx callback.
 var errNestedTx = errors.New("db: nested Tx is not supported")
 
@@ -119,6 +123,11 @@ type Repository interface {
 	// changing canonical acquisition signals.
 	LoadReaderSurfaceLevels(ctx context.Context, userID, language string) ([]domain.ReaderSurfaceLevel, error)
 	UpsertReaderSurfaceLevel(ctx context.Context, userID string, row domain.ReaderSurfaceLevel) error
+	// Reading progress is the server-backed current bookmark for a story. It is
+	// deliberately separate from session completion and the append-only reader
+	// event stream.
+	GetReadingProgress(ctx context.Context, userID, storyID string) (domain.ReadingProgress, error)
+	UpsertReadingProgress(ctx context.Context, progress domain.ReadingProgress) (domain.ReadingProgress, error)
 
 	// Knowledge predictions — cached predictor outputs, tenant-scoped by user.
 	// List accepts an optional item id filter; an empty filter returns all cached

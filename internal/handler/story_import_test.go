@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -343,6 +344,11 @@ func TestUpdateUserAddedStoryRetokenizesAndResetsDerivedSessionState(t *testing.
 	if err := repo.MarkSessionComplete(context.Background(), domain.LocalUserID, imported.SessionID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := repo.UpsertReadingProgress(context.Background(), domain.ReadingProgress{
+		UserID: domain.LocalUserID, StoryID: imported.StoryID, Position: 0,
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	req, err := http.NewRequest(http.MethodPatch, srv.URL+"/api/v1/stories/"+imported.StoryID,
 		bytes.NewReader([]byte(`{"text":"Gamma delta"}`)))
@@ -395,6 +401,9 @@ func TestUpdateUserAddedStoryRetokenizesAndResetsDerivedSessionState(t *testing.
 		if strings.HasPrefix(stage.Stage, domain.StageTaskPrefix) {
 			t.Fatalf("stale task checkpoint remains: %+v", stage)
 		}
+	}
+	if _, err := repo.GetReadingProgress(context.Background(), domain.LocalUserID, imported.StoryID); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("stale reading progress error = %v, want ErrNotFound", err)
 	}
 }
 
