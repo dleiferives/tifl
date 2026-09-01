@@ -191,25 +191,6 @@ func TestStorySentenceAlignmentCachesSynthesizedAudioForPlayback(t *testing.T) {
 	}
 }
 
-func TestStoryWordAudioSynthesizesOnlyAuthoritativeWord(t *testing.T) {
-	audioGateway := &fakeConversationSpeech{}
-	srv, repo := newServer(t, false, handler.WithSpeech(audioGateway))
-	storyID := seedStory(t, repo)
-
-	resp, err := http.Get(srv.URL + "/api/v1/stories/" + storyID + "/words/2/audio")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode != http.StatusOK || string(data) != "mp3-data" || audioGateway.synthesizedText != "b" {
-		t.Fatalf("word audio = status %d, text %q, body %q", resp.StatusCode, audioGateway.synthesizedText, data)
-	}
-}
-
 func TestPostReaderEventsDerivesSignals(t *testing.T) {
 	srv, repo := newServer(t, false)
 	storyID := seedStory(t, repo)

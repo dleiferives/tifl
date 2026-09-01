@@ -166,16 +166,6 @@ export async function getStorySentenceAlignment(
   );
 }
 
-export async function getStoryWordAudio(
-  storyID: string,
-  position: number,
-  voiceModel = "default",
-): Promise<Blob> {
-  return getAuthenticatedAudio(
-    `/stories/${encodeURIComponent(storyID)}/words/${position}/audio?voice_model=${encodeURIComponent(voiceModel)}`,
-  );
-}
-
 async function getAuthenticatedAudio(audioURL: string): Promise<Blob> {
   let response = await sendRequest(audioURL, { headers: { Accept: "audio/mpeg" } });
   if (response.status === 401 && await refreshAccessToken()) {

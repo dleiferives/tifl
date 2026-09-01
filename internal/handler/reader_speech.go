@@ -16,8 +16,6 @@ import (
 	"github.com/dleiferives/tifl/internal/speech"
 )
 
-const maxReaderWordTTSRunes = 256
-
 type readerSpeechAsset struct {
 	Audio     speech.Audio
 	Alignment speech.Alignment
@@ -64,13 +62,6 @@ type readerSentenceSpeechTarget struct {
 	model    string
 }
 
-type readerWordSpeechTarget struct {
-	cacheKey string
-	story    domain.Story
-	token    domain.StoryToken
-	model    string
-}
-
 func (h *Handler) readerSentenceSpeechTarget(w http.ResponseWriter, r *http.Request) (readerSentenceSpeechTarget, bool) {
 	story, tokens, model, position, ok := h.readerSpeechContext(w, r)
 	if !ok {
@@ -87,26 +78,6 @@ func (h *Handler) readerSentenceSpeechTarget(w http.ResponseWriter, r *http.Requ
 	}
 	cacheKey := fmt.Sprintf("%s\x00%s\x00sentence:%d\x00%s", h.currentUserID(r), story.StoryID, span.Index, model)
 	return readerSentenceSpeechTarget{cacheKey: cacheKey, story: story, tokens: tokens, span: span, model: model}, true
-}
-
-func (h *Handler) readerWordSpeechTarget(w http.ResponseWriter, r *http.Request) (readerWordSpeechTarget, bool) {
-	story, tokens, model, position, ok := h.readerSpeechContext(w, r)
-	if !ok {
-		return readerWordSpeechTarget{}, false
-	}
-	for _, token := range tokens {
-		if token.Position != position || !token.IsWord {
-			continue
-		}
-		if len([]rune(token.Surface)) > maxReaderWordTTSRunes {
-			writeError(w, http.StatusBadRequest, errors.New("word is too long for speech"))
-			return readerWordSpeechTarget{}, false
-		}
-		cacheKey := fmt.Sprintf("%s\x00%s\x00word:%d\x00%s", h.currentUserID(r), story.StoryID, token.Position, model)
-		return readerWordSpeechTarget{cacheKey: cacheKey, story: story, token: token, model: model}, true
-	}
-	writeError(w, http.StatusNotFound, errors.New("word not found"))
-	return readerWordSpeechTarget{}, false
 }
 
 func (h *Handler) readerSpeechContext(w http.ResponseWriter, r *http.Request) (domain.Story, []domain.StoryToken, string, int, bool) {
@@ -187,26 +158,6 @@ func (h *Handler) storySentenceAlignment(w http.ResponseWriter, r *http.Request)
 		SentenceIndex: target.span.Index,
 		Words:         readerWordTimings(target.tokens, target.span, asset.Alignment.Words),
 	})
-}
-
-func (h *Handler) storyWordAudio(w http.ResponseWriter, r *http.Request) {
-	target, ok := h.readerWordSpeechTarget(w, r)
-	if !ok {
-		return
-	}
-	if asset, found := h.readerSpeech.get(target.cacheKey); found {
-		writeReaderAudio(w, asset.Audio)
-		return
-	}
-	audio, err := h.speech.Synthesize(r.Context(), speech.SynthesisInput{
-		Text: target.token.Surface, Language: target.story.Language, Model: target.model,
-	})
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err)
-		return
-	}
-	h.readerSpeech.put(target.cacheKey, readerSpeechAsset{Audio: audio})
-	writeReaderAudio(w, audio)
 }
 
 func writeReaderAudio(w http.ResponseWriter, audio speech.Audio) {

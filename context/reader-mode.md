@@ -34,7 +34,7 @@ assumes the user is reading, not clicking around.
 | `w` | Mark current word as well-known (no further targeting) |
 | `i` | Mark current word as ignored (pronouns, particles, proper nouns — not worth tracking) |
 | `s` | Generate or replay TTS for the current sentence; highlight words from forced-alignment timings |
-| `Shift+s` | Generate or replay TTS for only the current word |
+| `Shift+s` | Play only the current word's aligned segment from the full-sentence recording |
 
 **Definition popup behavior**: Space toggles it. When the cursor moves to a new
 word, the popup stays open if it was open — it just updates to the new word's
@@ -216,9 +216,11 @@ Sentence speech is synthesized through the configured audio server, then sent to
 its Greek MFA forced-alignment endpoint. The server maps the resulting word
 start/end seconds back to authoritative story-token positions. While audio plays,
 the client marks only the currently spoken token without inserting any toolbar
-status element or otherwise changing reader layout. Sentence and word audio are
-cached in the browser for repeat shortcuts; a bounded server cache lets the audio
-route reuse the exact bytes that were aligned.
+status element or otherwise changing reader layout. Both speech shortcuts reuse
+the same full-sentence audio and timings cached in the browser; a bounded server
+cache lets the audio route reuse the exact bytes that were aligned. `Shift+s`
+seeks to the current word's MFA start time and stops at its MFA end time—it never
+synthesizes an isolated word.
 
 ---
 

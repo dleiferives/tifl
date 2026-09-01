@@ -1264,45 +1264,6 @@ paths:
           $ref: "#/components/responses/BadGateway"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
-  /stories/{id}/words/{position}/audio:
-    get:
-      summary: Generate or retrieve speech for one reader word
-      description: >
-        Resolves the authoritative word at the supplied story token position
-        and synthesizes only that word with the learner's selected TTS model.
-      operationId: getStoryWordAudio
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string }
-        - name: position
-          in: path
-          required: true
-          schema: { type: integer, minimum: 0 }
-        - name: voice_model
-          in: query
-          required: false
-          description: Client cache variant; authorization and the actual model remain server-owned.
-          schema: { type: string }
-      responses:
-        "200":
-          description: Synthesized word audio
-          content:
-            audio/mpeg:
-              schema:
-                type: string
-                format: binary
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "502":
-          $ref: "#/components/responses/BadGateway"
-        "503":
-          $ref: "#/components/responses/ServiceUnavailable"
   /stories/{id}/word:
     post:
       summary: Deep morphological/etymological breakdown of a word

@@ -2485,12 +2485,6 @@ type PostWordBreakdownJSONBody struct {
 	Key string `json:"key"`
 }
 
-// GetStoryWordAudioParams defines parameters for GetStoryWordAudio.
-type GetStoryWordAudioParams struct {
-	// VoiceModel Client cache variant; authorization and the actual model remain server-owned.
-	VoiceModel string `form:"voice_model,omitempty" json:"voice_model,omitempty"`
-}
-
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody = Credentials
 

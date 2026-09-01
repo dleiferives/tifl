@@ -9,7 +9,6 @@ import {
   getStory,
   getStorySentenceAudio,
   getStorySentenceAlignment,
-  getStoryWordAudio,
   postReaderEvents,
   putDictionaryEntry,
   setReaderSurfaceKnowledge,
@@ -126,8 +125,6 @@ export function ReaderView(props: {
   const sentenceAudioURLs = new Map<string, string>();
   const sentenceAudioRequests = new Map<string, Promise<{ url: string; words: ReaderWordTiming[] }>>();
   const sentenceAlignments = new Map<string, ReaderWordTiming[]>();
-  const wordAudioURLs = new Map<string, string>();
-  const wordAudioRequests = new Map<string, Promise<string>>();
   let sentenceAudio: HTMLAudioElement | null = null;
   let sentencePlaybackToken = 0;
   let sentenceAnimationFrame: number | undefined;
@@ -155,12 +152,9 @@ export function ReaderView(props: {
     if (sentenceAnimationFrame !== undefined) cancelAnimationFrame(sentenceAnimationFrame);
     clearSpeakingWord();
     for (const objectURL of sentenceAudioURLs.values()) URL.revokeObjectURL(objectURL);
-    for (const objectURL of wordAudioURLs.values()) URL.revokeObjectURL(objectURL);
     sentenceAudioURLs.clear();
     sentenceAudioRequests.clear();
     sentenceAlignments.clear();
-    wordAudioURLs.clear();
-    wordAudioRequests.clear();
     void flush(true);
   });
 
@@ -689,43 +683,74 @@ export function ReaderView(props: {
   async function playCurrentWord() {
     const token = currentToken();
     if (!token?.is_word) return;
+    const span = sentenceSpans().find((candidate) =>
+      token.position >= candidate.start_position && token.position < candidate.end_position);
+    if (!span) {
+      appStore.showToast("The current sentence could not be found.", "error");
+      return;
+    }
     const playbackToken = beginSpeechPlayback();
-    const model = appStore.profile()?.tts_model || "default";
-    const cacheKey = `${model}:${token.position}`;
     try {
-      let objectURL = wordAudioURLs.get(cacheKey);
-      if (!objectURL) {
-        let request = wordAudioRequests.get(cacheKey);
-        if (!request) {
-          request = getStoryWordAudio(props.storyId, token.position, model)
-            .then((audio) => {
-              const url = URL.createObjectURL(audio);
-              wordAudioURLs.set(cacheKey, url);
-              return url;
-            })
-            .finally(() => wordAudioRequests.delete(cacheKey));
-          wordAudioRequests.set(cacheKey, request);
-        }
-        objectURL = await request;
-      }
+      const speech = await loadSentenceSpeech(span);
       if (playbackToken !== sentencePlaybackToken) return;
-      const player = new Audio(objectURL);
+      const timing = speech.words.find((word) => word.position === token.position);
+      if (!timing || timing.end <= timing.start) {
+        finishSpeechPlayback(playbackToken);
+        appStore.showToast("No sentence alignment is available for this word.", "error");
+        return;
+      }
+      const player = new Audio(speech.url);
+      player.preload = "auto";
       sentenceAudio = player;
+      await waitForAudioMetadata(player);
+      if (playbackToken !== sentencePlaybackToken) return;
+      player.currentTime = timing.start;
       setSpeakingWord(token.position);
       player.onended = () => finishSpeechPlayback(playbackToken);
       player.onerror = () => {
         if (playbackToken === sentencePlaybackToken) {
           finishSpeechPlayback(playbackToken);
-          appStore.showToast("Word audio could not be played.", "error");
+          appStore.showToast("The aligned word segment could not be played.", "error");
         }
       };
       await player.play();
+      stopAtWordEnd(player, timing.end, playbackToken);
     } catch {
       if (playbackToken === sentencePlaybackToken) {
         finishSpeechPlayback(playbackToken);
-        appStore.showToast("Word audio could not be generated.", "error");
+        appStore.showToast("The aligned word segment could not be played.", "error");
       }
     }
+  }
+
+  function waitForAudioMetadata(player: HTMLAudioElement): Promise<void> {
+    if (player.readyState >= HTMLMediaElement.HAVE_METADATA) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const loaded = () => {
+        player.removeEventListener("error", failed);
+        resolve();
+      };
+      const failed = () => {
+        player.removeEventListener("loadedmetadata", loaded);
+        reject(new Error("audio metadata unavailable"));
+      };
+      player.addEventListener("loadedmetadata", loaded, { once: true });
+      player.addEventListener("error", failed, { once: true });
+      player.load();
+    });
+  }
+
+  function stopAtWordEnd(player: HTMLAudioElement, end: number, playbackToken: number) {
+    const frame = () => {
+      if (playbackToken !== sentencePlaybackToken || player.paused || player.ended) return;
+      if (player.currentTime >= end) {
+        player.pause();
+        finishSpeechPlayback(playbackToken);
+        return;
+      }
+      sentenceAnimationFrame = requestAnimationFrame(frame);
+    };
+    frame();
   }
 
   async function loadSentenceSpeech(span: SentenceSpan): Promise<{ url: string; words: ReaderWordTiming[] }> {
