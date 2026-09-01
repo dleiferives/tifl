@@ -85,6 +85,11 @@ export async function listLLMModels(): Promise<APIResponse<"listLLMModels", 200>
 }
 
 export type Conversation = APIResponse<"getConversation", 200>;
+export type ConversationSummary = APIResponse<"listConversations", 200>["conversations"][number];
+
+export async function listConversations(): Promise<APIResponse<"listConversations", 200>> {
+  return apiFetch<APIResponse<"listConversations", 200>>("/conversations");
+}
 
 export async function startConversation(
   request: APIRequest<"startConversation"> = {},
@@ -119,6 +124,20 @@ export async function respondToConversationAudio(
   }));
   return apiFetch<APIResponse<"respondToConversationAudio", 200>>(
     `/conversations/${encodeURIComponent(conversationID)}/respond/audio`,
+    { method: "POST", body: form },
+  );
+}
+
+export async function transcribeConversationAudio(
+  conversationID: string,
+  audio: Blob,
+): Promise<APIResponse<"transcribeConversationAudio", 200>> {
+  const form = new FormData();
+  form.set("file", new File([audio], conversationAudioFilename(audio.type), {
+    type: audio.type || "application/octet-stream",
+  }));
+  return apiFetch<APIResponse<"transcribeConversationAudio", 200>>(
+    `/conversations/${encodeURIComponent(conversationID)}/transcribe`,
     { method: "POST", body: form },
   );
 }

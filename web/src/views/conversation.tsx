@@ -3,10 +3,13 @@ import {
   APIError,
   getConversation,
   getConversationTurnAudio,
+  listConversations,
   respondToConversation,
   respondToConversationAudio,
   startConversation,
+  transcribeConversationAudio,
   type Conversation,
+  type ConversationSummary,
 } from "../api";
 import { routeHref } from "../router";
 import { appStore } from "../store";
@@ -15,6 +18,10 @@ type ConversationTurn = Conversation["turns"][number];
 
 export function ConversationView(props: { conversationId?: string }) {
   const [conversation, setConversation] = createSignal<Conversation | null>(null);
+  const [conversationHistory, setConversationHistory] = createSignal<ConversationSummary[]>([]);
+  const [historyLoading, setHistoryLoading] = createSignal(false);
+  const [topic, setTopic] = createSignal("");
+  const [sourceText, setSourceText] = createSignal("");
   const [input, setInput] = createSignal("");
   const [loading, setLoading] = createSignal(Boolean(props.conversationId));
   const [submitting, setSubmitting] = createSignal(false);
@@ -22,6 +29,8 @@ export function ConversationView(props: { conversationId?: string }) {
   const [showGreek, setShowGreek] = createSignal(true);
   const [readerFocus, setReaderFocus] = createSignal(false);
   const [audioFirst, setAudioFirst] = createSignal(false);
+  const [fullAuto, setFullAuto] = createSignal(false);
+  const [autoStatus, setAutoStatus] = createSignal("");
   const [speakingTurn, setSpeakingTurn] = createSignal("");
   const [recording, setRecording] = createSignal(false);
   const [requestingMicrophone, setRequestingMicrophone] = createSignal(false);
@@ -30,12 +39,20 @@ export function ConversationView(props: { conversationId?: string }) {
   let audioElement: HTMLAudioElement | null = null;
   let playbackToken = 0;
   let microphoneRequestToken = 0;
+  let autoCycleToken = 0;
+  let autoAnimationFrame = 0;
+  let autoAudioContext: AudioContext | null = null;
   let disposed = false;
   const audioObjectURLs = new Map<string, string>();
 
   const resetTransientMedia = () => {
     playbackToken++;
     microphoneRequestToken++;
+    autoCycleToken++;
+    cancelAnimationFrame(autoAnimationFrame);
+    autoAnimationFrame = 0;
+    void autoAudioContext?.close();
+    autoAudioContext = null;
     audioElement?.pause();
     audioElement = null;
     setSpeakingTurn("");
@@ -48,6 +65,7 @@ export function ConversationView(props: { conversationId?: string }) {
     microphoneStream = null;
     setRecording(false);
     setRequestingMicrophone(false);
+    setAutoStatus("");
     for (const objectURL of audioObjectURLs.values()) URL.revokeObjectURL(objectURL);
     audioObjectURLs.clear();
   };
@@ -65,6 +83,7 @@ export function ConversationView(props: { conversationId?: string }) {
     } else {
       setLoading(false);
       setError("");
+      void loadHistory();
     }
   });
   onCleanup(() => {
@@ -88,12 +107,29 @@ export function ConversationView(props: { conversationId?: string }) {
     }
   };
 
+  const loadHistory = async () => {
+    setHistoryLoading(true);
+    setError("");
+    const finish = appStore.beginOperation();
+    try {
+      setConversationHistory((await listConversations()).conversations);
+    } catch (cause) {
+      setError(conversationError(cause, "load earlier conversations"));
+    } finally {
+      finish();
+      setHistoryLoading(false);
+    }
+  };
+
   const start = async () => {
     setSubmitting(true);
     setError("");
     const finish = appStore.beginOperation();
     try {
-      const next = await startConversation();
+      const next = await startConversation({
+        ...(topic().trim() ? { topic: topic().trim() } : {}),
+        ...(sourceText().trim() ? { source_text: sourceText().trim() } : {}),
+      });
       setConversation(next);
       window.location.hash = routeHref(`/conversation/${encodeURIComponent(next.conversation_id)}`);
     } catch (cause) {
@@ -117,7 +153,11 @@ export function ConversationView(props: { conversationId?: string }) {
       const next = await respondToConversation(current.conversation_id, { text });
       setConversation(next);
       setInput("");
-      playLatestWhenEnabled(next);
+      if (fullAuto()) {
+        void beginAutoCycle(next);
+      } else {
+        playLatestWhenEnabled(next);
+      }
     } catch (cause) {
       setError(conversationError(cause, "send your response"));
     } finally {
@@ -136,32 +176,54 @@ export function ConversationView(props: { conversationId?: string }) {
     setSpeakingTurn(turn.turn_id);
     setError("");
     try {
-      let objectURL = audioObjectURLs.get(turn.turn_id);
-      if (!objectURL) {
-        const audio = await getConversationTurnAudio(turn.audio_url);
-        if (disposed || token !== playbackToken) return;
-        objectURL = URL.createObjectURL(audio);
-        audioObjectURLs.set(turn.turn_id, objectURL);
-      }
-      if (disposed || token !== playbackToken) return;
-      const player = new Audio(objectURL);
-      audioElement = player;
-      player.onended = () => {
-        if (token === playbackToken) setSpeakingTurn("");
-      };
-      player.onerror = () => {
-        if (token === playbackToken) {
-          setSpeakingTurn("");
-          setError("The generated Greek audio could not be played.");
-        }
-      };
-      await player.play();
+      await playTurnPart(turn, "passage", token);
     } catch (cause) {
       if (token === playbackToken) {
         setSpeakingTurn("");
         setError(conversationError(cause, "play this passage"));
       }
+    } finally {
+      if (token === playbackToken) setSpeakingTurn("");
     }
+  };
+
+  const playTurnPart = async (
+    turn: ConversationTurn,
+    part: "passage" | "feedback" | "prompt",
+    token: number,
+  ) => {
+    if (!turn.audio_url) throw new Error("Server speech is not configured for this conversation.");
+    const key = `${turn.turn_id}:${part}`;
+    let objectURL = audioObjectURLs.get(key);
+    if (!objectURL) {
+      const separator = turn.audio_url.includes("?") ? "&" : "?";
+      const audio = await getConversationTurnAudio(`${turn.audio_url}${separator}part=${part}`);
+      if (disposed || token !== playbackToken) return;
+      objectURL = URL.createObjectURL(audio);
+      audioObjectURLs.set(key, objectURL);
+    }
+    if (disposed || token !== playbackToken) return;
+    await new Promise<void>((resolve, reject) => {
+      const player = new Audio(objectURL);
+      audioElement = player;
+      player.onended = () => resolve();
+      player.onerror = () => reject(new Error("The generated coaching audio could not be played."));
+      player.play().catch(reject);
+    });
+  };
+
+  const narrateTurn = async (turn: ConversationTurn, token: number) => {
+    const parts: Array<"passage" | "feedback" | "prompt"> = [];
+    if (turn.english_text) parts.push("feedback");
+    if (turn.greek_text) parts.push("passage");
+    if (turn.prompt_text) parts.push("prompt");
+    setSpeakingTurn(turn.turn_id);
+    setAutoStatus("Playing the coach’s turn…");
+    for (const part of parts) {
+      if (!fullAuto() || token !== autoCycleToken) return;
+      await playTurnPart(turn, part, playbackToken);
+    }
+    if (token === autoCycleToken) setSpeakingTurn("");
   };
 
   const playLatestWhenEnabled = (detail: Conversation) => {
@@ -177,6 +239,19 @@ export function ConversationView(props: { conversationId?: string }) {
     setShowGreek(false);
     const detail = conversation();
     if (detail) playLatestWhenEnabled(detail);
+  };
+
+  const toggleFullAuto = () => {
+    const enabled = !fullAuto();
+    setFullAuto(enabled);
+    if (!enabled) {
+      resetTransientMedia();
+      return;
+    }
+    setAudioFirst(false);
+    setShowGreek(false);
+    const detail = conversation();
+    if (detail) void beginAutoCycle(detail);
   };
 
   const startRecording = async () => {
@@ -254,6 +329,151 @@ export function ConversationView(props: { conversationId?: string }) {
     }
   };
 
+  const beginAutoCycle = async (detail: Conversation) => {
+    const latest = [...detail.turns].reverse().find((turn) => turn.role === "assistant");
+    if (!latest || !fullAuto()) return;
+    const cycle = ++autoCycleToken;
+    const playToken = ++playbackToken;
+    audioElement?.pause();
+    setError("");
+    try {
+      await narrateTurn(latest, cycle);
+      if (!fullAuto() || cycle !== autoCycleToken || playToken !== playbackToken) return;
+      await collectAutoResponse(detail, latest, cycle);
+    } catch (cause) {
+      if (fullAuto() && cycle === autoCycleToken) {
+        setAutoStatus("");
+        setSpeakingTurn("");
+        setError(conversationError(cause, "run Full auto mode"));
+      }
+    }
+  };
+
+  const collectAutoResponse = async (
+    detail: Conversation,
+    turn: ConversationTurn,
+    cycle: number,
+  ) => {
+    let accumulated = input().trim();
+    while (fullAuto() && cycle === autoCycleToken) {
+      setAutoStatus(accumulated
+        ? "Keep speaking, then say “pass” when your answer is ready."
+        : "Listening — answer in English, say “repeat” to replay, or “pass” when done.");
+      const audio = await recordAutoChunk(cycle);
+      if (!fullAuto() || cycle !== autoCycleToken) return;
+      setAutoStatus("Transcribing…");
+      const transcript = (await transcribeConversationAudio(detail.conversation_id, audio)).text.trim();
+      if (!fullAuto() || cycle !== autoCycleToken) return;
+      const command = normalizeVoiceCommand(transcript);
+      if (command === "repeat") {
+        const playToken = ++playbackToken;
+        audioElement?.pause();
+        await narrateTurn(turn, cycle);
+        if (playToken !== playbackToken) return;
+        continue;
+      }
+
+      const passed = /(?:^|\s)pass[.!?\s]*$/i.test(transcript);
+      const spoken = passed ? transcript.replace(/(?:^|\s)pass[.!?\s]*$/i, "").trim() : transcript;
+      if (spoken) {
+        accumulated = [accumulated, spoken].filter(Boolean).join(" ");
+        setInput(accumulated);
+      }
+      if (!passed) continue;
+
+      setAutoStatus("Coach is thinking…");
+      setSubmitting(true);
+      const finish = appStore.beginOperation();
+      let next: Conversation;
+      try {
+        next = await respondToConversation(detail.conversation_id, {
+          text: accumulated || "I don't know what that meant.",
+        });
+      } finally {
+        finish();
+        setSubmitting(false);
+      }
+      if (!fullAuto() || cycle !== autoCycleToken) return;
+      setConversation(next);
+      setInput("");
+      void beginAutoCycle(next);
+      return;
+    }
+  };
+
+  const recordAutoChunk = async (cycle: number): Promise<Blob> => {
+    if (!navigator.mediaDevices?.getUserMedia || !("MediaRecorder" in window)) {
+      throw new Error("This browser does not support microphone recording.");
+    }
+    const requestToken = ++microphoneRequestToken;
+    setRequestingMicrophone(true);
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } finally {
+      setRequestingMicrophone(false);
+    }
+    if (disposed || !fullAuto() || cycle !== autoCycleToken || requestToken !== microphoneRequestToken) {
+      stream.getTracks().forEach((track) => track.stop());
+      throw new Error("Full auto listening was cancelled.");
+    }
+    microphoneStream = stream;
+    const candidates = ["audio/webm;codecs=opus", "audio/mp4", "audio/ogg;codecs=opus"];
+    const mimeType = candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate));
+    const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+    mediaRecorder = recorder;
+    const chunks: BlobPart[] = [];
+    recorder.addEventListener("dataavailable", (event) => {
+      if (event.data.size > 0) chunks.push(event.data);
+    });
+    const stopped = new Promise<Blob>((resolve) => {
+      recorder.addEventListener("stop", () => {
+        cancelAnimationFrame(autoAnimationFrame);
+        autoAnimationFrame = 0;
+        stream.getTracks().forEach((track) => track.stop());
+        if (microphoneStream === stream) microphoneStream = null;
+        if (mediaRecorder === recorder) mediaRecorder = null;
+        setRecording(false);
+        void autoAudioContext?.close();
+        autoAudioContext = null;
+        resolve(new Blob(chunks, { type: recorder.mimeType || mimeType || "audio/webm" }));
+      }, { once: true });
+    });
+
+    const AudioContextClass = window.AudioContext;
+    autoAudioContext = new AudioContextClass();
+    const analyser = autoAudioContext.createAnalyser();
+    analyser.fftSize = 1024;
+    autoAudioContext.createMediaStreamSource(stream).connect(analyser);
+    const samples = new Uint8Array(analyser.fftSize);
+    const startedAt = performance.now();
+    let heardSpeech = false;
+    let lastSpeechAt = startedAt;
+    const monitor = () => {
+      if (recorder.state !== "recording") return;
+      analyser.getByteTimeDomainData(samples);
+      let sum = 0;
+      for (const sample of samples) {
+        const normalized = (sample - 128) / 128;
+        sum += normalized * normalized;
+      }
+      const now = performance.now();
+      if (Math.sqrt(sum / samples.length) > 0.025) {
+        heardSpeech = true;
+        lastSpeechAt = now;
+      }
+      if ((heardSpeech && now - lastSpeechAt > 1100) || now - startedAt > 20_000) {
+        recorder.stop();
+        return;
+      }
+      autoAnimationFrame = requestAnimationFrame(monitor);
+    };
+    recorder.start(250);
+    setRecording(true);
+    autoAnimationFrame = requestAnimationFrame(monitor);
+    return stopped;
+  };
+
   return (
     <section class={`conversation-view${readerFocus() ? " reader-focus" : ""}`}>
       <header class="view-heading conversation-heading">
@@ -272,15 +492,71 @@ export function ConversationView(props: { conversationId?: string }) {
       </Show>
 
       <Show when={!props.conversationId && !conversation()}>
-        <div class="conversation-intro">
-          <div>
-            <h2>Listen, interpret, repair, continue</h2>
-            <p>The coach gives you a short Greek passage. Tell it what you understood in English and name anything that was unclear.</p>
-            <p>When you miss something, it opens a smaller story around that exact gap. Once it clicks, you climb back to the original passage.</p>
-          </div>
-          <button class="primary-button" type="button" disabled={submitting()} onClick={() => void start()}>
-            {submitting() ? "Writing the opening…" : "Start a Greek story"}
-          </button>
+        <div class="conversation-home">
+          <form class="conversation-starter" onSubmit={(event) => { event.preventDefault(); void start(); }}>
+            <div>
+              <h2>Choose what the story teaches</h2>
+              <p>Give the coach a subject, paste a story or passage you want to learn, or use both. Leave both blank when you want a surprise.</p>
+            </div>
+            <label class="field">
+              <span>Topic</span>
+              <input
+                type="text"
+                maxlength="300"
+                value={topic()}
+                placeholder="e.g. ordering breakfast in Thessaloniki"
+                onInput={(event) => setTopic(event.currentTarget.value)}
+              />
+            </label>
+            <label class="field">
+              <span>Existing story or text</span>
+              <textarea
+                rows="7"
+                maxlength="30000"
+                value={sourceText()}
+                placeholder="Paste Greek text here. The coach will adapt it into short comprehension turns."
+                onInput={(event) => setSourceText(event.currentTarget.value)}
+              />
+            </label>
+            <div class="conversation-start-actions">
+              <span>{sourceText().length.toLocaleString()} / 30,000 characters</span>
+              <button class="primary-button" type="submit" disabled={submitting()}>
+                {submitting() ? "Writing the opening…" : "Start story coach"}
+              </button>
+            </div>
+          </form>
+
+          <section class="conversation-library" aria-labelledby="conversation-library-title">
+            <div class="conversation-library-heading">
+              <div>
+                <h2 id="conversation-library-title">Continue a story</h2>
+                <p>Every thread keeps its transcript and repair depth.</p>
+              </div>
+              <button class="secondary-button" type="button" disabled={historyLoading()} onClick={() => void loadHistory()}>
+                {historyLoading() ? "Loading…" : "Refresh"}
+              </button>
+            </div>
+            <Show when={!historyLoading() && conversationHistory().length === 0}>
+              <p class="conversation-empty">Your earlier Story Coach conversations will appear here.</p>
+            </Show>
+            <div class="conversation-history">
+              <For each={conversationHistory()}>
+                {(item) => (
+                  <a class="conversation-history-card" href={routeHref(`/conversation/${encodeURIComponent(item.conversation_id)}`)}>
+                    <div>
+                      <strong>{item.topic || item.story_summary || "Greek story"}</strong>
+                      <p>{item.story_summary || "Opening passage ready"}</p>
+                    </div>
+                    <div class="conversation-history-meta">
+                      <span>{item.turn_count} {item.turn_count === 1 ? "turn" : "turns"}</span>
+                      <span>{item.repair_depth > 0 ? `Repair depth ${item.repair_depth}` : "Main story"}</span>
+                      <time datetime={new Date(item.updated_at * 1000).toISOString()}>{formatConversationDate(item.updated_at)}</time>
+                    </div>
+                  </a>
+                )}
+              </For>
+            </div>
+          </section>
         </div>
       </Show>
 
@@ -301,10 +577,23 @@ export function ConversationView(props: { conversationId?: string }) {
               <button class="secondary-button" type="button" aria-pressed={audioFirst()} onClick={toggleAudioFirst}>
                 {audioFirst() ? "Audio-first on" : "Audio-first"}
               </button>
+              <button class="secondary-button" type="button" aria-pressed={fullAuto()} onClick={toggleFullAuto}>
+                {fullAuto() ? "Stop Full auto" : "Full auto"}
+              </button>
               <span class="repair-depth" data-active={detail().repair_depth > 0}>
                 {detail().repair_depth > 0 ? `Repair depth ${detail().repair_depth}` : "Main story"}
               </span>
             </div>
+
+            <Show when={fullAuto()}>
+              <div class="full-auto-status" role="status" aria-live="polite">
+                <span class="full-auto-indicator" data-listening={recording()} />
+                <div>
+                  <strong>Full auto</strong>
+                  <p>{autoStatus() || "Starting the hands-free lesson…"}</p>
+                </div>
+              </div>
+            </Show>
 
             <div class="conversation-turns" aria-live="polite">
               <For each={detail().turns}>
@@ -337,7 +626,7 @@ export function ConversationView(props: { conversationId?: string }) {
                 id="conversation-response"
                 rows="4"
                 value={input()}
-                disabled={submitting() || recording() || requestingMicrophone()}
+                disabled={submitting() || recording() || requestingMicrophone() || fullAuto()}
                 placeholder="Give your best English translation. You can also say exactly what you didn't understand."
                 onInput={(event) => setInput(event.currentTarget.value)}
                 onKeyDown={(event) => {
@@ -359,12 +648,12 @@ export function ConversationView(props: { conversationId?: string }) {
                   <button
                     class={recording() ? "danger-button" : "secondary-button"}
                     type="button"
-                    disabled={submitting() || requestingMicrophone()}
+                    disabled={submitting() || requestingMicrophone() || fullAuto()}
                     onClick={() => recording() ? stopRecording() : void startRecording()}
                   >
                     {recording() ? "Stop & send" : requestingMicrophone() ? "Opening…" : "Use microphone"}
                   </button>
-                  <button class="primary-button" type="submit" disabled={!input().trim() || submitting() || recording() || requestingMicrophone()}>
+                  <button class="primary-button" type="submit" disabled={!input().trim() || submitting() || recording() || requestingMicrophone() || fullAuto()}>
                     {submitting() ? "Transcribing / thinking…" : "Send response"}
                   </button>
                 </div>
@@ -383,6 +672,19 @@ function turnLabel(turn: ConversationTurn): string {
     case "retry": return "Back to the parent story";
     default: return "Story";
   }
+}
+
+function normalizeVoiceCommand(transcript: string): string {
+  return transcript.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+
+function formatConversationDate(timestamp: number): string {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(timestamp * 1000));
 }
 
 function conversationError(cause: unknown, action: string): string {

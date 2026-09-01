@@ -75,6 +75,20 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
   /conversations:
+    get:
+      summary: List resumable adaptive story conversations
+      operationId: listConversations
+      responses:
+        "200":
+          description: Most recently active conversations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
     post:
       summary: Start an adaptive Greek story conversation
       description: >
@@ -200,6 +214,39 @@ paths:
           $ref: "#/components/responses/BadGateway"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
+  /conversations/{id}/transcribe:
+    post:
+      summary: Transcribe a speech chunk without advancing the story
+      description: Used by Full auto mode to collect speech and interpret pass/repeat commands.
+      operationId: transcribeConversationAudio
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/ConversationAudioResponseRequest"
+      responses:
+        "200":
+          description: Transcribed speech chunk
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationTranscription"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /conversations/{id}/turns/{turn_id}/audio:
     get:
       summary: Generate speech for an assistant Greek passage
@@ -217,6 +264,13 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - name: part
+          in: query
+          required: false
+          description: Select the Greek passage or an English Full auto narration segment.
+          schema:
+            type: string
+            enum: [passage, feedback, prompt]
       responses:
         "200":
           description: Synthesized passage audio
@@ -1673,6 +1727,14 @@ components:
           enum: [beginner, elementary, intermediate, upper-intermediate, advanced]
           x-enum-varnames: [StartConversationLevelBeginner, StartConversationLevelElementary, StartConversationLevelIntermediate, StartConversationLevelUpperIntermediate, StartConversationLevelAdvanced]
           description: Defaults to the learner profile level.
+        topic:
+          type: string
+          maxLength: 300
+          description: Learner-chosen subject that anchors the generated story.
+        source_text:
+          type: string
+          maxLength: 30000
+          description: Existing Greek story or other text to adapt into the lesson.
     RespondConversationRequest:
       type: object
       properties:
@@ -1690,12 +1752,19 @@ components:
           format: binary
           description: Browser-recorded audio in a format supported by the configured audio-server.
       required: [file]
+    ConversationTranscription:
+      type: object
+      properties:
+        text: { type: string }
+      required: [text]
     Conversation:
       type: object
       properties:
         conversation_id: { type: string }
         language: { type: string, const: el }
         level: { type: string }
+        topic: { type: string }
+        source_text: { type: string }
         status:
           type: string
           enum: [active, complete]
@@ -1712,7 +1781,30 @@ components:
             $ref: "#/components/schemas/ConversationTurn"
         created_at: { type: number, format: double }
         updated_at: { type: number, format: double }
-      required: [conversation_id, language, level, status, story_summary, repair_depth, turns, created_at, updated_at]
+      required: [conversation_id, language, level, topic, source_text, status, story_summary, repair_depth, turns, created_at, updated_at]
+    ConversationSummary:
+      type: object
+      properties:
+        conversation_id: { type: string }
+        language: { type: string, const: el }
+        level: { type: string }
+        status:
+          type: string
+        topic: { type: string }
+        story_summary: { type: string }
+        repair_depth: { type: integer, minimum: 0 }
+        turn_count: { type: integer, minimum: 0 }
+        created_at: { type: number, format: double }
+        updated_at: { type: number, format: double }
+      required: [conversation_id, language, level, status, topic, story_summary, repair_depth, turn_count, created_at, updated_at]
+    ConversationList:
+      type: object
+      properties:
+        conversations:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConversationSummary"
+      required: [conversations]
     ConversationTurn:
       type: object
       properties:
@@ -1890,11 +1982,14 @@ components:
         llm_model:
           type: string
           description: "model id requested for LLM calls; blank uses the gateway default"
+        tts_model:
+          type: string
+          description: "audio-server TTS model; blank uses the server default"
         preferences:
           type: object
           additionalProperties: true
           description: "arbitrary client-owned preferences; product-critical fields remain top-level"
-      required: [user_id, active_language, level, ui_language, theme, llm_model, preferences]
+      required: [user_id, active_language, level, ui_language, theme, llm_model, tts_model, preferences]
     ProfilePatch:
       type: object
       additionalProperties: false
@@ -1915,6 +2010,9 @@ components:
         llm_model:
           type: string
           description: "OpenAI/OpenRouter-compatible model id; empty string clears to the gateway default"
+        tts_model:
+          type: string
+          description: "audio-server TTS model id; empty string clears to the server default"
         preferences:
           type: object
           additionalProperties: true

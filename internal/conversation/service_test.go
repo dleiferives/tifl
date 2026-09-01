@@ -86,12 +86,21 @@ func TestDepthFirstRepairReturnsToParentPassage(t *testing.T) {
 	}}
 	service := conversation.New(repo, client)
 
-	started, err := service.Start(ctx, domain.LocalUserID, "beginner")
+	started, err := service.Start(ctx, domain.LocalUserID, conversation.StartInput{
+		Level: "beginner", Topic: "a lost dog", SourceText: "Η Μαρία ψάχνει τον σκύλο της.",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(started.Turns) != 1 || started.Turns[0].Kind != domain.ConversationTurnStory {
 		t.Fatalf("start turns = %#v", started.Turns)
+	}
+	if started.Conversation.Topic != "a lost dog" || started.Conversation.SourceText != "Η Μαρία ψάχνει τον σκύλο της." {
+		t.Fatalf("conversation seed = %+v", started.Conversation)
+	}
+	if !strings.Contains(client.Calls[0].Req.User, "Learner-chosen topic: a lost dog") ||
+		!strings.Contains(client.Calls[0].Req.User, "Η Μαρία ψάχνει τον σκύλο της.") {
+		t.Fatalf("start prompt is missing the learner seed: %s", client.Calls[0].Req.User)
 	}
 	parentGreek := started.Turns[0].GreekText
 
@@ -133,5 +142,8 @@ func TestDepthFirstRepairReturnsToParentPassage(t *testing.T) {
 	}
 	if !strings.Contains(client.Calls[1].Req.System, "application owns the repair stack") {
 		t.Fatalf("response prompt does not reserve stack ownership for the application")
+	}
+	if !strings.Contains(client.Calls[1].Req.System, "mnemonic") || !strings.Contains(client.Calls[1].Req.User, "Learner-chosen topic: a lost dog") {
+		t.Fatalf("repair prompt is missing vocabulary teaching or seed context")
 	}
 }

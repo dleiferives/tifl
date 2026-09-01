@@ -65,7 +65,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List resumable adaptive story conversations */
+        get: operations["listConversations"];
         put?: never;
         /**
          * Start an adaptive Greek story conversation
@@ -129,6 +130,26 @@ export interface paths {
          * @description Proxies the recorded audio to the configured audio-server STT endpoint, stores its transcript as the learner turn, then runs the same adaptive assessment and depth-first transition as a typed response.
          */
         post: operations["respondToConversationAudio"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/conversations/{id}/transcribe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Transcribe a speech chunk without advancing the story
+         * @description Used by Full auto mode to collect speech and interpret pass/repeat commands.
+         */
+        post: operations["transcribeConversationAudio"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1024,6 +1045,10 @@ export interface components {
              * @enum {string}
              */
             level?: "beginner" | "elementary" | "intermediate" | "upper-intermediate" | "advanced";
+            /** @description Learner-chosen subject that anchors the generated story. */
+            topic?: string;
+            /** @description Existing Greek story or other text to adapt into the lesson. */
+            source_text?: string;
         };
         RespondConversationRequest: {
             /** @description The learner's best English translation and any unclear parts. */
@@ -1036,11 +1061,16 @@ export interface components {
              */
             file: string;
         };
+        ConversationTranscription: {
+            text: string;
+        };
         Conversation: {
             conversation_id: string;
             /** @constant */
             language: "el";
             level: string;
+            topic: string;
+            source_text: string;
             /** @enum {string} */
             status: "active" | "complete";
             /** @description Compact main-narrative memory; repair stories do not replace it. */
@@ -1051,6 +1081,24 @@ export interface components {
             created_at: number;
             /** Format: double */
             updated_at: number;
+        };
+        ConversationSummary: {
+            conversation_id: string;
+            /** @constant */
+            language: "el";
+            level: string;
+            status: string;
+            topic: string;
+            story_summary: string;
+            repair_depth: number;
+            turn_count: number;
+            /** Format: double */
+            created_at: number;
+            /** Format: double */
+            updated_at: number;
+        };
+        ConversationList: {
+            conversations: components["schemas"]["ConversationSummary"][];
         };
         ConversationTurn: {
             turn_id: string;
@@ -1177,6 +1225,8 @@ export interface components {
             theme: string;
             /** @description model id requested for LLM calls; blank uses the gateway default */
             llm_model: string;
+            /** @description audio-server TTS model; blank uses the server default */
+            tts_model: string;
             /** @description arbitrary client-owned preferences; product-critical fields remain top-level */
             preferences: {
                 [key: string]: unknown;
@@ -1196,6 +1246,8 @@ export interface components {
             theme?: string;
             /** @description OpenAI/OpenRouter-compatible model id; empty string clears to the gateway default */
             llm_model?: string;
+            /** @description audio-server TTS model id; empty string clears to the server default */
+            tts_model?: string;
             /** @description shallow-merged; null values delete keys */
             preferences?: {
                 [key: string]: unknown;
@@ -2011,6 +2063,28 @@ export interface operations {
             503: components["responses"]["ServiceUnavailable"];
         };
     };
+    listConversations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Most recently active conversations */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     startConversation: {
         parameters: {
             query?: never;
@@ -2128,9 +2202,43 @@ export interface operations {
             503: components["responses"]["ServiceUnavailable"];
         };
     };
-    getConversationTurnAudio: {
+    transcribeConversationAudio: {
         parameters: {
             query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["ConversationAudioResponseRequest"];
+            };
+        };
+        responses: {
+            /** @description Transcribed speech chunk */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationTranscription"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getConversationTurnAudio: {
+        parameters: {
+            query?: {
+                /** @description Select the Greek passage or an English Full auto narration segment. */
+                part?: "passage" | "feedback" | "prompt";
+            };
             header?: never;
             path: {
                 id: string;

@@ -12,6 +12,7 @@ type UserProfile struct {
 	UILanguage     string
 	Theme          string
 	LLMModel       string
+	TTSModel       string
 	Preferences    map[string]any
 }
 
@@ -24,6 +25,7 @@ type UserProfilePatch struct {
 	UILanguage     *string
 	Theme          *string
 	LLMModel       *string
+	TTSModel       *string
 	Preferences    map[string]any
 }
 
@@ -109,6 +111,24 @@ func ValidLLMModel(s string) bool {
 	}
 	for _, r := range s {
 		if asciiAlphaNum(r) || r == '/' || r == '-' || r == '_' || r == '.' || r == ':' || r == '~' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// ValidTTSModel accepts audio-server provider ids such as "supertonic" or
+// "omnivoice". Empty means "use the server default".
+func ValidTTSModel(s string) bool {
+	if s == "" {
+		return true
+	}
+	if len(s) > 64 {
+		return false
+	}
+	for _, r := range s {
+		if asciiAlphaNum(r) || r == '-' || r == '_' || r == '.' {
 			continue
 		}
 		return false

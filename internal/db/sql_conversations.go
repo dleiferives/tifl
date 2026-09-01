@@ -10,7 +10,9 @@ import (
 	"github.com/dleiferives/tifl/internal/id"
 )
 
-const conversationColumns = "conversation_id, user_id, language, level, story_summary, repair_stack, status, created_at, updated_at"
+const conversationColumns = "conversation_id, user_id, language, level, topic, source_text, story_summary, repair_stack, status, created_at, updated_at"
+
+const conversationColumnsQualified = "c.conversation_id, c.user_id, c.language, c.level, c.topic, c.source_text, c.story_summary, c.repair_stack, c.status, c.created_at, c.updated_at"
 
 const conversationTurnColumns = "turn_id, conversation_id, role, kind, action, assessment, greek_text, english_text, prompt_text, input_text, audio_path, transcript, focus, reply_to_turn_id, created_at"
 
@@ -42,11 +44,11 @@ func (r *SQLRepository) CreateConversationWithTurn(ctx context.Context, conversa
 	err = r.inTx(ctx, func(tx *dtx) error {
 		if _, err := tx.exec(ctx,
 			`INSERT INTO conversations(
-			   conversation_id, user_id, language, prompt_text, level, story_summary,
-			   repair_stack, status, created_at, updated_at)
-			 VALUES(?, ?, ?, '', ?, ?, ?, ?, ?, ?)`,
+			   conversation_id, user_id, language, prompt_text, level, topic, source_text,
+			   story_summary, repair_stack, status, created_at, updated_at)
+			 VALUES(?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?)`,
 			conversation.ConversationID, conversation.UserID, conversation.Language,
-			conversation.Level, conversation.StorySummary, stack, string(conversation.Status),
+			conversation.Level, conversation.Topic, conversation.SourceText, conversation.StorySummary, stack, string(conversation.Status),
 			conversation.CreatedAt, conversation.UpdatedAt); err != nil {
 			return err
 		}
@@ -57,6 +59,34 @@ func (r *SQLRepository) CreateConversationWithTurn(ctx context.Context, conversa
 	}
 	conversation.RepairStack = nonNilRepairStack(conversation.RepairStack)
 	return domain.ConversationDetail{Conversation: conversation, Turns: []domain.ConversationTurn{turn}}, nil
+}
+
+func (r *SQLRepository) ListConversations(ctx context.Context, userID string, limit int) ([]domain.ConversationOverview, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	rows, err := r.query(ctx,
+		`SELECT `+conversationColumnsQualified+`, COUNT(ct.turn_id)
+		   FROM conversations c
+		   LEFT JOIN conversation_turns ct ON ct.conversation_id = c.conversation_id
+		  WHERE c.user_id = ?
+		  GROUP BY c.conversation_id, c.user_id, c.language, c.level, c.topic,
+		           c.source_text, c.story_summary, c.repair_stack, c.status, c.created_at, c.updated_at
+		  ORDER BY c.updated_at DESC
+		  LIMIT ?`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	overviews := make([]domain.ConversationOverview, 0)
+	for rows.Next() {
+		conversation, turnCount, err := scanConversationOverview(rows)
+		if err != nil {
+			return nil, err
+		}
+		overviews = append(overviews, domain.ConversationOverview{Conversation: conversation, TurnCount: turnCount})
+	}
+	return overviews, rows.Err()
 }
 
 func (r *SQLRepository) GetConversation(ctx context.Context, userID, conversationID string) (domain.Conversation, error) {
@@ -183,7 +213,7 @@ func scanConversation(row rowScanner) (domain.Conversation, error) {
 		status       string
 	)
 	if err := row.Scan(&conversation.ConversationID, &conversation.UserID, &conversation.Language,
-		&conversation.Level, &conversation.StorySummary, &stack, &status,
+		&conversation.Level, &conversation.Topic, &conversation.SourceText, &conversation.StorySummary, &stack, &status,
 		&conversation.CreatedAt, &conversation.UpdatedAt); err != nil {
 		return domain.Conversation{}, err
 	}
@@ -193,6 +223,26 @@ func scanConversation(row rowScanner) (domain.Conversation, error) {
 	}
 	conversation.RepairStack = nonNilRepairStack(conversation.RepairStack)
 	return conversation, nil
+}
+
+func scanConversationOverview(row rowScanner) (domain.Conversation, int, error) {
+	var (
+		conversation domain.Conversation
+		stack        sql.NullString
+		status       string
+		turnCount    int
+	)
+	if err := row.Scan(&conversation.ConversationID, &conversation.UserID, &conversation.Language,
+		&conversation.Level, &conversation.Topic, &conversation.SourceText, &conversation.StorySummary,
+		&stack, &status, &conversation.CreatedAt, &conversation.UpdatedAt, &turnCount); err != nil {
+		return domain.Conversation{}, 0, err
+	}
+	conversation.Status = domain.ConversationStatus(status)
+	if err := unmarshalJSONInto(stack, &conversation.RepairStack); err != nil {
+		return domain.Conversation{}, 0, err
+	}
+	conversation.RepairStack = nonNilRepairStack(conversation.RepairStack)
+	return conversation, turnCount, nil
 }
 
 func scanConversationTurn(row rowScanner) (domain.ConversationTurn, error) {

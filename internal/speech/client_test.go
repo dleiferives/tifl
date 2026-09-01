@@ -33,9 +33,9 @@ func TestClientSynthesizeUsesAudioServerContract(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := speech.New(speech.Config{
-		BaseURL: server.URL, APIKey: "secret", TTSModel: "supertonic", TTSVoice: "F1", TTSSpeed: 0.8,
+		BaseURL: server.URL, APIKey: "secret", TTSModel: "omnivoice", TTSVoice: "F1", TTSSpeed: 0.8,
 	})
-	audio, err := client.Synthesize(context.Background(), "Γεια σου", "el")
+	audio, err := client.Synthesize(context.Background(), speech.SynthesisInput{Text: "Γεια σου", Language: "el", Model: "supertonic"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestClientSurfacesUpstreamError(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := speech.New(speech.Config{BaseURL: server.URL})
-	_, err := client.Synthesize(context.Background(), "Γεια", "el")
+	_, err := client.Synthesize(context.Background(), speech.SynthesisInput{Text: "Γεια", Language: "el"})
 	if err == nil || !strings.Contains(err.Error(), "503") {
 		t.Fatalf("error = %v", err)
 	}

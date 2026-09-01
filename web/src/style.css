@@ -204,6 +204,112 @@ select {
   margin-top: 0;
 }
 
+.conversation-home {
+  display: grid;
+  grid-template-columns: minmax(18rem, 0.85fr) minmax(22rem, 1.15fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.conversation-starter,
+.conversation-library {
+  display: grid;
+  gap: 1rem;
+  padding: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  background: var(--surface-subtle);
+}
+
+.app-main .conversation-library {
+  padding: 1.25rem;
+  border-radius: 0.6rem;
+  background: var(--surface-subtle);
+}
+
+.conversation-starter h2,
+.conversation-starter p,
+.conversation-library h2,
+.conversation-library p {
+  margin-top: 0;
+}
+
+.conversation-starter textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+.conversation-start-actions,
+.conversation-library-heading,
+.conversation-history-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.conversation-start-actions > span,
+.conversation-history-meta,
+.conversation-library-heading p,
+.conversation-empty {
+  color: var(--text-muted);
+  font-size: 0.84rem;
+}
+
+.conversation-history {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.conversation-history-card {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.conversation-history-card:hover,
+.conversation-history-card:focus-visible {
+  border-color: var(--accent);
+}
+
+.conversation-history-card p {
+  margin: 0.3rem 0 0;
+}
+
+.full-auto-status {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  background: var(--surface-subtle);
+}
+
+.full-auto-status p {
+  margin: 0.15rem 0 0;
+  color: var(--text-muted);
+}
+
+.full-auto-indicator {
+  width: 0.7rem;
+  height: 0.7rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.full-auto-indicator[data-listening="true"] {
+  background: #cf3f3f;
+  box-shadow: 0 0 0 0.3rem color-mix(in srgb, #cf3f3f 20%, transparent);
+}
+
 .conversation-toolbar,
 .conversation-submit-row,
 .turn-meta,
@@ -355,7 +461,8 @@ select {
 }
 
 @media (max-width: 44rem) {
-  .conversation-intro {
+  .conversation-intro,
+  .conversation-home {
     grid-template-columns: 1fr;
   }
 

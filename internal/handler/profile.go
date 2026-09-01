@@ -141,6 +141,15 @@ func decodeProfilePatch(w http.ResponseWriter, r *http.Request) (domain.UserProf
 				return domain.UserProfilePatch{}, fmt.Errorf("%s must be an OpenRouter/OpenAI-compatible model id", key)
 			}
 			patch.LLMModel = &s
+		case "tts_model":
+			s, err := decodeProfileOptionalString(value, key)
+			if err != nil {
+				return domain.UserProfilePatch{}, err
+			}
+			if !domain.ValidTTSModel(s) {
+				return domain.UserProfilePatch{}, fmt.Errorf("%s must be an audio-server model id", key)
+			}
+			patch.TTSModel = &s
 		case "preferences":
 			prefs, err := decodePreferences(value)
 			if err != nil {
@@ -217,6 +226,7 @@ func toProfileDTO(profile domain.UserProfile) profileDTO {
 		UiLanguage:     profile.UILanguage,
 		Theme:          profile.Theme,
 		LlmModel:       profile.LLMModel,
+		TtsModel:       profile.TTSModel,
 		Preferences:    prefs,
 	}
 }

@@ -46,7 +46,22 @@ func TestConversationAPIStartsAndDescendsIntoRepairStory(t *testing.T) {
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 
-	start, err := http.Post(server.URL+"/api/v1/conversations", "application/json", bytes.NewBufferString(`{}`))
+	profilePatch, err := http.NewRequest(http.MethodPatch, server.URL+"/api/v1/profile", bytes.NewBufferString(`{"tts_model":"supertonic"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	profilePatch.Header.Set("Content-Type", "application/json")
+	profileResponse, err := http.DefaultClient.Do(profilePatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profileResponse.Body.Close()
+	if profileResponse.StatusCode != http.StatusOK {
+		t.Fatalf("profile patch status = %d", profileResponse.StatusCode)
+	}
+
+	start, err := http.Post(server.URL+"/api/v1/conversations", "application/json", bytes.NewBufferString(
+		`{"topic":"a mysterious door","source_text":"Ο Νίκος ανοίγει την παλιά πόρτα."}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +73,8 @@ func TestConversationAPIStartsAndDescendsIntoRepairStory(t *testing.T) {
 	if err := json.NewDecoder(start.Body).Decode(&started); err != nil {
 		t.Fatal(err)
 	}
-	if started.Language != "el" || started.RepairDepth != 0 || len(started.Turns) != 1 {
+	if started.Language != "el" || started.Topic != "a mysterious door" ||
+		started.SourceText != "Ο Νίκος ανοίγει την παλιά πόρτα." || started.RepairDepth != 0 || len(started.Turns) != 1 {
 		t.Fatalf("start response = %+v", started)
 	}
 	if started.Turns[0].AudioURL == "" {
@@ -76,8 +92,75 @@ func TestConversationAPIStartsAndDescendsIntoRepairStory(t *testing.T) {
 	if audioResponse.StatusCode != http.StatusOK || audioResponse.Header.Get("Content-Type") != "audio/mpeg" || string(audioData) != "mp3-data" {
 		t.Fatalf("audio response = status %d, type %q, body %q", audioResponse.StatusCode, audioResponse.Header.Get("Content-Type"), audioData)
 	}
-	if audioGateway.synthesizedText != "Ο Νίκος ανοίγει την πόρτα." || audioGateway.synthesizedLanguage != "el" {
+	if audioGateway.synthesizedText != "Ο Νίκος ανοίγει την πόρτα." || audioGateway.synthesizedLanguage != "el" || audioGateway.synthesizedModel != "supertonic" {
 		t.Fatalf("synthesis input = %q (%q)", audioGateway.synthesizedText, audioGateway.synthesizedLanguage)
+	}
+	promptAudio, err := http.Get(server.URL + "/api/v1" + started.Turns[0].AudioURL + "?part=prompt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, promptAudio.Body)
+	promptAudio.Body.Close()
+	if promptAudio.StatusCode != http.StatusOK || audioGateway.synthesizedText != "What did you understand?" ||
+		audioGateway.synthesizedLanguage != "en" || audioGateway.synthesizedModel != "supertonic" {
+		t.Fatalf("prompt narration = status %d, input %q (%q/%q)", promptAudio.StatusCode,
+			audioGateway.synthesizedText, audioGateway.synthesizedLanguage, audioGateway.synthesizedModel)
+	}
+
+	listResponse, err := http.Get(server.URL + "/api/v1/conversations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listResponse.Body.Close()
+	var listed struct {
+		Conversations []struct {
+			ConversationID string `json:"conversation_id"`
+			Topic          string `json:"topic"`
+			TurnCount      int    `json:"turn_count"`
+		} `json:"conversations"`
+	}
+	if err := json.NewDecoder(listResponse.Body).Decode(&listed); err != nil {
+		t.Fatal(err)
+	}
+	if listResponse.StatusCode != http.StatusOK || len(listed.Conversations) != 1 ||
+		listed.Conversations[0].ConversationID != started.ConversationID || listed.Conversations[0].Topic != "a mysterious door" ||
+		listed.Conversations[0].TurnCount != 1 {
+		t.Fatalf("conversation list = %+v", listed)
+	}
+
+	var transcriptionBody bytes.Buffer
+	transcriptionWriter := multipart.NewWriter(&transcriptionBody)
+	transcriptionPart, err := transcriptionWriter.CreateFormFile("file", "chunk.webm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transcriptionPart.Write([]byte("speech-chunk")); err != nil {
+		t.Fatal(err)
+	}
+	if err := transcriptionWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	transcriptionRequest, err := http.NewRequest(http.MethodPost,
+		server.URL+"/api/v1/conversations/"+started.ConversationID+"/transcribe", &transcriptionBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transcriptionRequest.Header.Set("Content-Type", transcriptionWriter.FormDataContentType())
+	transcriptionResponse, err := http.DefaultClient.Do(transcriptionRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer transcriptionResponse.Body.Close()
+	var transcription struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(transcriptionResponse.Body).Decode(&transcription); err != nil {
+		t.Fatal(err)
+	}
+	if transcriptionResponse.StatusCode != http.StatusOK || transcription.Text != audioGateway.transcript ||
+		audioGateway.transcription.Filename != "chunk.webm" || string(audioGateway.transcription.Data) != "speech-chunk" {
+		t.Fatalf("standalone transcription = status %d, body %+v, input %+v",
+			transcriptionResponse.StatusCode, transcription, audioGateway.transcription)
 	}
 
 	respond, err := http.Post(server.URL+"/api/v1/conversations/"+started.ConversationID+"/respond",
@@ -159,6 +242,8 @@ func TestConversationAPIRequiresLLM(t *testing.T) {
 type conversationAPIResponse struct {
 	ConversationID string `json:"conversation_id"`
 	Language       string `json:"language"`
+	Topic          string `json:"topic"`
+	SourceText     string `json:"source_text"`
 	RepairDepth    int    `json:"repair_depth"`
 	Turns          []struct {
 		TurnID     string `json:"turn_id"`
@@ -178,11 +263,13 @@ type fakeConversationSpeech struct {
 	transcription       speech.TranscriptionInput
 	synthesizedText     string
 	synthesizedLanguage string
+	synthesizedModel    string
 }
 
-func (f *fakeConversationSpeech) Synthesize(_ context.Context, text, language string) (speech.Audio, error) {
-	f.synthesizedText = text
-	f.synthesizedLanguage = language
+func (f *fakeConversationSpeech) Synthesize(_ context.Context, input speech.SynthesisInput) (speech.Audio, error) {
+	f.synthesizedText = input.Text
+	f.synthesizedLanguage = input.Language
+	f.synthesizedModel = input.Model
 	return speech.Audio{Data: []byte("mp3-data"), ContentType: "audio/mpeg"}, nil
 }
 

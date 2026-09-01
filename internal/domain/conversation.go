@@ -62,11 +62,19 @@ type Conversation struct {
 	UserID         string
 	Language       string
 	Level          string
+	Topic          string
+	SourceText     string
 	StorySummary   string
 	RepairStack    []ConversationRepairFrame
 	Status         ConversationStatus
 	CreatedAt      float64
 	UpdatedAt      float64
+}
+
+// ConversationOverview is the compact session-library representation.
+type ConversationOverview struct {
+	Conversation Conversation
+	TurnCount    int
 }
 
 // ConversationTurn is one durable item in the conversation transcript.

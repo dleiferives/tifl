@@ -1130,6 +1130,27 @@ func (e AdminListCallsParamsStatus) Valid() bool {
 	}
 }
 
+// Defines values for GetConversationTurnAudioParamsPart.
+const (
+	Feedback GetConversationTurnAudioParamsPart = "feedback"
+	Passage  GetConversationTurnAudioParamsPart = "passage"
+	Prompt   GetConversationTurnAudioParamsPart = "prompt"
+)
+
+// Valid indicates whether the value is a known member of the GetConversationTurnAudioParamsPart enum.
+func (e GetConversationTurnAudioParamsPart) Valid() bool {
+	switch e {
+	case Feedback:
+		return true
+	case Passage:
+		return true
+	case Prompt:
+		return true
+	default:
+		return false
+	}
+}
+
 // AdminCallLog A page of the global call log, filtered and paginated.
 type AdminCallLog struct {
 	Calls   []LLMCallLogRow `json:"calls"`
@@ -1194,10 +1215,12 @@ type Conversation struct {
 	Language       string             `json:"language"`
 	Level          string             `json:"level"`
 	RepairDepth    int                `json:"repair_depth"`
+	SourceText     string             `json:"source_text"`
 	Status         ConversationStatus `json:"status"`
 
 	// StorySummary Compact main-narrative memory; repair stories do not replace it.
 	StorySummary string             `json:"story_summary"`
+	Topic        string             `json:"topic"`
 	Turns        []ConversationTurn `json:"turns"`
 	UpdatedAt    float64            `json:"updated_at"`
 }
@@ -1209,6 +1232,30 @@ type ConversationStatus string
 type ConversationAudioResponseRequest struct {
 	// File Browser-recorded audio in a format supported by the configured audio-server.
 	File openapi_types.File `json:"file"`
+}
+
+// ConversationList defines model for ConversationList.
+type ConversationList struct {
+	Conversations []ConversationSummary `json:"conversations"`
+}
+
+// ConversationSummary defines model for ConversationSummary.
+type ConversationSummary struct {
+	ConversationId string  `json:"conversation_id"`
+	CreatedAt      float64 `json:"created_at"`
+	Language       string  `json:"language"`
+	Level          string  `json:"level"`
+	RepairDepth    int     `json:"repair_depth"`
+	Status         string  `json:"status"`
+	StorySummary   string  `json:"story_summary"`
+	Topic          string  `json:"topic"`
+	TurnCount      int     `json:"turn_count"`
+	UpdatedAt      float64 `json:"updated_at"`
+}
+
+// ConversationTranscription defines model for ConversationTranscription.
+type ConversationTranscription struct {
+	Text string `json:"text"`
 }
 
 // ConversationTurn defines model for ConversationTurn.
@@ -1658,6 +1705,9 @@ type Profile struct {
 	// Theme theme id, e.g. 'default' or 'high-contrast'
 	Theme string `json:"theme"`
 
+	// TtsModel audio-server TTS model; blank uses the server default
+	TtsModel string `json:"tts_model"`
+
 	// UiLanguage BCP-47 style UI/gloss language tag, e.g. 'en'
 	UiLanguage string `json:"ui_language"`
 	UserId     string `json:"user_id"`
@@ -1682,6 +1732,9 @@ type ProfilePatch struct {
 
 	// Theme letters, numbers, '_' and '-' only
 	Theme string `json:"theme,omitempty"`
+
+	// TtsModel audio-server TTS model id; empty string clears to the server default
+	TtsModel string `json:"tts_model,omitempty"`
 
 	// UiLanguage BCP-47 style UI/gloss language tag
 	UiLanguage string `json:"ui_language,omitempty"`
@@ -2018,6 +2071,12 @@ type StageSummary struct {
 type StartConversationRequest struct {
 	// Level Defaults to the learner profile level.
 	Level StartConversationRequestLevel `json:"level,omitempty"`
+
+	// SourceText Existing Greek story or other text to adapt into the lesson.
+	SourceText string `json:"source_text,omitempty"`
+
+	// Topic Learner-chosen subject that anchors the generated story.
+	Topic string `json:"topic,omitempty"`
 }
 
 // StartConversationRequestLevel Defaults to the learner profile level.
@@ -2281,6 +2340,15 @@ type AdminCostRollupParams struct {
 	To float64 `form:"to,omitempty" json:"to,omitempty"`
 }
 
+// GetConversationTurnAudioParams defines parameters for GetConversationTurnAudio.
+type GetConversationTurnAudioParams struct {
+	// Part Select the Greek passage or an English Full auto narration segment.
+	Part GetConversationTurnAudioParamsPart `form:"part,omitempty" json:"part,omitempty"`
+}
+
+// GetConversationTurnAudioParamsPart defines parameters for GetConversationTurnAudio.
+type GetConversationTurnAudioParamsPart string
+
 // DeleteDictionaryEntryParams defines parameters for DeleteDictionaryEntry.
 type DeleteDictionaryEntryParams struct {
 	Language string `form:"language" json:"language"`
@@ -2352,6 +2420,9 @@ type RespondToConversationJSONRequestBody = RespondConversationRequest
 
 // RespondToConversationAudioMultipartRequestBody defines body for RespondToConversationAudio for multipart/form-data ContentType.
 type RespondToConversationAudioMultipartRequestBody = ConversationAudioResponseRequest
+
+// TranscribeConversationAudioMultipartRequestBody defines body for TranscribeConversationAudio for multipart/form-data ContentType.
+type TranscribeConversationAudioMultipartRequestBody = ConversationAudioResponseRequest
 
 // PutDictionaryEntryJSONRequestBody defines body for PutDictionaryEntry for application/json ContentType.
 type PutDictionaryEntryJSONRequestBody = DictionaryEntryRequest

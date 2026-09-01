@@ -60,6 +60,9 @@ func applyProfileSettings(profile *domain.UserProfile, settings map[string]any) 
 	if s, ok := stringSetting(settings, "llm_model"); ok {
 		profile.LLMModel = s
 	}
+	if s, ok := optionalStringSetting(settings, "tts_model"); ok {
+		profile.TTSModel = s
+	}
 	if prefs, ok := objectMap(settings["preferences"]); ok {
 		profile.Preferences = cloneJSONMap(prefs)
 	}
@@ -80,6 +83,9 @@ func applyProfilePatch(profile domain.UserProfile, patch domain.UserProfilePatch
 	}
 	if patch.LLMModel != nil {
 		profile.LLMModel = *patch.LLMModel
+	}
+	if patch.TTSModel != nil {
+		profile.TTSModel = *patch.TTSModel
 	}
 	if patch.Preferences != nil {
 		if profile.Preferences == nil {
@@ -111,6 +117,7 @@ func settingsWithProfile(settings map[string]any, profile domain.UserProfile) ma
 		"ui_language":     profile.UILanguage,
 		"theme":           profile.Theme,
 		"llm_model":       profile.LLMModel,
+		"tts_model":       profile.TTSModel,
 		"preferences":     prefs,
 	}
 	return out
@@ -132,6 +139,9 @@ func validateProfile(profile domain.UserProfile) error {
 	if !domain.ValidLLMModel(profile.LLMModel) {
 		return invalidProfile("llm_model %q is not a valid model id", profile.LLMModel)
 	}
+	if !domain.ValidTTSModel(profile.TTSModel) {
+		return invalidProfile("tts_model %q is not a valid model id", profile.TTSModel)
+	}
 	return nil
 }
 
@@ -147,6 +157,11 @@ func firstEnabledLanguage(langs []domain.Language) string {
 func stringSetting(settings map[string]any, key string) (string, bool) {
 	v, ok := settings[key].(string)
 	return v, ok && v != ""
+}
+
+func optionalStringSetting(settings map[string]any, key string) (string, bool) {
+	v, ok := settings[key].(string)
+	return v, ok
 }
 
 func objectMap(v any) (map[string]any, bool) {

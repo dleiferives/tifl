@@ -22,6 +22,14 @@ const UI_LANGUAGES = [
   { code: "el", label: "Greek" },
 ] as const;
 
+const TTS_MODELS = [
+  { id: "", label: "Server default" },
+  { id: "auto", label: "Automatic (Greek: OmniVoice)" },
+  { id: "supertonic", label: "Supertonic" },
+  { id: "omnivoice", label: "OmniVoice" },
+  { id: "espeak-ng", label: "eSpeak NG" },
+] as const;
+
 const KNOWLEDGE_LEVELS = [
   { id: "unseen", label: "Unseen" },
   { id: "1", label: "1" },
@@ -195,6 +203,29 @@ export function SettingsView() {
             </select>
           </label>
           <p class="field-help">Used for interface text and story definitions as localization support expands.</p>
+        </fieldset>
+
+        <fieldset class="settings-group" disabled={saving()}>
+          <legend>Audio</legend>
+          <label class="field">
+            <span>Story Coach voice model</span>
+            <select
+              value={appStore.profile()?.tts_model || ""}
+              onChange={(event) => {
+                const select = event.currentTarget;
+                const previous = appStore.profile()?.tts_model || "";
+                void save(
+                  { tts_model: select.value },
+                  () => { select.value = previous; },
+                );
+              }}
+            >
+              <For each={TTS_MODELS}>
+                {(model) => <option value={model.id}>{model.label}</option>}
+              </For>
+            </select>
+          </label>
+          <p class="field-help">Supertonic supports both Greek passages and the English coaching narration used in Full auto mode.</p>
         </fieldset>
 
         <fieldset class="settings-group" disabled={saving()}>

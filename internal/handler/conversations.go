@@ -17,8 +17,10 @@ import (
 )
 
 const (
-	maxConversationRequestBytes = 16 << 10
+	maxConversationRequestBytes = 128 << 10
 	maxConversationInputRunes   = 8_000
+	maxConversationTopicRunes   = 300
+	maxConversationSourceRunes  = 30_000
 	maxConversationAudioBytes   = 24 << 20
 )
 
@@ -26,6 +28,8 @@ type (
 	startConversationRequest   = oapigen.StartConversationRequest
 	respondConversationRequest = oapigen.RespondConversationRequest
 	conversationDTO            = oapigen.Conversation
+	conversationListDTO        = oapigen.ConversationList
+	conversationSummaryDTO     = oapigen.ConversationSummary
 	conversationTurnDTO        = oapigen.ConversationTurn
 )
 
@@ -52,17 +56,54 @@ func (h *Handler) startConversation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("unsupported learner level"))
 		return
 	}
+	topic := strings.TrimSpace(req.Topic)
+	sourceText := strings.TrimSpace(req.SourceText)
+	if len([]rune(topic)) > maxConversationTopicRunes {
+		writeError(w, http.StatusBadRequest, errors.New("topic is too long"))
+		return
+	}
+	if len([]rune(sourceText)) > maxConversationSourceRunes {
+		writeError(w, http.StatusBadRequest, errors.New("source_text is too long"))
+		return
+	}
 	greek, err := h.repo.GetLanguage(r.Context(), "el")
 	if err != nil || !greek.Enabled {
 		writeError(w, http.StatusServiceUnavailable, errors.New("Greek is not enabled"))
 		return
 	}
-	detail, err := h.conversations.Start(r.Context(), h.currentUserID(r), level)
+	detail, err := h.conversations.Start(r.Context(), h.currentUserID(r), conversation.StartInput{
+		Level: level, Topic: topic, SourceText: sourceText,
+	})
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, h.toConversationDTO(detail))
+}
+
+func (h *Handler) listConversations(w http.ResponseWriter, r *http.Request) {
+	overviews, err := h.conversations.List(r.Context(), h.currentUserID(r), 50)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	dto := conversationListDTO{Conversations: make([]conversationSummaryDTO, 0, len(overviews))}
+	for _, overview := range overviews {
+		conversation := overview.Conversation
+		dto.Conversations = append(dto.Conversations, conversationSummaryDTO{
+			ConversationId: conversation.ConversationID,
+			Language:       conversation.Language,
+			Level:          conversation.Level,
+			Status:         string(conversation.Status),
+			Topic:          conversation.Topic,
+			StorySummary:   conversation.StorySummary,
+			RepairDepth:    len(conversation.RepairStack),
+			TurnCount:      overview.TurnCount,
+			CreatedAt:      conversation.CreatedAt,
+			UpdatedAt:      conversation.UpdatedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, dto)
 }
 
 func (h *Handler) getConversation(w http.ResponseWriter, r *http.Request) {
@@ -131,17 +172,68 @@ func (h *Handler) conversationTurnAudio(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, errors.New("conversation turn not found"))
 		return
 	}
-	audio, err := h.speech.Synthesize(r.Context(), selected.GreekText, detail.Conversation.Language)
+	text := selected.GreekText
+	language := detail.Conversation.Language
+	switch r.URL.Query().Get("part") {
+	case "", "passage":
+	case "feedback":
+		text = selected.EnglishText
+		language = "en"
+	case "prompt":
+		text = selected.PromptText
+		language = "en"
+	default:
+		writeError(w, http.StatusBadRequest, errors.New("part must be passage, feedback, or prompt"))
+		return
+	}
+	if strings.TrimSpace(text) == "" {
+		writeError(w, http.StatusNotFound, errors.New("conversation audio part is empty"))
+		return
+	}
+	profile, err := h.currentProfile(r)
+	if err != nil {
+		h.writeProfileError(w, err)
+		return
+	}
+	audio, err := h.speech.Synthesize(r.Context(), speech.SynthesisInput{
+		Text: text, Language: language, Model: profile.TTSModel,
+	})
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
 	w.Header().Set("Content-Type", audio.ContentType)
 	w.Header().Set("Content-Length", strconv.Itoa(len(audio.Data)))
-	w.Header().Set("Cache-Control", "private, max-age=3600")
+	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(audio.Data)
+}
+
+func (h *Handler) transcribeConversationAudio(w http.ResponseWriter, r *http.Request) {
+	if h.speech == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("conversation speech input is not configured"))
+		return
+	}
+	if _, err := h.conversations.Get(r.Context(), h.currentUserID(r), r.PathValue("id")); err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			writeError(w, http.StatusNotFound, errors.New("conversation not found"))
+		} else {
+			writeError(w, http.StatusInternalServerError, err)
+		}
+		return
+	}
+	input, err := readConversationAudio(w, r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	transcript, err := h.speech.Transcribe(r.Context(), input)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, oapigen.ConversationTranscription{Text: transcript})
 }
 
 func (h *Handler) respondToConversationAudio(w http.ResponseWriter, r *http.Request) {
@@ -270,6 +362,8 @@ func (h *Handler) toConversationDTO(detail domain.ConversationDetail) conversati
 		ConversationId: detail.Conversation.ConversationID,
 		Language:       detail.Conversation.Language,
 		Level:          detail.Conversation.Level,
+		Topic:          detail.Conversation.Topic,
+		SourceText:     detail.Conversation.SourceText,
 		Status:         oapigen.ConversationStatus(detail.Conversation.Status),
 		StorySummary:   detail.Conversation.StorySummary,
 		RepairDepth:    len(detail.Conversation.RepairStack),

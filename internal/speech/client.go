@@ -46,10 +46,16 @@ type TranscriptionInput struct {
 	Language    string
 }
 
+type SynthesisInput struct {
+	Text     string
+	Language string
+	Model    string
+}
+
 // Gateway is the handler-facing audio service contract. *Client and test fakes
 // satisfy it.
 type Gateway interface {
-	Synthesize(ctx context.Context, text, language string) (Audio, error)
+	Synthesize(ctx context.Context, input SynthesisInput) (Audio, error)
 	Transcribe(ctx context.Context, input TranscriptionInput) (string, error)
 }
 
@@ -89,13 +95,17 @@ func New(cfg Config) *Client {
 	}
 }
 
-func (c *Client) Synthesize(ctx context.Context, text, language string) (Audio, error) {
+func (c *Client) Synthesize(ctx context.Context, input SynthesisInput) (Audio, error) {
 	if c.baseURL == "" {
 		return Audio{}, errors.New("speech: audio server is not configured")
 	}
+	model := strings.TrimSpace(input.Model)
+	if model == "" {
+		model = c.ttsModel
+	}
 	body, err := json.Marshal(map[string]any{
-		"model": c.ttsModel, "input": text, "voice": c.ttsVoice,
-		"language": language, "response_format": "mp3", "speed": c.ttsSpeed,
+		"model": model, "input": input.Text, "voice": c.ttsVoice,
+		"language": input.Language, "response_format": "mp3", "speed": c.ttsSpeed,
 	})
 	if err != nil {
 		return Audio{}, err

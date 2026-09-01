@@ -146,6 +146,7 @@ type Repository interface {
 	// complete visible exchange and its stack transition atomically.
 	CreateConversationWithTurn(ctx context.Context, conversation domain.Conversation, turn domain.ConversationTurn) (domain.ConversationDetail, error)
 	GetConversation(ctx context.Context, userID, conversationID string) (domain.Conversation, error)
+	ListConversations(ctx context.Context, userID string, limit int) ([]domain.ConversationOverview, error)
 	ListConversationTurns(ctx context.Context, userID, conversationID string) ([]domain.ConversationTurn, error)
 	AppendConversationExchange(ctx context.Context, userID string, learner, assistant domain.ConversationTurn, storySummary string, repairStack []domain.ConversationRepairFrame) (domain.ConversationDetail, error)
 
