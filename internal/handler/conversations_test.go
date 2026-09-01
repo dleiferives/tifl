@@ -30,9 +30,9 @@ func TestConversationAPIStartsAndDescendsIntoRepairStory(t *testing.T) {
 	}
 
 	responses := []string{
-		`{"assessment":"","greek_text":"Ο Νίκος ανοίγει την πόρτα.","english_feedback":"","prompt_text":"What did you understand?","focus":"","story_summary":"Nikos opens a door."}`,
+		`{"assessment":"","greek_text":"Ο Νίκος ανοίγει την πόρτα.","english_feedback":"","prompt_text":"What does Nikos open?","focus":"","story_summary":"Nikos opens a door."}`,
 		`{"assessment":"partial","greek_text":"Η πόρτα είναι ανοιχτή. Ο Νίκος ανοίγει την πόρτα.","english_feedback":"'Ανοίγει' means opens.","prompt_text":"What happens now?","focus":"ανοίγει","story_summary":"Nikos opens a door."}`,
-		`{"assessment":"understood","greek_text":"Ο Νίκος μπαίνει στο σπίτι.","english_feedback":"Right — Nikos opens the door.","prompt_text":"Now try the earlier passage again.","focus":"","story_summary":"Nikos opens a door."}`,
+		`{"assessment":"understood","greek_text":"Ο Νίκος μπαίνει στο σπίτι.","english_feedback":"Right — Nikos opens the door.","prompt_text":"What does Nikos open in the original scene?","focus":"","story_summary":"Nikos opens a door."}`,
 	}
 	call := 0
 	client := &llm.FakeClient{Func: func(_ context.Context, _ string, _ llm.LLMRequest) (llm.LLMResponse, error) {
@@ -101,7 +101,7 @@ func TestConversationAPIStartsAndDescendsIntoRepairStory(t *testing.T) {
 	}
 	_, _ = io.Copy(io.Discard, promptAudio.Body)
 	promptAudio.Body.Close()
-	if promptAudio.StatusCode != http.StatusOK || audioGateway.synthesizedText != "What did you understand?" ||
+	if promptAudio.StatusCode != http.StatusOK || audioGateway.synthesizedText != "What does Nikos open?" ||
 		audioGateway.synthesizedLanguage != "en" || audioGateway.synthesizedModel != "supertonic" {
 		t.Fatalf("prompt narration = status %d, input %q (%q/%q)", promptAudio.StatusCode,
 			audioGateway.synthesizedText, audioGateway.synthesizedLanguage, audioGateway.synthesizedModel)

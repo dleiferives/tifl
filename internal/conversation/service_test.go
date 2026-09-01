@@ -65,9 +65,9 @@ func TestDepthFirstRepairReturnsToParentPassage(t *testing.T) {
 	}
 
 	responses := []string{
-		`{"assessment":"","greek_text":"Η Μαρία βλέπει έναν μικρό σκύλο στον δρόμο.","english_feedback":"","prompt_text":"What did you understand?","focus":"","story_summary":"Maria sees a small dog in the street."}`,
+		`{"assessment":"","greek_text":"Η Μαρία βλέπει έναν μικρό σκύλο στον δρόμο.","english_feedback":"","prompt_text":"What does Maria see in the street?","focus":"","story_summary":"Maria sees a small dog in the street."}`,
 		`{"assessment":"partial","greek_text":"Ο σκύλος είναι μικρός. Η Μαρία βλέπει τον σκύλο.","english_feedback":"You understood Maria, but 'σκύλο' means dog.","prompt_text":"What happens in this smaller scene?","focus":"σκύλος / σκύλο","story_summary":"A repair scene that must not replace the main summary."}`,
-		`{"assessment":"understood","greek_text":"Η Μαρία πλησιάζει τον σκύλο.","english_feedback":"Exactly — she sees the small dog.","prompt_text":"Now try the earlier passage again.","focus":"","story_summary":"Maria sees a small dog in the street."}`,
+		`{"assessment":"understood","greek_text":"Η Μαρία πλησιάζει τον σκύλο.","english_feedback":"Exactly — she sees the small dog.","prompt_text":"What does Maria see in the original street scene?","focus":"","story_summary":"Maria sees a small dog in the street."}`,
 	}
 	call := 0
 	client := &llm.FakeClient{Func: func(_ context.Context, kind string, req llm.LLMRequest) (llm.LLMResponse, error) {

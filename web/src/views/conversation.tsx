@@ -627,7 +627,7 @@ export function ConversationView(props: { conversationId?: string }) {
                 rows="4"
                 value={input()}
                 disabled={submitting() || recording() || requestingMicrophone() || fullAuto()}
-                placeholder="Give your best English translation. You can also say exactly what you didn't understand."
+                placeholder="Answer the coach’s question, or mention anything that blocked you."
                 onInput={(event) => setInput(event.currentTarget.value)}
                 onKeyDown={(event) => {
                   if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
