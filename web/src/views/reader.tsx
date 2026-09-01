@@ -22,7 +22,7 @@ import {
   wordBreakdown,
 } from "../api";
 import type { APISchema } from "../api";
-import { routeHref } from "../router";
+import { routeHref, sessionHref } from "../router";
 import { appStore } from "../store";
 
 type StoryToken = APISchema<"StoryToken">;
@@ -50,6 +50,12 @@ type TaskSelection = {
   wordCount: number;
 };
 type Analysis = { mode: "sentence"; position: number } | { mode: "word"; key: string } | null;
+type ReaderDisplaySettings = {
+  colorKnowledge: boolean;
+  lineHighlight: boolean;
+  wordHighlight: boolean;
+  popupEnabled: boolean;
+};
 type SyntaxGraph = {
   version?: string;
   roots: string[];
@@ -81,6 +87,7 @@ type SyntaxTreeBranch = {
 const FLUSH_DELAY_MS = 4000;
 const PROGRESS_SAVE_DELAY_MS = 1200;
 const READER_POSITION_PREFIX = "tifl.reader.position.";
+const READER_DISPLAY_SETTINGS_KEY = "tifl.reader.display.v1";
 const AUDIO_TTS_CONCURRENCY = 4;
 
 // 1-5 are self-rating; w/i are the well-known / ignored shortcuts. The reader
@@ -98,6 +105,8 @@ const LEVELS: { value: KnowledgeLevel; event: string; label: string; hint: strin
 export function ReaderView(props: {
   storyId: string;
   sessionId?: string;
+  title?: string;
+  pendingTasks?: number;
   story?: StoryLoad | null;
   active?: boolean;
   editable?: boolean;
@@ -105,6 +114,7 @@ export function ReaderView(props: {
   onReadingStarted?: () => void;
   onStoryUpdated?: () => void;
   onTasksGenerating?: () => void;
+  onOpenTasks?: () => void;
 }) {
   const [status, setStatus] = createSignal<"loading" | "ready" | "error">("loading");
   const [finishStatus, setFinishStatus] = createSignal<"idle" | "saving" | "done">("idle");
@@ -119,6 +129,12 @@ export function ReaderView(props: {
   const [cursor, setCursor] = createSignal(0);
   const [popupVisible, setPopupVisible] = createSignal(false);
   const [popupPos, setPopupPos] = createSignal<{ top: number; left: number } | null>(null);
+  const [lastInspectedPosition, setLastInspectedPosition] = createSignal<number | undefined>();
+  const [displayPanelOpen, setDisplayPanelOpen] = createSignal(false);
+  const [displaySettings, setDisplaySettings] = createStore<ReaderDisplaySettings>(readReaderDisplaySettings());
+  const [audioPlaying, setAudioPlaying] = createSignal(false);
+  const [audioCurrentTime, setAudioCurrentTime] = createSignal(0);
+  const [audioDuration, setAudioDuration] = createSignal(0);
   const [definitions, setDefinitions] = createStore<Record<string, Loadable<Definition>>>({});
   const [definitionOptions, setDefinitionOptions] = createStore<Record<string, Loadable<DefinitionOption[]>>>({});
   const [sourcePickerKey, setSourcePickerKey] = createSignal("");
@@ -148,7 +164,6 @@ export function ReaderView(props: {
   const wordEls: (HTMLElement | undefined)[] = [];
   const tokenEls: (HTMLElement | undefined)[] = [];
   let readerTextEl: HTMLDivElement | undefined;
-  // The popup element, so reposition can measure its (edit-mode-variable) height.
   let popupEl: HTMLElement | undefined;
   let pending: ReaderEvent[] = [];
   let flushTimer: number | undefined;
@@ -162,6 +177,7 @@ export function ReaderView(props: {
   const sentenceAlignments = new Map<string, ReaderWordTiming[]>();
   const sentenceAlignmentRequests = new Map<string, Promise<ReaderWordTiming[]>>();
   let sentenceAudio: HTMLAudioElement | null = null;
+  let activeSentenceWords: ReaderWordTiming[] = [];
   let sentencePlaybackToken = 0;
   let audioGenerationToken = 0;
   let sentenceAnimationFrame: number | undefined;
@@ -369,6 +385,10 @@ export function ReaderView(props: {
     prevCursor = c;
   });
 
+  createEffect(() => {
+    writeReaderDisplaySettings({ ...displaySettings });
+  });
+
   // Session panels stay mounted while the learner moves to tasks. Persist the
   // bookmark at that boundary even though the reader component is not cleaned
   // up and the ordinary debounce would probably save it shortly afterward.
@@ -378,8 +398,9 @@ export function ReaderView(props: {
     }
   });
 
-  // While the popup is open it follows the cursor: each word it reveals is a
-  // lookup (the strongest acquisition signal), so it gets logged and refetched.
+  // The lightweight popup follows the cursor. A Word dock that is already open
+  // follows it too; once the popup closes, the dock stays pinned to the last
+  // inspected word while reading continues.
   createEffect(() => {
     const visible = popupVisible();
     const c = cursor();
@@ -390,8 +411,14 @@ export function ReaderView(props: {
     if (!token?.key) {
       return;
     }
+    setLastInspectedPosition(token.position);
     logLookup(token.position, token.key);
     void ensureDefinition(token.key);
+    void ensureWord(token.key);
+    const activeStudy = analysis();
+    if (activeStudy?.mode === "word" && activeStudy.key !== token.key) {
+      setAnalysis({ mode: "word", key: token.key });
+    }
     repositionPopup();
   });
 
@@ -424,13 +451,33 @@ export function ReaderView(props: {
     if (!currentToken()?.key) {
       return;
     }
+    if (!displaySettings.popupEnabled) {
+      if (analysis()?.mode === "word") inspectCurrentWord();
+      return;
+    }
     setPopupVisible((visible) => !visible);
   }
 
+  function inspectCurrentWord() {
+    const token = currentToken();
+    if (!token?.key) return;
+    setLastInspectedPosition(token.position);
+    setAnalysis({ mode: "word", key: token.key });
+    void ensureDefinition(token.key);
+    void ensureWord(token.key);
+  }
+
+  function openRememberedWord() {
+    const position = lastInspectedPosition() ?? currentToken()?.position;
+    const token = tokens().find((candidate) => candidate.position === position && candidate.key);
+    if (!token?.key) return;
+    setAnalysis({ mode: "word", key: token.key });
+    void ensureDefinition(token.key);
+    void ensureWord(token.key);
+  }
+
   function repositionPopup() {
-    if (!popupVisible()) {
-      return;
-    }
+    if (!popupVisible()) return;
     const el = wordElementForCursor(cursor());
     if (!el) {
       setPopupPos(null);
@@ -439,8 +486,6 @@ export function ReaderView(props: {
     const rect = el.getBoundingClientRect();
     const popupWidth = popupEl?.offsetWidth ?? 320;
     const left = Math.max(8, Math.min(rect.left, window.innerWidth - 8 - popupWidth));
-    // Prefer just below the word; if the popup (taller in edit mode) would spill
-    // past the viewport bottom, flip it above the word, then clamp as a last resort.
     const height = popupEl?.offsetHeight ?? 0;
     let top = rect.bottom + 8;
     if (height > 0 && top + height > window.innerHeight - 8) {
@@ -452,10 +497,7 @@ export function ReaderView(props: {
 
   const popupStyle = (): JSX.CSSProperties => {
     const pos = popupPos();
-    if (!pos) {
-      return { visibility: "hidden" };
-    }
-    return { top: `${pos.top}px`, left: `${pos.left}px` };
+    return pos ? { top: `${pos.top}px`, left: `${pos.left}px` } : { visibility: "hidden" };
   };
 
   async function ensureDefinition(key: string) {
@@ -660,7 +702,7 @@ export function ReaderView(props: {
     }
   });
 
-  function definitionArea(key: string): JSX.Element {
+  function definitionArea(key: string, compactGrammar = false): JSX.Element {
     if (editing()) {
       const current = loadedDefinition(key);
       return (
@@ -744,7 +786,7 @@ export function ReaderView(props: {
         <Show when={notice === "removed"}>
           <p class="reader-popup-notice" role="status">Your definition was removed — showing dictionary definition.</p>
         </Show>
-        {definitionBody(entry, language())}
+        {definitionBody(entry, language(), !compactGrammar)}
         <Show when={loadedDefinition(key)}>
           <button class="reader-source-picker-toggle" type="button" onClick={() => toggleDefinitionSources(key)}>
             {sourcePickerKey() === key ? "Hide sources" : "Pick different source"}
@@ -757,8 +799,8 @@ export function ReaderView(props: {
     );
   }
 
-  function rate(level: KnowledgeLevel, eventValue: string) {
-    const token = currentToken();
+  function rate(level: KnowledgeLevel, eventValue: string, target?: StoryToken) {
+    const token = target ?? currentToken();
     if (!token?.key || !token.form_key || !token.surface_key) {
       return;
     }
@@ -785,12 +827,11 @@ export function ReaderView(props: {
     return displayLevelFor(token, knowledge, surfaceKnowledge);
   }
 
-  function markCanonical(level: "well_known" | "ignored" | "") {
-    const token = currentToken();
-    if (!token?.key) {
+  function markCanonical(level: "well_known" | "ignored" | "", targetKey?: string) {
+    const key = targetKey ?? currentToken()?.key;
+    if (!key) {
       return;
     }
-    const key = token.key;
     const previous = knowledge[key]?.level ?? "";
     setKnowledge(key, "level", level);
     void setWordKnowledge(key, { language: language(), level }).catch(() => {
@@ -805,6 +846,7 @@ export function ReaderView(props: {
       return;
     }
     const position = token.position;
+    setPopupVisible(false);
     setAnalysis({ mode: "sentence", position });
     enqueue({ event_type: "sentence_break", position });
     void ensureSentence(position);
@@ -825,6 +867,8 @@ export function ReaderView(props: {
       if (playbackToken !== sentencePlaybackToken) return;
       const player = new Audio(speech.url);
       sentenceAudio = player;
+      activeSentenceWords = speech.words;
+      bindPlaybackState(player, playbackToken);
       player.onended = () => finishSpeechPlayback(playbackToken);
       player.onerror = () => {
         if (playbackToken === sentencePlaybackToken) {
@@ -842,8 +886,8 @@ export function ReaderView(props: {
     }
   }
 
-  async function playCurrentWord() {
-    const token = currentToken();
+  async function playCurrentWord(target?: StoryToken) {
+    const token = target ?? currentToken();
     if (!token?.is_word) return;
     const span = sentenceSpans().find((candidate) =>
       token.position >= candidate.start_position && token.position < candidate.end_position);
@@ -864,6 +908,8 @@ export function ReaderView(props: {
       const player = new Audio(speech.url);
       player.preload = "auto";
       sentenceAudio = player;
+      activeSentenceWords = [];
+      bindPlaybackState(player, playbackToken);
       await waitForAudioMetadata(player);
       if (playbackToken !== sentencePlaybackToken) return;
       player.currentTime = timing.start;
@@ -913,6 +959,45 @@ export function ReaderView(props: {
       sentenceAnimationFrame = requestAnimationFrame(frame);
     };
     frame();
+  }
+
+  function bindPlaybackState(player: HTMLAudioElement, playbackToken: number) {
+    const update = () => {
+      if (playbackToken !== sentencePlaybackToken) return;
+      setAudioCurrentTime(Number.isFinite(player.currentTime) ? player.currentTime : 0);
+      setAudioDuration(Number.isFinite(player.duration) ? player.duration : 0);
+    };
+    player.addEventListener("loadedmetadata", update);
+    player.addEventListener("durationchange", update);
+    player.addEventListener("timeupdate", update);
+    player.addEventListener("play", () => {
+      if (playbackToken === sentencePlaybackToken) setAudioPlaying(true);
+    });
+    player.addEventListener("pause", () => {
+      if (playbackToken === sentencePlaybackToken) setAudioPlaying(false);
+    });
+  }
+
+  function toggleSentencePlayback() {
+    const player = sentenceAudio;
+    if (!player) {
+      void playCurrentSentence();
+      return;
+    }
+    if (player.paused) {
+      void player.play().then(() => {
+        animateSentencePlayback(player, activeSentenceWords, sentencePlaybackToken);
+      }).catch(() => appStore.showToast("Sentence audio could not be played.", "error"));
+      return;
+    }
+    player.pause();
+    clearSpeakingWord();
+  }
+
+  function seekSentencePlayback(value: number) {
+    if (!sentenceAudio || !Number.isFinite(value)) return;
+    sentenceAudio.currentTime = Math.min(Math.max(0, value), audioDuration());
+    setAudioCurrentTime(sentenceAudio.currentTime);
   }
 
   async function loadSentenceSpeech(
@@ -1112,6 +1197,10 @@ export function ReaderView(props: {
     const playbackToken = ++sentencePlaybackToken;
     sentenceAudio?.pause();
     sentenceAudio = null;
+    activeSentenceWords = [];
+    setAudioPlaying(false);
+    setAudioCurrentTime(0);
+    setAudioDuration(0);
     if (sentenceAnimationFrame !== undefined) {
       cancelAnimationFrame(sentenceAnimationFrame);
       sentenceAnimationFrame = undefined;
@@ -1127,6 +1216,7 @@ export function ReaderView(props: {
       sentenceAnimationFrame = undefined;
     }
     clearSpeakingWord();
+    setAudioPlaying(false);
     sentenceAudio = null;
   }
 
@@ -1166,11 +1256,6 @@ export function ReaderView(props: {
     }
   }
 
-  function openWordBreakdown(key: string) {
-    setAnalysis({ mode: "word", key });
-    void ensureWord(key);
-  }
-
   async function ensureWord(key: string) {
     if (words[key] && words[key] !== "error") {
       return;
@@ -1181,10 +1266,6 @@ export function ReaderView(props: {
     } catch {
       setWords(key, "error");
     }
-  }
-
-  function breakdownEntry(active: Exclude<Analysis, null>): Loadable<unknown> | undefined {
-    return active.mode === "sentence" ? sentences[active.position] : words[active.key];
   }
 
   function scheduleProgressSave() {
@@ -1426,272 +1507,355 @@ export function ReaderView(props: {
     }
   }
 
+  function currentSentenceSpan(): SentenceSpan | undefined {
+    const position = currentToken()?.position;
+    return position === undefined ? undefined : sentenceSpans().find((span) =>
+      position >= span.start_position && position < span.end_position);
+  }
+
+  function sentenceTextAt(position: number): string {
+    const span = sentenceSpans().find((candidate) =>
+      position >= candidate.start_position && position < candidate.end_position);
+    if (!span) return "";
+    return tokens()
+      .filter((token) => token.position >= span.start_position && token.position < span.end_position)
+      .map((token) => token.surface)
+      .join("")
+      .trim();
+  }
+
+  function tokenInCurrentSentence(position: number): boolean {
+    const span = currentSentenceSpan();
+    return !!span && position >= span.start_position && position < span.end_position;
+  }
+
+  function moveSentence(direction: 1 | -1) {
+    const span = currentSentenceSpan();
+    if (!span) return;
+    const spans = sentenceSpans();
+    const index = spans.findIndex((candidate) => candidate.index === span.index);
+    const next = spans[index + direction];
+    if (next) setReaderCursorPosition(next.start_position);
+  }
+
+  function readingProgressPercent(): number {
+    const selectable = tokens().filter(isSelectableToken);
+    const current = currentToken()?.position;
+    if (!selectable.length || current === undefined) return 0;
+    const index = selectable.findIndex((token) => token.position >= current);
+    return Math.round(((Math.max(0, index) + 1) / selectable.length) * 100);
+  }
+
+  function dockWordToken(key: string): StoryToken | undefined {
+    const remembered = lastInspectedPosition();
+    const token = remembered === undefined
+      ? undefined
+      : tokens().find((candidate) => candidate.position === remembered);
+    return token?.key === key ? token : tokens().find((candidate) => candidate.key === key);
+  }
+
+  function bookmarkPosition() {
+    void queueProgressSave(currentProgressPosition())
+      .then(() => appStore.showToast("Reading position saved."))
+      .catch(() => appStore.showToast("That position could not be synced.", "error"));
+  }
+
+  function openTasks() {
+    if (props.onOpenTasks) {
+      props.onOpenTasks();
+    } else if (props.sessionId) {
+      window.location.hash = sessionHref(props.sessionId, "tasks");
+    }
+  }
+
   return (
-    <section class="reader-view">
-      <header class="reader-toolbar">
-        <h1>Reader</h1>
-        <p class="reader-hints" aria-label="Keyboard shortcuts">
-          <span><kbd>←</kbd><kbd>→</kbd> / <kbd>h</kbd><kbd>l</kbd> move · <kbd>j</kbd><kbd>k</kbd> scroll</span>
-          <span><kbd>Space</kbd> define</span>
-          <span><kbd>1</kbd>–<kbd>5</kbd> rate</span>
-          <span><kbd>w</kbd> known</span>
-          <span><kbd>i</kbd> ignore</span>
-          <span><kbd>s</kbd> sentence · <kbd>Shift</kbd>+<kbd>s</kbd> word</span>
-        </p>
-        <div class="reader-toolbar-actions">
-          <Show when={props.editable}>
-            <button
-              class="secondary-button"
-              type="button"
-              disabled={status() !== "ready" || storySaving()}
-              onClick={beginStoryEdit}
-            >
-              Edit story
-            </button>
-          </Show>
-          <Show when={props.canGenerateTasks}>
-            <button
-              class="secondary-button reader-selection-task-button"
-              type="button"
-              disabled={status() !== "ready" || !taskSelection() || taskGenerating()}
-              title={taskSelection() ? "Generate practice tasks from the highlighted passage" : "Select a passage in the story first"}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => void generateTasksForSelection()}
-            >
-              {taskGenerating()
-                ? "Starting tasks…"
-                : taskSelection()
-                  ? `Generate tasks (${taskSelection()!.wordCount} words)`
-                  : "Select text for tasks"}
-            </button>
-          </Show>
-          <button
-            class="secondary-button reader-audio-button"
-            type="button"
-            disabled={status() !== "ready" || audioGeneration().status === "generating" || missingSentenceAudio().length === 0}
-            aria-busy={audioGeneration().status === "generating"}
-            onClick={() => void generateMissingSentenceAudio()}
-          >
-            {status() === "ready" ? audioGenerationLabel() : "Generate audio"}
-          </button>
-          <button
-            class="secondary-button reader-exit-button"
-            type="button"
-            disabled={status() !== "ready" || exitStatus() === "saving"}
-            onClick={() => void exitReader()}
-          >
-            {exitStatus() === "saving" ? "Saving…" : "Exit reader"}
-          </button>
+    <div
+      class="reader-view"
+      data-study-open={analysis() ? "" : undefined}
+      data-color-knowledge={displaySettings.colorKnowledge ? "" : undefined}
+      data-line-highlight={displaySettings.lineHighlight ? "" : undefined}
+      data-word-highlight={displaySettings.wordHighlight ? "" : undefined}
+    >
+      <header class="reader-player">
+        <div class="reader-player-title">
+          <span class="reader-player-kicker">Reading</span>
+          <strong>{props.title || "Reader"}</strong>
         </div>
+        <div class="reader-player-transport" aria-label="Sentence playback">
+          <button type="button" aria-label="Previous sentence" onClick={() => moveSentence(-1)}>‹</button>
+          <button
+            class="reader-player-play"
+            type="button"
+            aria-label={audioPlaying() ? "Pause sentence" : "Play sentence"}
+            onClick={toggleSentencePlayback}
+          >
+            {audioPlaying() ? "Ⅱ" : "▶"}
+          </button>
+          <button type="button" aria-label="Next sentence" onClick={() => moveSentence(1)}>›</button>
+          <span class="reader-player-time">{formatAudioTime(audioCurrentTime())}</span>
+          <input
+            type="range"
+            min="0"
+            max={Math.max(audioDuration(), 0.01)}
+            step="0.01"
+            value={audioCurrentTime()}
+            aria-label="Audio position"
+            disabled={!audioDuration()}
+            onInput={(event) => seekSentencePlayback(Number(event.currentTarget.value))}
+          />
+          <span class="reader-player-time">{formatAudioTime(audioDuration())}</span>
+        </div>
+        <div class="reader-player-progress" aria-label={`${readingProgressPercent()}% read`}>
+          <span>{readingProgressPercent()}%</span>
+          <span class="reader-player-progress-track"><i style={{ width: `${readingProgressPercent()}%` }} /></span>
+        </div>
+        <details class="reader-more-menu">
+          <summary aria-label="Reader actions">•••</summary>
+          <div>
+            <Show when={props.editable}>
+              <button type="button" disabled={status() !== "ready" || storySaving()} onClick={beginStoryEdit}>Edit story</button>
+            </Show>
+            <Show when={props.canGenerateTasks}>
+              <button
+                type="button"
+                disabled={status() !== "ready" || !taskSelection() || taskGenerating()}
+                title={taskSelection() ? "Generate tasks from the selected passage" : "Select a passage first"}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => void generateTasksForSelection()}
+              >
+                {taskGenerating() ? "Starting tasks…" : taskSelection() ? `Tasks from ${taskSelection()!.wordCount} words` : "Tasks from selection"}
+              </button>
+            </Show>
+            <button
+              type="button"
+              disabled={status() !== "ready" || audioGeneration().status === "generating" || missingSentenceAudio().length === 0}
+              onClick={() => void generateMissingSentenceAudio()}
+            >
+              {status() === "ready" ? audioGenerationLabel() : "Generate audio"}
+            </button>
+          </div>
+        </details>
       </header>
 
-      <Show when={storyActionError()}>
-        {(message) => <p class="form-error reader-story-action-error" role="alert">{message()}</p>}
-      </Show>
+      <div class="reader-shell-body">
+        <nav class="reader-left-rail" aria-label="Reader navigation">
+          <button type="button" onClick={() => void exitReader()} disabled={exitStatus() === "saving"}>
+            <span aria-hidden="true">←</span><span>{exitStatus() === "saving" ? "Saving" : "Exit"}</span>
+          </button>
+          <button type="button" onClick={() => readerTextEl?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+            <span aria-hidden="true">☰</span><span>Contents</span>
+          </button>
+          <button type="button" disabled title="Search will arrive with long-form book support">
+            <span aria-hidden="true">⌕</span><span>Search</span>
+          </button>
+          <button type="button" onClick={bookmarkPosition}>
+            <span aria-hidden="true">◇</span><span>Bookmark</span>
+          </button>
+          <button type="button" class="reader-rail-tasks" onClick={openTasks} disabled={!props.sessionId}>
+            <span aria-hidden="true">✓</span><span>Tasks</span>
+            <Show when={(props.pendingTasks ?? 0) > 0}><b>{props.pendingTasks}</b></Show>
+          </button>
+          <button
+            type="button"
+            data-active={displayPanelOpen() ? "" : undefined}
+            aria-expanded={displayPanelOpen()}
+            onClick={() => setDisplayPanelOpen((open) => !open)}
+          >
+            <span class="reader-aa" aria-hidden="true">Aa</span><span>Display</span>
+          </button>
+        </nav>
 
-      <Show when={storyEditorOpen()}>
-        <form
-          class="reader-story-editor"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void saveStoryEdit();
-          }}
-        >
-          <label for="reader-story-text">Story text</label>
-          <textarea
-            id="reader-story-text"
-            rows={14}
-            value={storyDraft()}
-            disabled={storySaving()}
-            ref={(element) => window.setTimeout(() => element.focus())}
-            onInput={(event) => {
-              setStoryDraft(event.currentTarget.value);
-              setStoryActionError("");
-            }}
-          />
-          <p class="reader-story-edit-note">
-            Saving retokenizes the story and resets this session’s reading progress, generated tasks, glossary, and prepared audio. Your learned-word history stays intact.
-          </p>
-          <div class="reader-story-edit-actions">
-            <button class="primary-button" type="submit" disabled={storySaving()}>
-              {storySaving() ? "Saving…" : "Save story"}
-            </button>
-            <button class="secondary-button" type="button" disabled={storySaving()} onClick={cancelStoryEdit}>Cancel</button>
-          </div>
-        </form>
-      </Show>
+        <main class="reader-reading-column">
+          <Show when={displayPanelOpen()}>
+            <aside class="reader-display-panel" aria-label="Reader display settings">
+              <header><strong>Reading display</strong><button type="button" aria-label="Close display settings" onClick={() => setDisplayPanelOpen(false)}>×</button></header>
+              <label><input type="checkbox" checked={displaySettings.colorKnowledge} onChange={(event) => setDisplaySettings("colorKnowledge", event.currentTarget.checked)} /> Color words by knowledge</label>
+              <label><input type="checkbox" checked={displaySettings.lineHighlight} onChange={(event) => setDisplaySettings("lineHighlight", event.currentTarget.checked)} /> Highlight current line</label>
+              <label><input type="checkbox" checked={displaySettings.wordHighlight} onChange={(event) => setDisplaySettings("wordHighlight", event.currentTarget.checked)} /> Highlight current word</label>
+              <label><input type="checkbox" checked={displaySettings.popupEnabled} onChange={(event) => {
+                setDisplaySettings("popupEnabled", event.currentTarget.checked);
+                if (!event.currentTarget.checked) setPopupVisible(false);
+              }} /> Definition popup on Space</label>
+            </aside>
+          </Show>
 
-      <Show when={!storyEditorOpen()}>
-        <Switch>
-          <Match when={status() === "loading"}>
-            <p class="reader-status" role="status" aria-busy="true">Loading story…</p>
-          </Match>
-          <Match when={status() === "error"}>
-            <div class="reader-status reader-status-error" role="alert">
-              <p>This story could not be loaded.</p>
-              <p><a href={routeHref("/")}>Back home</a></p>
-            </div>
-          </Match>
-          <Match when={status() === "ready"}>
-            <div class="reader-text" lang={language()} ref={readerTextEl}>
-              <For each={tokens()}>
-                {(token) => (
-                  <Show
-                    when={token.is_word && token.key}
-                    fallback={<span
-                      class="reader-gap"
-                      data-task-selected={taskTokenSelected(token.position) ? "" : undefined}
-                      ref={(element) => (tokenEls[token.position] = element)}
-                    >{token.surface}</span>}
-                  >
-                    <span
-                      class="reader-word"
-                      data-level={dataLevel(displayLevel(token))}
-                      data-task-selected={taskTokenSelected(token.position) ? "" : undefined}
-                      ref={(el) => {
-                        wordEls[token.position] = el;
-                        tokenEls[token.position] = el;
-                      }}
-                      onClick={() => setReaderCursorPosition(token.position)}
-                    >
-                      {token.surface}
-                    </span>
-                  </Show>
-                )}
-              </For>
-            </div>
-            <div class="reader-finish-panel">
-              <Show
-                when={finishedAt()}
-                fallback={
-                  <button
-                    class="primary-button reader-finish-button"
-                    type="button"
-                    disabled={finishStatus() === "saving"}
-                    onClick={() => void finishReading()}
-                  >
-                    {finishStatus() === "saving" ? "Saving…" : "Finished reading"}
-                  </button>
-                }
-              >
-                <p><strong>Finished reading</strong></p>
-                <div class="reader-finish-actions">
-                  <button class="secondary-button" type="button" disabled={exitStatus() === "saving"} onClick={() => void exitReader()}>
-                    {exitStatus() === "saving" ? "Saving…" : "Exit reader"}
-                  </button>
-                  <Show when={props.sessionId}>
-                    <button class="secondary-button" type="button" disabled={archiveStatus() === "saving"} onClick={() => void archiveFinishedStory()}>
-                      {archiveStatus() === "saving" ? "Archiving…" : "Archive story"}
-                    </button>
-                  </Show>
-                </div>
+          <Show when={storyActionError()}>
+            {(message) => <p class="form-error reader-story-action-error" role="alert">{message()}</p>}
+          </Show>
+
+          <Show when={storyEditorOpen()}>
+            <form class="reader-story-editor" onSubmit={(event) => { event.preventDefault(); void saveStoryEdit(); }}>
+              <label for="reader-story-text">Story text</label>
+              <textarea
+                id="reader-story-text"
+                rows={14}
+                value={storyDraft()}
+                disabled={storySaving()}
+                ref={(element) => window.setTimeout(() => element.focus())}
+                onInput={(event) => { setStoryDraft(event.currentTarget.value); setStoryActionError(""); }}
+              />
+              <p class="reader-story-edit-note">Saving retokenizes the story and resets this session’s reading progress, generated tasks, glossary, and prepared audio. Your learned-word history stays intact.</p>
+              <div class="reader-story-edit-actions">
+                <button class="primary-button" type="submit" disabled={storySaving()}>{storySaving() ? "Saving…" : "Save story"}</button>
+                <button class="secondary-button" type="button" disabled={storySaving()} onClick={cancelStoryEdit}>Cancel</button>
+              </div>
+            </form>
+          </Show>
+
+          <Show when={!storyEditorOpen()}>
+            <Switch>
+              <Match when={status() === "loading"}><p class="reader-status" role="status" aria-busy="true">Loading story…</p></Match>
+              <Match when={status() === "error"}>
+                <div class="reader-status reader-status-error" role="alert"><p>This story could not be loaded.</p><p><a href={routeHref("/")}>Back home</a></p></div>
+              </Match>
+              <Match when={status() === "ready"}>
+                <article class="reader-paper">
+                  <div class="reader-text" lang={language()} ref={readerTextEl}>
+                    <For each={tokens()}>
+                      {(token) => (
+                        <Show
+                          when={token.is_word && token.key}
+                          fallback={<span
+                            class="reader-gap"
+                            data-current-line={tokenInCurrentSentence(token.position) ? "" : undefined}
+                            data-task-selected={taskTokenSelected(token.position) ? "" : undefined}
+                            ref={(element) => (tokenEls[token.position] = element)}
+                          >{token.surface}</span>}
+                        >
+                          <span
+                            class="reader-word"
+                            data-level={dataLevel(displayLevel(token))}
+                            data-current-line={tokenInCurrentSentence(token.position) ? "" : undefined}
+                            data-task-selected={taskTokenSelected(token.position) ? "" : undefined}
+                            ref={(el) => { wordEls[token.position] = el; tokenEls[token.position] = el; }}
+                            onClick={() => setReaderCursorPosition(token.position)}
+                          >{token.surface}</span>
+                        </Show>
+                      )}
+                    </For>
+                  </div>
+                  <div class="reader-finish-panel">
+                    <Show when={finishedAt()} fallback={
+                      <button class="primary-button reader-finish-button" type="button" disabled={finishStatus() === "saving"} onClick={() => void finishReading()}>
+                        {finishStatus() === "saving" ? "Saving…" : "Finished reading"}
+                      </button>
+                    }>
+                      <p><strong>Finished reading</strong></p>
+                      <div class="reader-finish-actions">
+                        <button class="secondary-button" type="button" disabled={exitStatus() === "saving"} onClick={() => void exitReader()}>{exitStatus() === "saving" ? "Saving…" : "Exit reader"}</button>
+                        <Show when={props.sessionId}><button class="secondary-button" type="button" disabled={archiveStatus() === "saving"} onClick={() => void archiveFinishedStory()}>{archiveStatus() === "saving" ? "Archiving…" : "Archive story"}</button></Show>
+                      </div>
+                    </Show>
+                  </div>
+                </article>
+              </Match>
+            </Switch>
+          </Show>
+        </main>
+
+        <Show when={analysis()}>
+          {(active) => (
+            <aside class="reader-study-dock" aria-label={active().mode === "sentence" ? "Sentence study" : "Word study"}>
+              <header class="reader-study-head">
+                <span>{active().mode === "sentence" ? "Sentence" : "Word"}</span>
+                <button type="button" aria-label="Close study panel" onClick={() => setAnalysis(null)}>×</button>
+              </header>
+              <Show when={active().mode === "word" ? active() as Extract<Analysis, { mode: "word" }> : undefined}>
+                {(wordAnalysis) => {
+                  const key = () => wordAnalysis().key;
+                  const token = () => dockWordToken(key());
+                  const note = () => loadedDefinition(key())?.grammatical_note;
+                  const record = () => loadedBreakdownRecord(words[key()]);
+                  return (
+                    <div class="reader-word-study">
+                      <div class="reader-study-word-title">
+                        <h2 lang={language()}>{token()?.surface || key()}</h2>
+                        <button type="button" aria-label="Play word" title="Play word" onClick={() => {
+                          const inspected = token();
+                          void playCurrentWord(inspected);
+                        }}>▶</button>
+                      </div>
+                      <Show when={token()?.surface !== key()}><p class="reader-study-lemma" lang={language()}>{key()}</p></Show>
+                      <Show when={note()}>{(grammar) => <p class="reader-study-grammar"><abbr title={grammar()}>{compactGrammarNote(grammar())}</abbr></p>}</Show>
+                      <Show when={token()}>
+                        {(ratedToken) => (
+                          <div class="reader-levels reader-study-levels" role="group" aria-label="Knowledge level">
+                            <For each={LEVELS}>
+                              {(level) => (
+                                <button
+                                  type="button"
+                                  class="reader-level"
+                                  data-level={dataLevel(level.value)}
+                                  data-active={surfaceLevel(ratedToken()) === level.value ? "" : undefined}
+                                  aria-pressed={surfaceLevel(ratedToken()) === level.value}
+                                  title={level.hint}
+                                  onClick={() => rate(level.value, level.event, ratedToken())}
+                                >{level.label.toUpperCase()}</button>
+                              )}
+                            </For>
+                          </div>
+                        )}
+                      </Show>
+                      <section class="reader-study-section"><h3>Definition</h3>{definitionArea(key(), true)}</section>
+                      <Show when={record()} fallback={breakdownBody(words[key()], "word")}>
+                        {(details) => (
+                          <>
+                            <details class="reader-study-disclosure">
+                              <summary><span>{inflectionLabel(note())}</span><small>View</small></summary>
+                              <div>{renderJSON(details().morphology ?? details().forms ?? "No inflection details returned.")}</div>
+                            </details>
+                            <Show when={details().root || details().morphology}>
+                              <section class="reader-study-section"><h3>Word parts</h3><Show when={details().root}><p class="reader-root" lang={language()}>{String(details().root)}</p></Show><Show when={details().morphology}><div>{renderJSON(details().morphology)}</div></Show></section>
+                            </Show>
+                            <Show when={details().etymology}><section class="reader-study-section"><h3>Etymology</h3><div>{renderJSON(details().etymology)}</div></section></Show>
+                            <Show when={details().related}><section class="reader-study-section"><h3>Related words</h3><div>{renderJSON(details().related)}</div></section></Show>
+                            <Show when={details().examples}><section class="reader-study-section"><h3>Examples</h3><div>{renderJSON(details().examples)}</div></section></Show>
+                          </>
+                        )}
+                      </Show>
+                      <div class="reader-canonical-actions" role="group" aria-label="Lemma knowledge">
+                        <button type="button" class="reader-deep" data-active={knowledge[key()]?.level === "well_known" ? "" : undefined} onClick={() => markCanonical("well_known", key())}>Mark lemma known</button>
+                        <button type="button" class="reader-deep" data-active={knowledge[key()]?.level === "ignored" ? "" : undefined} onClick={() => markCanonical("ignored", key())}>Ignore lemma</button>
+                      </div>
+                      <Show when={(knowledge[key()]?.lookup_count ?? 0) > 0}><p class="reader-popup-meta">Looked up {knowledge[key()]?.lookup_count}×</p></Show>
+                    </div>
+                  );
+                }}
               </Show>
-            </div>
-          </Match>
-        </Switch>
-      </Show>
+              <Show when={active().mode === "sentence" ? active() as Extract<Analysis, { mode: "sentence" }> : undefined}>
+                {(sentenceAnalysis) => (
+                  <div class="reader-sentence-study">
+                    <p class="reader-study-sentence" lang={language()}>{sentenceTextAt(sentenceAnalysis().position)}</p>
+                    {sentenceStudyBody(sentences[sentenceAnalysis().position])}
+                  </div>
+                )}
+              </Show>
+            </aside>
+          )}
+        </Show>
 
-      <Show when={popupVisible() ? currentToken() : undefined}>
+        <nav class="reader-right-rail" aria-label="Study tools">
+          <button type="button" data-active={analysis()?.mode === "word" ? "" : undefined} onClick={openRememberedWord}><span>W</span><b>Word</b></button>
+          <button type="button" data-active={analysis()?.mode === "sentence" ? "" : undefined} onClick={openSentenceBreakdown}><span>S</span><b>Sentence</b></button>
+        </nav>
+      </div>
+
+      <Show when={popupVisible() && displaySettings.popupEnabled ? currentToken() : undefined}>
         {(token) => (
           <Show when={token().key}>
             {(key) => (
               <aside class="reader-popup" style={popupStyle()} role="dialog" aria-label="Word definition" ref={(el) => (popupEl = el)}>
-                <button class="reader-popup-close" type="button" aria-label="Close" onClick={() => setPopupVisible(false)}>
-                  ×
-                </button>
+                <button class="reader-popup-close" type="button" aria-label="Close" onClick={() => setPopupVisible(false)}>×</button>
                 <p class="reader-popup-surface" lang={language()}>{token().surface}</p>
-                <p class="reader-popup-key" lang={language()}>{key()}</p>
+                <Show when={token().surface !== key()}><p class="reader-popup-key" lang={language()}>{key()}</p></Show>
                 {definitionArea(key())}
-                <div class="reader-levels" role="group" aria-label="Knowledge level">
-                  <For each={LEVELS}>
-                    {(level) => (
-                      <button
-                        type="button"
-                        class="reader-level"
-                        data-level={dataLevel(level.value)}
-                        data-active={surfaceLevel(token()) === level.value ? "" : undefined}
-                        title={level.hint}
-                        onClick={(event) => {
-                          rate(level.value, level.event);
-                          event.currentTarget.blur();
-                        }}
-                      >
-                        {level.label}
-                      </button>
-                    )}
-                  </For>
-                </div>
-                <div class="reader-canonical-actions" role="group" aria-label="Lemma/root knowledge">
-                  <button
-                    type="button"
-                    class="reader-deep"
-                    data-active={knowledge[key()]?.level === "well_known" ? "" : undefined}
-                    onClick={(event) => {
-                      markCanonical("well_known");
-                      event.currentTarget.blur();
-                    }}
-                  >
-                    Mark lemma known
-                  </button>
-                  <button
-                    type="button"
-                    class="reader-deep"
-                    data-active={knowledge[key()]?.level === "ignored" ? "" : undefined}
-                    onClick={(event) => {
-                      markCanonical("ignored");
-                      event.currentTarget.blur();
-                    }}
-                  >
-                    Ignore lemma
-                  </button>
-                  <Show when={knowledge[key()]?.level === "well_known" || knowledge[key()]?.level === "ignored"}>
-                    <button
-                      type="button"
-                      class="reader-deep"
-                      onClick={(event) => {
-                        markCanonical("");
-                        event.currentTarget.blur();
-                      }}
-                    >
-                      Clear lemma mark
-                    </button>
-                  </Show>
-                </div>
-                <button
-                  type="button"
-                  class="reader-deep"
-                  onClick={(event) => {
-                    openWordBreakdown(key());
-                    event.currentTarget.blur();
-                  }}
-                >
-                  Deep breakdown
-                </button>
-                <Show when={(knowledge[key()]?.lookup_count ?? 0) > 0}>
-                  <p class="reader-popup-meta">Looked up {knowledge[key()]?.lookup_count}×</p>
-                </Show>
+                <button class="reader-popup-study-link" type="button" onClick={inspectCurrentWord}>Open in Word panel</button>
               </aside>
             )}
           </Show>
         )}
       </Show>
-
-      <Show when={analysis()}>
-        {(active) => (
-          <aside
-            class="reader-breakdown"
-            role="dialog"
-            aria-label={active().mode === "sentence" ? "Sentence breakdown" : "Word breakdown"}
-          >
-            <header class="reader-breakdown-head">
-              <h2>{active().mode === "sentence" ? "Sentence" : "Word"} breakdown</h2>
-              <button type="button" aria-label="Close" onClick={() => setAnalysis(null)}>×</button>
-            </header>
-            {breakdownBody(breakdownEntry(active()), active().mode)}
-          </aside>
-        )}
-      </Show>
-    </section>
+    </div>
   );
 }
 
@@ -1774,7 +1938,7 @@ function isSelectableToken(token: StoryToken | undefined): boolean {
   return Boolean(token?.is_word && token.key);
 }
 
-function definitionBody(entry: Loadable<Definition> | undefined, lang: string): JSX.Element {
+function definitionBody(entry: Loadable<Definition> | undefined, lang: string, showGrammar = true): JSX.Element {
   if (!entry || entry === "loading") {
     return <p class="reader-popup-loading">Looking up…</p>;
   }
@@ -1784,7 +1948,7 @@ function definitionBody(entry: Loadable<Definition> | undefined, lang: string): 
   return (
     <>
       <p class="reader-gloss">{entry.gloss}</p>
-      <Show when={entry.grammatical_note}>
+      <Show when={showGrammar && entry.grammatical_note}>
         <p class="reader-grammar">{entry.grammatical_note}</p>
       </Show>
       <Show when={entry.example}>
@@ -1796,6 +1960,108 @@ function definitionBody(entry: Loadable<Definition> | undefined, lang: string): 
       <Show when={entry.source !== "user"}>
         <span class="reader-source" data-source={entry.source}>{entry.source}</span>
       </Show>
+    </>
+  );
+}
+
+function readReaderDisplaySettings(): ReaderDisplaySettings {
+  const defaults: ReaderDisplaySettings = {
+    colorKnowledge: true,
+    lineHighlight: false,
+    wordHighlight: true,
+    popupEnabled: true,
+  };
+  try {
+    const stored = JSON.parse(localStorage.getItem(READER_DISPLAY_SETTINGS_KEY) ?? "null") as Partial<ReaderDisplaySettings> | null;
+    if (!stored) return defaults;
+    return {
+      colorKnowledge: typeof stored.colorKnowledge === "boolean" ? stored.colorKnowledge : defaults.colorKnowledge,
+      lineHighlight: typeof stored.lineHighlight === "boolean" ? stored.lineHighlight : defaults.lineHighlight,
+      wordHighlight: typeof stored.wordHighlight === "boolean" ? stored.wordHighlight : defaults.wordHighlight,
+      popupEnabled: typeof stored.popupEnabled === "boolean" ? stored.popupEnabled : defaults.popupEnabled,
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+function writeReaderDisplaySettings(settings: ReaderDisplaySettings) {
+  try {
+    localStorage.setItem(READER_DISPLAY_SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // Display preferences are optional; reading remains usable without storage.
+  }
+}
+
+function formatAudioTime(seconds: number): string {
+  const safe = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
+  return `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, "0")}`;
+}
+
+function compactGrammarNote(note: string): string {
+  const replacements: [RegExp, string][] = [
+    [/\bnoun\b/gi, "n."],
+    [/\bverb\b/gi, "v."],
+    [/\badjective\b/gi, "adj."],
+    [/\badverb\b/gi, "adv."],
+    [/\bpronoun\b/gi, "pron."],
+    [/\bpreposition\b/gi, "prep."],
+    [/\bconjunction\b/gi, "conj."],
+    [/\bmasculine\b/gi, "masc."],
+    [/\bfeminine\b/gi, "fem."],
+    [/\bneuter\b/gi, "neut."],
+    [/\bsingular\b/gi, "sg."],
+    [/\bplural\b/gi, "pl."],
+    [/\bnominative\b/gi, "nom."],
+    [/\bgenitive\b/gi, "gen."],
+    [/\baccusative\b/gi, "acc."],
+    [/\bvocative\b/gi, "voc."],
+    [/\bindicative\b/gi, "ind."],
+    [/\bsubjunctive\b/gi, "subj."],
+    [/\bimperative\b/gi, "imp."],
+    [/\bpresent\b/gi, "pres."],
+    [/\bimperfect\b/gi, "impf."],
+    [/\baorist\b/gi, "aor."],
+    [/\bactive\b/gi, "act."],
+    [/\bpassive\b/gi, "pass."],
+  ];
+  return replacements.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), note)
+    .replace(/\s*[;,]\s*/g, " · ");
+}
+
+function inflectionLabel(note: string | undefined): string {
+  if (/\bverb\b|\bv\./i.test(note ?? "")) return "Conjugation";
+  if (/\bnoun\b|\badjective\b|\bpronoun\b|\bn\.|\badj\.|\bpron\./i.test(note ?? "")) return "Declension";
+  return "Forms";
+}
+
+function loadedBreakdownRecord(entry: Loadable<unknown> | undefined): Record<string, unknown> | undefined {
+  return entry && entry !== "loading" && entry !== "error" ? asRecord(entry) : undefined;
+}
+
+function sentenceStudyBody(entry: Loadable<unknown> | undefined): JSX.Element {
+  if (!entry || entry === "loading") {
+    return <p class="reader-breakdown-loading" aria-busy="true">Analyzing…</p>;
+  }
+  if (entry === "error") {
+    return <p class="reader-breakdown-error">This sentence analysis is unavailable right now.</p>;
+  }
+  const record = asRecord(entry);
+  const graph = syntaxGraphFromBreakdown(entry);
+  return (
+    <>
+      <section class="reader-study-section">
+        <h3>Translation</h3>
+        <p>{stringValue(record?.translation) ?? "No translation returned."}</p>
+      </section>
+      <Show when={graph}>{(syntax) => <SyntaxGraphView graph={syntax()} />}</Show>
+      <Show when={Array.isArray(record?.phrases) && record!.phrases.length > 0}>
+        <section class="reader-study-section"><h3>Phrases & patterns</h3><div>{renderJSON(record!.phrases)}</div></section>
+      </Show>
+      <Show when={Array.isArray(record?.grammar) && record!.grammar.length > 0}>
+        <details class="reader-study-disclosure"><summary><span>Grammar notes</span><small>View</small></summary><div>{renderJSON(record!.grammar)}</div></details>
+      </Show>
+      <details class="reader-breakdown-details"><summary>All sentence details</summary><div class="reader-json">{renderJSON(entry)}</div></details>
     </>
   );
 }

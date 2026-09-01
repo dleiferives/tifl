@@ -142,6 +142,11 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
     return detail?.session_type === "user_added" &&
       (detail.status === "ready" || detail.status === "reading");
   });
+  const readerShellActive = createMemo(() => {
+    const detail = state.detail;
+    return props.step === "read" && detail?.content_type === "story" &&
+      (detail.status === "ready" || detail.status === "reading" || detail.status === "complete");
+  });
 
   async function loadSession(sessionID: string) {
     const seq = ++loadSeq;
@@ -499,7 +504,7 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
   );
 
   return (
-    <section class="session-shell">
+    <section class="session-shell" data-reader-active={readerShellActive() ? "" : undefined}>
       <Switch>
         <Match when={state.detailStatus === "loading"}>
           <div class="session-shell-state" aria-busy="true">Loading session...</div>
@@ -513,6 +518,7 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
         <Match when={state.detail}>
           {(detail) => (
             <>
+              <Show when={!readerShellActive()}>
               <header class="session-shell-header">
                 <div class="session-shell-title">
                   <a class="session-back-link" href={routeHref("/")}>Home</a>
@@ -557,6 +563,7 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
                   reviewUnlocked={canUseReview()}
                 />
               </header>
+              </Show>
 
               <Show when={actionError()}>
                 <p class="form-error" role="alert">{actionError()}</p>
@@ -576,10 +583,13 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
                       story={state.story}
                       storyStatus={state.storyStatus}
                       active={props.step === "read"}
+                      title={title()}
+                      pendingTasks={Math.max(0, total() - completed())}
                       onReady={refreshFromGeneration}
                       onReadingStarted={noteReadingStarted}
                       onStoryUpdated={() => void loadSession(props.sessionId)}
                       onTasksGenerating={() => setState("detail", "status", "generating")}
+                      onOpenTasks={() => { window.location.hash = sessionHref(props.sessionId, "tasks"); }}
                     />
                   </div>
                 </Show>
@@ -683,10 +693,13 @@ function ReadPanel(props: {
   story: StoryLoad | null;
   storyStatus: LoadStatus;
   active: boolean;
+  title: string;
+  pendingTasks: number;
   onReady: () => void;
   onReadingStarted: () => void;
   onStoryUpdated: () => void;
   onTasksGenerating: () => void;
+  onOpenTasks: () => void;
 }) {
   if (props.detail.status === "pending" || props.detail.status === "generating" || props.detail.status === "failed") {
     return <GenerationView sessionId={props.detail.session_id} onReady={props.onReady} />;
@@ -718,6 +731,8 @@ function ReadPanel(props: {
             <ReaderView
               storyId={storyID()}
               sessionId={props.detail.session_id}
+              title={props.title}
+              pendingTasks={props.pendingTasks}
               story={props.story}
               active={props.active}
               editable={props.detail.session_type === "user_added"}
@@ -726,6 +741,7 @@ function ReadPanel(props: {
               onReadingStarted={props.onReadingStarted}
               onStoryUpdated={props.onStoryUpdated}
               onTasksGenerating={props.onTasksGenerating}
+              onOpenTasks={props.onOpenTasks}
             />
           </>
         )}
