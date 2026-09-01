@@ -198,6 +198,7 @@ type Task struct {
 	UserID            string
 	TaskType          string
 	Language          string
+	SourceText        string // immutable source passage used for this task batch
 	Content           map[string]any
 	Response          map[string]any
 	InputMethod       string

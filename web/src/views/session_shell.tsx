@@ -140,7 +140,6 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
   const canGenerateTasks = createMemo(() => {
     const detail = state.detail;
     return detail?.session_type === "user_added" &&
-      detail.tasks.total === 0 &&
       (detail.status === "ready" || detail.status === "reading");
   });
 
@@ -727,7 +726,7 @@ function ReadPanel(props: {
               story={props.story}
               active={props.active}
               editable={props.detail.session_type === "user_added"}
-              canGenerateTasks={props.detail.session_type === "user_added" && props.detail.tasks.total === 0 &&
+              canGenerateTasks={props.detail.session_type === "user_added" &&
                 (props.detail.status === "ready" || props.detail.status === "reading")}
               onReadingStarted={props.onReadingStarted}
               onSessionComplete={props.onCompleted}

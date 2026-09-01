@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -663,9 +664,11 @@ func TestPipeline_RegenerateTaskReplacesInPlaceAndStaysGradeable(t *testing.T) {
 	}
 	target, err := repo.UpsertKnowledgeItem(ctx, domain.KnowledgeItem{Language: "xx", ItemType: "word", Key: "alpha"})
 	must(t, err)
+	latestTarget, err := repo.UpsertKnowledgeItem(ctx, domain.KnowledgeItem{Language: "xx", ItemType: "word", Key: "beta"})
+	must(t, err)
 
 	sess, err := repo.CreateSession(ctx, domain.Session{
-		UserID: domain.LocalUserID, Language: "xx", Level: "beginner", SelectedTargets: []string{target},
+		UserID: domain.LocalUserID, Language: "xx", Level: "beginner", SelectedTargets: []string{latestTarget},
 	})
 	must(t, err)
 	st, err := repo.CreateStory(ctx, domain.Story{
@@ -673,9 +676,10 @@ func TestPipeline_RegenerateTaskReplacesInPlaceAndStaysGradeable(t *testing.T) {
 		Text: "alpha beta gamma", SessionID: &sess.SessionID,
 	})
 	must(t, err)
-	must(t, repo.SetSessionSelection(ctx, sess.SessionID, st.StoryID, []string{target}, nil))
+	must(t, repo.SetSessionSelection(ctx, sess.SessionID, st.StoryID, []string{latestTarget}, nil))
 	oldTask, err := repo.CreateTask(ctx, domain.Task{
 		SessionID: sess.SessionID, UserID: domain.LocalUserID, TaskType: tasks.TypeComprehensionMC, Language: "xx",
+		SourceText: "focused excerpt",
 		Content: map[string]any{
 			"question": "old question", "options": []any{"x", "y"},
 			"correct_index": float64(0), "target_item_ids": []any{target},
@@ -720,6 +724,10 @@ func TestPipeline_RegenerateTaskReplacesInPlaceAndStaysGradeable(t *testing.T) {
 	if replaced.TaskID != oldTask.TaskID || replaced.Content["question"] != "new question" || replaced.GradedAt != nil || replaced.GradedBy != "" {
 		t.Fatalf("replacement mismatch: %+v", replaced)
 	}
+	if replaced.SourceText != "focused excerpt" || !strings.Contains(fmt.Sprint(replaced.Content["target_item_ids"]), target) ||
+		strings.Contains(fmt.Sprint(replaced.Content["target_item_ids"]), latestTarget) {
+		t.Fatalf("replacement did not retain its batch source/targets: %+v", replaced)
+	}
 	unchanged, err := repo.GetTask(ctx, domain.LocalUserID, sibling.TaskID)
 	must(t, err)
 	if unchanged.Content["question"] != "sibling question" {
@@ -731,7 +739,8 @@ func TestPipeline_RegenerateTaskReplacesInPlaceAndStaysGradeable(t *testing.T) {
 		t.Fatalf("report outcome mismatch: %+v", gotReport)
 	}
 	if len(client.Calls) != 1 || !strings.Contains(client.Calls[0].Req.System, "Rejected task content") ||
-		!strings.Contains(client.Calls[0].Req.System, "malformed") {
+		!strings.Contains(client.Calls[0].Req.System, "malformed") ||
+		!strings.Contains(client.Calls[0].Req.System+client.Calls[0].Req.User, "focused excerpt") {
 		t.Fatalf("replacement prompt missing negative example: %+v", client.Calls)
 	}
 

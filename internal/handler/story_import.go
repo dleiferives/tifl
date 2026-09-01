@@ -196,15 +196,6 @@ func (h *Handler) generateStoryTasks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, errors.New("completed sessions cannot generate new tasks"))
 		return
 	}
-	existing, err := h.repo.ListSessionTasks(r.Context(), sess.SessionID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	if len(existing) > 0 {
-		writeError(w, http.StatusConflict, errors.New("story already has generated tasks"))
-		return
-	}
 	var req generateStoryTasksRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
@@ -230,7 +221,7 @@ func (h *Handler) generateStoryTasks(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, story.ErrTaskSourceRange), errors.Is(err, story.ErrTaskSourceEmpty):
 			writeError(w, http.StatusBadRequest, err)
 		case errors.Is(err, db.ErrUserStoryConflict):
-			writeError(w, http.StatusConflict, errors.New("story already has generated tasks or is currently generating"))
+			writeError(w, http.StatusConflict, errors.New("story is currently generating"))
 		default:
 			writeError(w, http.StatusInternalServerError, err)
 		}
@@ -238,10 +229,6 @@ func (h *Handler) generateStoryTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	previousStatus := sess.Status
-	if err := h.repo.UpdateSessionStatus(r.Context(), sess.SessionID, domain.StatusGenerating); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
 	if h.generationQueue != nil {
 		if err := h.generationQueue.EnqueueGeneration(r.Context(), sess.SessionID, userID); err != nil {
 			_ = h.repo.UpdateSessionStatus(r.Context(), sess.SessionID, previousStatus)

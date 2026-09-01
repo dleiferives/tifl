@@ -378,8 +378,8 @@ func (r *SQLRepository) SetSessionSelection(ctx context.Context, sessionID, stor
 }
 
 // SetUserStoryTaskSource atomically records the excerpt and vocabulary targets
-// an asynchronous task-generation worker must use. It refuses to change a
-// session while generation is active or after tasks already exist.
+// an asynchronous task-generation worker must use. Existing tasks are kept;
+// task-stage checkpoints are cleared so Retry appends one fresh batch.
 func (r *SQLRepository) SetUserStoryTaskSource(ctx context.Context, userID, sessionID, storyID, sourceText string, targets []string) error {
 	return r.inTx(ctx, func(tx *dtx) error {
 		var status, sessionType string
@@ -396,18 +396,17 @@ func (r *SQLRepository) SetUserStoryTaskSource(ctx context.Context, userID, sess
 		if sessionType != string(domain.SessionUserAdded) || status == string(domain.StatusPending) || status == string(domain.StatusGenerating) {
 			return ErrUserStoryConflict
 		}
-		var taskCount int
-		if err := tx.queryRow(ctx, `SELECT COUNT(*) FROM tasks WHERE session_id = ?`, sessionID).Scan(&taskCount); err != nil {
+		if _, err := tx.exec(ctx,
+			`DELETE FROM session_generation_stages WHERE session_id = ? AND stage LIKE ?`,
+			sessionID, domain.StageTaskPrefix+"%"); err != nil {
 			return err
-		}
-		if taskCount != 0 {
-			return ErrUserStoryConflict
 		}
 		res, err := tx.exec(ctx,
 			`UPDATE sessions
-			 SET selected_targets = ?, selected_new = ?, task_source_text = ?
+			 SET selected_targets = ?, selected_new = ?, task_source_text = ?, status = ?
 			 WHERE session_id = ? AND user_id = ? AND story_id = ?`,
-			marshalStrings(targets), marshalStrings(nil), nullEmpty(sourceText), sessionID, userID, storyID)
+			marshalStrings(targets), marshalStrings(nil), nullEmpty(sourceText), string(domain.StatusGenerating),
+			sessionID, userID, storyID)
 		if err != nil {
 			return err
 		}
@@ -793,10 +792,10 @@ func (r *SQLRepository) CreateTask(ctx context.Context, t domain.Task, targets [
 
 	err = r.inTx(ctx, func(tx *dtx) error {
 		if _, err := tx.exec(ctx,
-			`INSERT INTO tasks(task_id, session_id, user_id, task_type, language, content,
+			`INSERT INTO tasks(task_id, session_id, user_id, task_type, language, source_text, content,
 			   response, input_method, media_path, grade, reference_assisted, graded_by, graded_at, attempt_count, created_at)
-			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			t.TaskID, t.SessionID, t.UserID, t.TaskType, t.Language, content,
+			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			t.TaskID, t.SessionID, t.UserID, t.TaskType, t.Language, nullEmpty(t.SourceText), content,
 			response, nullEmpty(t.InputMethod), nullEmpty(t.MediaPath), grade,
 			boolToInt(t.ReferenceAssisted), nullEmpty(t.GradedBy), nullFloat(t.GradedAt), 1, t.CreatedAt); err != nil {
 			return err
@@ -818,7 +817,7 @@ func (r *SQLRepository) CreateTask(ctx context.Context, t domain.Task, targets [
 
 func (r *SQLRepository) GetTask(ctx context.Context, userID, taskID string) (domain.Task, error) {
 	row := r.queryRow(ctx,
-		`SELECT task_id, session_id, user_id, task_type, language, content, response,
+		`SELECT task_id, session_id, user_id, task_type, language, source_text, content, response,
 		        input_method, media_path, grade, reference_assisted, graded_by, graded_at, attempt_count, created_at
 		 FROM tasks WHERE task_id = ? AND user_id = ?`, taskID, userID)
 	t, err := scanTask(row)
@@ -826,6 +825,36 @@ func (r *SQLRepository) GetTask(ctx context.Context, userID, taskID string) (dom
 		return domain.Task{}, ErrNotFound
 	}
 	return t, err
+}
+
+func (r *SQLRepository) ListTaskTargetItems(ctx context.Context, taskID string) ([]domain.KnowledgeItem, error) {
+	rows, err := r.query(ctx,
+		`SELECT k.item_id, k.language, k.item_type, k.key, k.frequency, k.metadata
+		 FROM task_targets tt JOIN knowledge_items k ON k.item_id = tt.item_id
+		 WHERE tt.task_id = ? ORDER BY k.item_id`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.KnowledgeItem
+	for rows.Next() {
+		var (
+			item domain.KnowledgeItem
+			freq sql.NullInt64
+			meta sql.NullString
+		)
+		if err := rows.Scan(&item.ItemID, &item.Language, &item.ItemType, &item.Key, &freq, &meta); err != nil {
+			return nil, err
+		}
+		if freq.Valid {
+			item.Frequency = int(freq.Int64)
+		}
+		if item.Metadata, err = unmarshalJSON(meta); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
 }
 
 func (r *SQLRepository) RecordTaskGrade(ctx context.Context, userID, taskID string, g domain.TaskGrade) error {
@@ -903,7 +932,7 @@ func (r *SQLRepository) IncrementTaskAttempt(ctx context.Context, taskID string)
 
 func (r *SQLRepository) ListSessionTasks(ctx context.Context, sessionID string) ([]domain.Task, error) {
 	rows, err := r.query(ctx,
-		`SELECT task_id, session_id, user_id, task_type, language, content, response,
+		`SELECT task_id, session_id, user_id, task_type, language, source_text, content, response,
 		        input_method, media_path, grade, reference_assisted, graded_by, graded_at, attempt_count, created_at
 		 FROM tasks WHERE session_id = ? ORDER BY created_at, task_id`, sessionID)
 	if err != nil {
@@ -1099,13 +1128,13 @@ func scanTask(row rowScanner) (domain.Task, error) {
 	var (
 		t                                domain.Task
 		content                          sql.NullString
-		response, grade                  sql.NullString
+		response, grade, sourceText      sql.NullString
 		inputMethod, mediaPath, gradedBy sql.NullString
 		gradedAt                         sql.NullFloat64
 		referenceAssisted                int
 	)
 	if err := row.Scan(&t.TaskID, &t.SessionID, &t.UserID, &t.TaskType, &t.Language,
-		&content, &response, &inputMethod, &mediaPath, &grade, &referenceAssisted, &gradedBy, &gradedAt, &t.AttemptCount, &t.CreatedAt); err != nil {
+		&sourceText, &content, &response, &inputMethod, &mediaPath, &grade, &referenceAssisted, &gradedBy, &gradedAt, &t.AttemptCount, &t.CreatedAt); err != nil {
 		return domain.Task{}, err
 	}
 	var err error
@@ -1119,6 +1148,7 @@ func scanTask(row rowScanner) (domain.Task, error) {
 		return domain.Task{}, err
 	}
 	t.InputMethod = inputMethod.String
+	t.SourceText = sourceText.String
 	t.MediaPath = mediaPath.String
 	t.ReferenceAssisted = referenceAssisted != 0
 	t.GradedBy = gradedBy.String

@@ -238,6 +238,7 @@ type Repository interface {
 	// task_targets (from tasks.TaskType.Targets) atomically.
 	CreateTask(ctx context.Context, t domain.Task, targets []string) (domain.Task, error)
 	ListSessionTasks(ctx context.Context, sessionID string) ([]domain.Task, error)
+	ListTaskTargetItems(ctx context.Context, taskID string) ([]domain.KnowledgeItem, error)
 	// GetTask returns one task by id, scoped to the owning user (ErrNotFound when
 	// no task matches both id and user). RecordTaskGrade persists a graded
 	// submission — response, input_method, grade, reference_assisted, graded_by, graded_at — in one

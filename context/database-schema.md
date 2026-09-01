@@ -294,14 +294,16 @@ sessions
   level               TEXT  NOT NULL
   selected_targets    JSON              item_ids that were in the targets[] bucket
   selected_new        JSON              item_ids that were in the new[] bucket
+  task_source_text    TEXT              optional selected story excerpt for the next task batch
   created_at          REAL  NOT NULL
   reading_started_at  REAL
   completed_at        REAL
 ```
 
 `selected_targets` and `selected_new` record what the selection layer chose for
-this session. This is training data for the predictor: did the targeted items show
-improved signals afterward?
+the latest task batch. `task_source_text` is null when the full story is used.
+Each generated task snapshots its own source and targets, so later batches can
+focus on another passage without changing older tasks or their retries.
 
 ---
 
@@ -318,6 +320,7 @@ tasks
   task_type        TEXT  NOT NULL    registered task type ID, e.g. "comprehension_mc",
                                      "fill_blank", "listen_transcribe", "production"
   language         TEXT  NOT NULL
+  source_text      TEXT              immutable story/phrase excerpt used to generate this task
   content          JSON  NOT NULL    task question/prompt; schema owned by task type
   response         JSON              user's answer; schema owned by task type; null until submitted
   input_method     TEXT              "typed" | "scanned_image" | "audio_recording"

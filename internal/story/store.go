@@ -25,6 +25,7 @@ type Store interface {
 	GetUserProfile(ctx context.Context, userID string) (domain.UserProfile, error)
 	ListStages(ctx context.Context, sessionID string) ([]domain.GenerationStage, error)
 	ListSessionTasks(ctx context.Context, sessionID string) ([]domain.Task, error)
+	ListTaskTargetItems(ctx context.Context, taskID string) ([]domain.KnowledgeItem, error)
 	RecentSessionTopics(ctx context.Context, userID, language string, limit int) ([]string, error)
 	ReplaceTaskContent(ctx context.Context, userID, taskID string, content map[string]any, targets []string) (domain.Task, error)
 	ReplaceStoryGlossary(ctx context.Context, storyID string, entries []domain.StoryGlossaryEntry) error

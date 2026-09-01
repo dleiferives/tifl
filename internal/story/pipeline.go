@@ -24,6 +24,7 @@ import (
 const topicHistoryWindow = 5
 
 const taskRegenerationOutcomeUpdateTimeout = 10 * time.Second
+const taskPriorQuestionLimit = 20
 
 // Stable, admin-inspectable error codes written to session_generation_stages and
 // surfaced to the client in SSE failure events. They identify the stage and the
@@ -654,7 +655,13 @@ func (p *Pipeline) runTaskType(ctx context.Context, sess domain.Session, lc doma
 	if count < 1 {
 		count = 1
 	}
-	var priorQuestions []string
+	priorQuestions, err := p.taskQuestions(ctx, sess.SessionID, spec.TaskTypeID, tt, "")
+	if err != nil {
+		se := fail(ErrCodePersist, err)
+		p.failStage(ctx, sess.SessionID, stage, se)
+		emit.emit(Event{Stage: stage, Status: string(domain.StageFailed), ErrorCode: se.code})
+		return se
+	}
 	contents := make([]map[string]any, 0, count)
 	for i := 0; i < count; i++ {
 		content, err := p.generateValidTaskContent(ctx, tt, spec.TaskTypeID, sourceText, lc, priorQuestions, taskStep, nil)
@@ -692,7 +699,7 @@ func (p *Pipeline) runTaskType(ctx context.Context, sess domain.Session, lc doma
 	for _, content := range contents {
 		if _, err := p.deps.Repo.CreateTask(ctx, domain.Task{
 			SessionID: sess.SessionID, UserID: sess.UserID, TaskType: spec.TaskTypeID,
-			Language: sess.Language, Content: content,
+			Language: sess.Language, SourceText: sourceText, Content: content,
 		}, tt.Targets(content)); err != nil {
 			se := fail(ErrCodePersist, err)
 			p.failStage(ctx, sess.SessionID, stage, se)
@@ -739,11 +746,11 @@ func (p *Pipeline) RegenerateTaskAttempt(ctx context.Context, reportID, taskID, 
 		return p.failTaskRegeneration(ctx, reportID, "Regeneration failed while loading the session.", finalAttempt, err)
 	}
 	ctx = p.callContext(ctx, sess)
-	sourceText, err := p.sourceTextForTaskRegeneration(ctx, sess)
+	sourceText, err := p.sourceTextForTaskRegeneration(ctx, sess, task.SourceText)
 	if err != nil {
 		return p.failTaskRegeneration(ctx, reportID, "Regeneration failed while loading the session content.", finalAttempt, err)
 	}
-	lc, err := p.rebuildTaskCtx(ctx, sess)
+	lc, err := p.rebuildTaskCtxForTask(ctx, sess, task.TaskID)
 	if err != nil {
 		return p.failTaskRegeneration(ctx, reportID, "Regeneration failed while rebuilding learner context.", finalAttempt, err)
 	}
@@ -787,7 +794,10 @@ func (p *Pipeline) updateTaskRegenerationOutcome(ctx context.Context, reportID, 
 	return p.deps.Repo.UpdateContentReportOutcome(updateCtx, reportID, outcome, detail, replacementTaskID)
 }
 
-func (p *Pipeline) sourceTextForTaskRegeneration(ctx context.Context, sess domain.Session) (string, error) {
+func (p *Pipeline) sourceTextForTaskRegeneration(ctx context.Context, sess domain.Session, taskSource string) (string, error) {
+	if strings.TrimSpace(taskSource) != "" {
+		return taskSource, nil
+	}
 	if sess.ContentType() == domain.ContentPhraseSet {
 		ps, err := p.deps.Repo.GetPhraseSet(ctx, sess.SessionID)
 		if err != nil {
@@ -805,6 +815,20 @@ func (p *Pipeline) sourceTextForTaskRegeneration(ctx context.Context, sess domai
 	return taskSourceText(sess, story.Text), nil
 }
 
+func (p *Pipeline) rebuildTaskCtxForTask(ctx context.Context, sess domain.Session, taskID string) (domain.LearnerCtx, error) {
+	targets, err := p.deps.Repo.ListTaskTargetItems(ctx, taskID)
+	if err != nil {
+		return domain.LearnerCtx{}, err
+	}
+	if len(targets) == 0 {
+		return p.rebuildTaskCtx(ctx, sess)
+	}
+	return domain.LearnerCtx{
+		UserID: sess.UserID, Language: sess.Language, Level: sess.Level,
+		Selected: domain.SelectedItems{Targets: targets},
+	}, nil
+}
+
 func taskSourceText(sess domain.Session, fullStory string) string {
 	if sess.SessionType == domain.SessionUserAdded && strings.TrimSpace(sess.TaskSourceText) != "" {
 		return sess.TaskSourceText
@@ -813,22 +837,29 @@ func taskSourceText(sess domain.Session, fullStory string) string {
 }
 
 func (p *Pipeline) priorTaskQuestions(ctx context.Context, rejected domain.Task) ([]string, error) {
-	siblings, err := p.deps.Repo.ListSessionTasks(ctx, rejected.SessionID)
-	if err != nil {
-		return nil, err
-	}
 	tt, ok := p.deps.Tasks.Get(rejected.TaskType)
 	if !ok {
 		return nil, nil
 	}
+	return p.taskQuestions(ctx, rejected.SessionID, rejected.TaskType, tt, rejected.TaskID)
+}
+
+func (p *Pipeline) taskQuestions(ctx context.Context, sessionID, taskTypeID string, tt tasks.TaskType, excludeTaskID string) ([]string, error) {
+	siblings, err := p.deps.Repo.ListSessionTasks(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
 	var out []string
 	for _, sibling := range siblings {
-		if sibling.TaskID == rejected.TaskID || sibling.TaskType != rejected.TaskType {
+		if sibling.TaskID == excludeTaskID || sibling.TaskType != taskTypeID {
 			continue
 		}
 		if qt := tasks.PrimaryTextOf(tt, sibling.Content); qt != "" {
 			out = append(out, qt)
 		}
+	}
+	if len(out) > taskPriorQuestionLimit {
+		out = out[len(out)-taskPriorQuestionLimit:]
 	}
 	return out, nil
 }

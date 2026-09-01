@@ -133,6 +133,7 @@ func TestGenerateTasksForUserAddedStoryKeepsOriginalText(t *testing.T) {
 		t.Fatalf("generate tasks = %d, want 202", generateResp.StatusCode)
 	}
 
+	firstTaskCount := 0
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		sess, err := repo.GetSession(context.Background(), imported.SessionID)
@@ -144,6 +145,7 @@ func TestGenerateTasksForUserAddedStoryKeepsOriginalText(t *testing.T) {
 			t.Fatal(err)
 		}
 		if sess.Status == domain.StatusReady && len(generated) > 0 {
+			firstTaskCount = len(generated)
 			break
 		}
 		if time.Now().After(deadline) {
@@ -176,13 +178,31 @@ func TestGenerateTasksForUserAddedStoryKeepsOriginalText(t *testing.T) {
 		t.Fatalf("task generation must not run story generation: %+v", stages)
 	}
 
-	duplicateResp, err := http.Post(srv.URL+"/api/v1/stories/"+imported.StoryID+"/tasks/generate", "application/json", nil)
+	additionalResp, err := http.Post(srv.URL+"/api/v1/stories/"+imported.StoryID+"/tasks/generate", "application/json", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	duplicateResp.Body.Close()
-	if duplicateResp.StatusCode != http.StatusConflict {
-		t.Fatalf("duplicate task generation = %d, want 409", duplicateResp.StatusCode)
+	additionalResp.Body.Close()
+	if additionalResp.StatusCode != http.StatusAccepted {
+		t.Fatalf("additional task generation = %d, want 202", additionalResp.StatusCode)
+	}
+	deadline = time.Now().Add(3 * time.Second)
+	for {
+		sess, err := repo.GetSession(context.Background(), imported.SessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		generated, err := repo.ListSessionTasks(context.Background(), imported.SessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sess.Status == domain.StatusReady && len(generated) > firstTaskCount {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("additional task batch did not finish: status=%s tasks=%d first_batch=%d", sess.Status, len(generated), firstTaskCount)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -235,6 +255,52 @@ func TestGenerateTasksForSelectedStoryRangePersistsFocusedSource(t *testing.T) {
 	}
 	if strings.Join(keys, ",") != "beta,gamma" {
 		t.Fatalf("selected target keys = %v", keys)
+	}
+	firstTaskCount := waitForTaskCount(t, repo, imported.SessionID, 0)
+
+	secondResp, err := http.Post(srv.URL+"/api/v1/stories/"+imported.StoryID+"/tasks/generate", "application/json",
+		bytes.NewReader([]byte(`{"start_position":0,"end_position":1}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondResp.Body.Close()
+	if secondResp.StatusCode != http.StatusAccepted {
+		t.Fatalf("generate second selected task batch = %d, want 202", secondResp.StatusCode)
+	}
+	waitForTaskCount(t, repo, imported.SessionID, firstTaskCount)
+
+	generated, err := repo.ListSessionTasks(context.Background(), imported.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceCounts := map[string]int{}
+	for _, task := range generated {
+		sourceCounts[task.SourceText]++
+	}
+	if sourceCounts["betagamma"] == 0 || sourceCounts["Alpha"] == 0 {
+		t.Fatalf("task batches did not retain their own selected sources: %+v", sourceCounts)
+	}
+}
+
+func waitForTaskCount(t *testing.T, repo db.Repository, sessionID string, greaterThan int) int {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		sess, err := repo.GetSession(context.Background(), sessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		generated, err := repo.ListSessionTasks(context.Background(), sessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sess.Status == domain.StatusReady && len(generated) > greaterThan {
+			return len(generated)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("task batch did not finish: status=%s tasks=%d previous=%d", sess.Status, len(generated), greaterThan)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

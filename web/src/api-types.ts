@@ -631,7 +631,7 @@ export interface paths {
         put?: never;
         /**
          * Generate practice tasks for a user-added story
-         * @description Starts the existing checkpointed task-generation pipeline against the caller's persisted user-added story. The source text is never regenerated or replaced. Repeated requests while generation is active are idempotent; a story that already has tasks returns 409. An optional half-open token range focuses generation on exactly that reader selection and uses its words as the task targets.
+         * @description Starts the existing checkpointed task-generation pipeline against the caller's persisted user-added story. The source text is never regenerated or replaced. Every completed request appends a fresh task batch while preserving existing tasks and answers. Repeated requests while generation is active are idempotent. An optional half-open token range focuses generation on exactly that reader selection and uses its words as the task targets.
          */
         post: operations["generateStoryTasks"];
         delete?: never;
