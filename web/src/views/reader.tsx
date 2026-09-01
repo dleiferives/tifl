@@ -71,7 +71,10 @@ type SyntaxTreeBranch = {
 
 const FLUSH_DELAY_MS = 4000;
 const READER_POSITION_PREFIX = "tifl.reader.position.";
-const AUDIO_PHASE_CONCURRENCY = 4;
+const AUDIO_TTS_CONCURRENCY = 4;
+// Prometheus reliably runs three MFA jobs in parallel; a fourth concurrent
+// process can fail under resource contention instead of waiting in its queue.
+const AUDIO_ALIGNMENT_CONCURRENCY = 3;
 
 // 1-5 are self-rating; w/i are the well-known / ignored shortcuts. The reader
 // event log wants the keystroke ("w"/"i"); the knowledge write wants the level.
@@ -875,6 +878,7 @@ export function ReaderView(props: {
     const ttsFailures = await runAudioGenerationPhase(
       missing,
       "tts",
+      AUDIO_TTS_CONCURRENCY,
       generationToken,
       (span) => loadSentenceAudioURL(span, model, true).then(() => undefined),
     );
@@ -887,6 +891,7 @@ export function ReaderView(props: {
     const alignmentFailures = await runAudioGenerationPhase(
       alignmentQueue,
       "alignment",
+      AUDIO_ALIGNMENT_CONCURRENCY,
       generationToken,
       async (span) => {
         const words = await loadSentenceAlignment(span, model);
@@ -907,6 +912,7 @@ export function ReaderView(props: {
   async function runAudioGenerationPhase(
     queue: SentenceSpan[],
     phase: "tts" | "alignment",
+    concurrency: number,
     generationToken: number,
     prepare: (span: SentenceSpan) => Promise<void>,
   ): Promise<Set<number>> {
@@ -933,7 +939,7 @@ export function ReaderView(props: {
     };
 
     await Promise.all(Array.from(
-      { length: Math.min(AUDIO_PHASE_CONCURRENCY, queue.length) },
+      { length: Math.min(concurrency, queue.length) },
       () => worker(),
     ));
     return failures;
