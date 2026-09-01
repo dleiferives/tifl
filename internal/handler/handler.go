@@ -96,6 +96,7 @@ func currentAPIRoutes() []apiRoute {
 		{Method: http.MethodPost, Path: "/api/v1/stories/{id}/sentence", Handler: (*Handler).postSentenceBreakdown, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/stories/{id}/sentences/{position}/audio", Handler: (*Handler).storySentenceAudio, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/stories/{id}/sentences/{position}/alignment", Handler: (*Handler).storySentenceAlignment, RequireUser: true},
+		{Method: http.MethodPost, Path: "/api/v1/stories/{id}/alignments", Handler: (*Handler).storySentenceAlignments, RequireUser: true},
 		{Method: http.MethodPost, Path: "/api/v1/stories/{id}/word", Handler: (*Handler).postWordBreakdown, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/dictionary/entry", Handler: (*Handler).getDictionaryEntry, RequireUser: true},
 		{Method: http.MethodPut, Path: "/api/v1/dictionary/entry", Handler: (*Handler).putDictionaryEntry, RequireUser: true},
@@ -286,10 +287,10 @@ func New(repo Store, broker *story.Broker, client llm.Client, taskTypes *tasks.R
 		// A long reader story can easily contain more than 100 sentences. Keep a
 		// full prepared batch resident for the TTS-then-MFA workflow, while the
 		// byte bound prevents unexpectedly large audio from growing without limit.
-		readerSpeech:              newReaderSpeechCache(512, 256<<20),
-		frontendDir:               frontendDir,
-		pricing:                   pricing.New(nil, nil),
-		adminEmails:               map[string]struct{}{},
+		readerSpeech: newReaderSpeechCache(512, 256<<20),
+		frontendDir:  frontendDir,
+		pricing:      pricing.New(nil, nil),
+		adminEmails:  map[string]struct{}{},
 	}
 	for _, opt := range opts {
 		opt(h)

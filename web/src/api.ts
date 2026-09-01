@@ -168,6 +168,16 @@ export async function getStorySentenceAlignment(
   );
 }
 
+export async function alignStorySentences(
+  storyID: string,
+  positions: number[],
+): Promise<APIResponse<"alignStorySentences", 200>> {
+  return apiFetch<APIResponse<"alignStorySentences", 200>>(
+    `/stories/${encodeURIComponent(storyID)}/alignments`,
+    jsonRequest("POST", { positions }),
+  );
+}
+
 async function getAuthenticatedAudio(audioURL: string, cache?: RequestCache): Promise<Blob> {
   const request: RequestInit = { headers: { Accept: "audio/mpeg" }, cache };
   let response = await sendRequest(audioURL, request);

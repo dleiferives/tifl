@@ -19,11 +19,13 @@ import (
 )
 
 const (
-	maxSynthesisBytes = 32 << 20
-	maxAlignmentBytes = 4 << 20
-	maxErrorBytes     = 64 << 10
-	alignmentTimeout  = 90 * time.Second
-	alignmentPollWait = 500 * time.Millisecond
+	maxSynthesisBytes      = 32 << 20
+	maxAlignmentBytes      = 4 << 20
+	maxBatchAlignmentBytes = 16 << 20
+	maxErrorBytes          = 64 << 10
+	alignmentTimeout       = 90 * time.Second
+	batchAlignmentTimeout  = 10 * time.Minute
+	alignmentPollWait      = 500 * time.Millisecond
 )
 
 var ErrEmptyTranscript = errors.New("speech: transcription is empty")
@@ -63,6 +65,18 @@ type AlignmentInput struct {
 	Language   string
 }
 
+type AlignmentBatchInput struct {
+	Items    []AlignmentBatchItem
+	Language string
+}
+
+type AlignmentBatchItem struct {
+	ID         string
+	Audio      Audio
+	Filename   string
+	Transcript string
+}
+
 type WordTiming struct {
 	Text  string  `json:"text"`
 	Start float64 `json:"start"`
@@ -71,6 +85,19 @@ type WordTiming struct {
 
 type Alignment struct {
 	Words []WordTiming `json:"words"`
+}
+
+type AlignmentBatch struct {
+	Items []AlignmentBatchResult `json:"items"`
+}
+
+type AlignmentBatchResult struct {
+	ID        string    `json:"id"`
+	Alignment Alignment `json:"alignment"`
+}
+
+type BatchAligner interface {
+	AlignBatch(ctx context.Context, input AlignmentBatchInput) (AlignmentBatch, error)
 }
 
 // Gateway is the handler-facing audio service contract. *Client and test fakes
@@ -249,11 +276,141 @@ func (c *Client) Align(ctx context.Context, input AlignmentInput) (Alignment, er
 	}
 }
 
+// AlignBatch sends independent clips as one MFA corpus and polls one job. This
+// avoids repeating Python/Kaldi/model initialization for every reader sentence.
+func (c *Client) AlignBatch(ctx context.Context, input AlignmentBatchInput) (AlignmentBatch, error) {
+	if c.baseURL == "" {
+		return AlignmentBatch{}, errors.New("speech: audio server is not configured")
+	}
+	if len(input.Items) == 0 || strings.TrimSpace(input.Language) == "" {
+		return AlignmentBatch{}, errors.New("speech: batch alignment items and language are required")
+	}
+	ctx, cancel := context.WithTimeout(ctx, batchAlignmentTimeout)
+	defer cancel()
+
+	manifest := struct {
+		Language string `json:"language"`
+		Items    []struct {
+			ID         string `json:"id"`
+			Transcript string `json:"transcript"`
+		} `json:"items"`
+	}{Language: input.Language, Items: make([]struct {
+		ID         string `json:"id"`
+		Transcript string `json:"transcript"`
+	}, len(input.Items))}
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	seen := make(map[string]struct{}, len(input.Items))
+	for i, item := range input.Items {
+		item.ID = strings.TrimSpace(item.ID)
+		item.Transcript = strings.TrimSpace(item.Transcript)
+		if item.ID == "" || item.Transcript == "" || len(item.Audio.Data) == 0 {
+			return AlignmentBatch{}, fmt.Errorf("speech: batch alignment item %d requires id, audio, and transcript", i)
+		}
+		if _, exists := seen[item.ID]; exists {
+			return AlignmentBatch{}, fmt.Errorf("speech: duplicate batch alignment id %q", item.ID)
+		}
+		seen[item.ID] = struct{}{}
+		manifest.Items[i].ID = item.ID
+		manifest.Items[i].Transcript = item.Transcript
+		filename := strings.TrimSpace(item.Filename)
+		if filename == "" {
+			filename = fmt.Sprintf("sentence-%06d.mp3", i)
+		}
+		header := make(textproto.MIMEHeader)
+		header.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename=%q`, filename))
+		if item.Audio.ContentType != "" {
+			header.Set("Content-Type", item.Audio.ContentType)
+		}
+		part, err := writer.CreatePart(header)
+		if err != nil {
+			return AlignmentBatch{}, err
+		}
+		if _, err := part.Write(item.Audio.Data); err != nil {
+			return AlignmentBatch{}, err
+		}
+	}
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		return AlignmentBatch{}, err
+	}
+	if err := writer.WriteField("manifest", string(manifestJSON)); err != nil {
+		return AlignmentBatch{}, err
+	}
+	if err := writer.Close(); err != nil {
+		return AlignmentBatch{}, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/audio/alignments/batch", &body)
+	if err != nil {
+		return AlignmentBatch{}, err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	c.authorize(req)
+	resp, err := c.batchHTTPClient().Do(req)
+	if err != nil {
+		return AlignmentBatch{}, fmt.Errorf("speech: align batch: %w", err)
+	}
+	if resp.StatusCode != http.StatusAccepted {
+		defer resp.Body.Close()
+		return AlignmentBatch{}, upstreamError("align batch", resp)
+	}
+	job, err := decodeAlignmentBatchJob(resp)
+	if err != nil {
+		return AlignmentBatch{}, err
+	}
+	for {
+		switch job.Status {
+		case "succeeded":
+			if len(job.Result.Items) > 0 {
+				return job.Result, nil
+			}
+			return c.alignmentBatchResult(ctx, job.ID)
+		case "failed":
+			if strings.TrimSpace(job.Error) == "" {
+				job.Error = "batch alignment job failed"
+			}
+			return AlignmentBatch{}, errors.New("speech: align batch: " + job.Error)
+		case "queued", "running":
+		default:
+			return AlignmentBatch{}, fmt.Errorf("speech: align batch: unexpected job status %q", job.Status)
+		}
+
+		timer := time.NewTimer(alignmentPollWait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return AlignmentBatch{}, fmt.Errorf("speech: align batch: %w", ctx.Err())
+		case <-timer.C:
+		}
+		job, err = c.alignmentBatchJob(ctx, job.ID)
+		if err != nil {
+			return AlignmentBatch{}, err
+		}
+	}
+}
+
+func (c *Client) batchHTTPClient() *http.Client {
+	if c.http.Timeout == 0 || c.http.Timeout >= batchAlignmentTimeout {
+		return c.http
+	}
+	clone := *c.http
+	clone.Timeout = batchAlignmentTimeout
+	return &clone
+}
+
 type alignmentJob struct {
 	ID     string    `json:"id"`
 	Status string    `json:"status"`
 	Error  string    `json:"error"`
 	Result Alignment `json:"result"`
+}
+
+type alignmentBatchJob struct {
+	ID     string         `json:"id"`
+	Status string         `json:"status"`
+	Error  string         `json:"error"`
+	Result AlignmentBatch `json:"result"`
 }
 
 func decodeAlignmentJob(resp *http.Response) (alignmentJob, error) {
@@ -264,6 +421,18 @@ func decodeAlignmentJob(resp *http.Response) (alignmentJob, error) {
 	}
 	if strings.TrimSpace(job.ID) == "" {
 		return alignmentJob{}, errors.New("speech: alignment job returned no id")
+	}
+	return job, nil
+}
+
+func decodeAlignmentBatchJob(resp *http.Response) (alignmentBatchJob, error) {
+	defer resp.Body.Close()
+	var job alignmentBatchJob
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxBatchAlignmentBytes)).Decode(&job); err != nil {
+		return alignmentBatchJob{}, fmt.Errorf("speech: decode batch alignment job: %w", err)
+	}
+	if strings.TrimSpace(job.ID) == "" {
+		return alignmentBatchJob{}, errors.New("speech: batch alignment job returned no id")
 	}
 	return job, nil
 }
@@ -285,6 +454,23 @@ func (c *Client) alignmentJob(ctx context.Context, id string) (alignmentJob, err
 	return decodeAlignmentJob(resp)
 }
 
+func (c *Client) alignmentBatchJob(ctx context.Context, id string) (alignmentBatchJob, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/audio/alignments/"+url.PathEscape(id), nil)
+	if err != nil {
+		return alignmentBatchJob{}, err
+	}
+	c.authorize(req)
+	resp, err := c.batchHTTPClient().Do(req)
+	if err != nil {
+		return alignmentBatchJob{}, fmt.Errorf("speech: poll batch alignment: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		defer resp.Body.Close()
+		return alignmentBatchJob{}, upstreamError("poll batch alignment", resp)
+	}
+	return decodeAlignmentBatchJob(resp)
+}
+
 func (c *Client) alignmentResult(ctx context.Context, id string) (Alignment, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/audio/alignments/"+url.PathEscape(id)+"/result", nil)
 	if err != nil {
@@ -302,6 +488,27 @@ func (c *Client) alignmentResult(ctx context.Context, id string) (Alignment, err
 	var alignment Alignment
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxAlignmentBytes)).Decode(&alignment); err != nil {
 		return Alignment{}, fmt.Errorf("speech: decode alignment result: %w", err)
+	}
+	return alignment, nil
+}
+
+func (c *Client) alignmentBatchResult(ctx context.Context, id string) (AlignmentBatch, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/audio/alignments/"+url.PathEscape(id)+"/result", nil)
+	if err != nil {
+		return AlignmentBatch{}, err
+	}
+	c.authorize(req)
+	resp, err := c.batchHTTPClient().Do(req)
+	if err != nil {
+		return AlignmentBatch{}, fmt.Errorf("speech: fetch batch alignment result: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return AlignmentBatch{}, upstreamError("fetch batch alignment result", resp)
+	}
+	var alignment AlignmentBatch
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxBatchAlignmentBytes)).Decode(&alignment); err != nil {
+		return AlignmentBatch{}, fmt.Errorf("speech: decode batch alignment result: %w", err)
 	}
 	return alignment, nil
 }

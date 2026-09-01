@@ -733,7 +733,7 @@ export interface paths {
         };
         /**
          * Generate or retrieve speech for the current reader sentence
-         * @description Resolves the authoritative sentence containing the supplied token position and synthesizes it with the learner's selected TTS model. Private browser caching avoids regenerating repeat playback.
+         * @description Resolves the authoritative sentence containing the supplied token position and synthesizes it with the learner's selected TTS model. The server durably stores the generated asset in its configured media store; private browser caching remains an additional fast path.
          */
         get: operations["getStorySentenceAudio"];
         put?: never;
@@ -758,6 +758,26 @@ export interface paths {
         get: operations["getStorySentenceAlignment"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stories/{id}/alignments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Align a set of prepared reader sentences as one MFA corpus
+         * @description Loads or synthesizes the requested authoritative sentence audio, sends every still-unaligned clip to the audio service in one corpus job, and durably stores the per-sentence alignment sidecars. Existing durable audio and alignments are reused across browser sessions and server restarts.
+         */
+        post: operations["alignStorySentences"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1866,6 +1886,12 @@ export interface components {
         ReaderSentenceAlignment: {
             sentence_index: number;
             words: components["schemas"]["ReaderWordTiming"][];
+        };
+        ReaderAlignmentBatchRequest: {
+            positions: number[];
+        };
+        ReaderAlignmentBatchResponse: {
+            alignments: components["schemas"]["ReaderSentenceAlignment"][];
         };
         ReaderWordTiming: {
             position: number;
@@ -3248,6 +3274,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReaderSentenceAlignment"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    alignStorySentences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReaderAlignmentBatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Requested sentence alignments */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReaderAlignmentBatchResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];

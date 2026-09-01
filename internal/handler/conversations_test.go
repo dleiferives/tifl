@@ -266,6 +266,8 @@ type fakeConversationSpeech struct {
 	synthesizedModel    string
 	synthesisCalls      int
 	alignment           speech.AlignmentInput
+	batchAlignment      speech.AlignmentBatchInput
+	batchAlignmentCalls int
 }
 
 func (f *fakeConversationSpeech) Synthesize(_ context.Context, input speech.SynthesisInput) (speech.Audio, error) {
@@ -282,6 +284,22 @@ func (f *fakeConversationSpeech) Align(_ context.Context, input speech.Alignment
 		{Text: "a", Start: 0.1, End: 0.3},
 		{Text: "b", Start: 0.3, End: 0.6},
 	}}, nil
+}
+
+func (f *fakeConversationSpeech) AlignBatch(_ context.Context, input speech.AlignmentBatchInput) (speech.AlignmentBatch, error) {
+	f.batchAlignment = input
+	f.batchAlignmentCalls++
+	result := speech.AlignmentBatch{Items: make([]speech.AlignmentBatchResult, 0, len(input.Items))}
+	for _, item := range input.Items {
+		result.Items = append(result.Items, speech.AlignmentBatchResult{
+			ID: item.ID,
+			Alignment: speech.Alignment{Words: []speech.WordTiming{
+				{Text: "a", Start: 0.1, End: 0.3},
+				{Text: "b", Start: 0.3, End: 0.6},
+			}},
+		})
+	}
+	return result, nil
 }
 
 func (f *fakeConversationSpeech) Transcribe(_ context.Context, input speech.TranscriptionInput) (string, error) {

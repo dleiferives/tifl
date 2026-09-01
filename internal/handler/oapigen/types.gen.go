@@ -1790,6 +1790,16 @@ type ProfilePatch struct {
 // ProfilePatchLevel stored level fallback; clients should not treat this as arbitrary preference state
 type ProfilePatchLevel string
 
+// ReaderAlignmentBatchRequest defines model for ReaderAlignmentBatchRequest.
+type ReaderAlignmentBatchRequest struct {
+	Positions []int `json:"positions"`
+}
+
+// ReaderAlignmentBatchResponse defines model for ReaderAlignmentBatchResponse.
+type ReaderAlignmentBatchResponse struct {
+	Alignments []ReaderSentenceAlignment `json:"alignments"`
+}
+
 // ReaderEvent One logged reader interaction.
 type ReaderEvent struct {
 	// EventId client idempotency key; generated if omitted
@@ -2526,6 +2536,9 @@ type ImportStoryJSONRequestBody = ImportStoryRequest
 
 // ImportStoryMultipartRequestBody defines body for ImportStory for multipart/form-data ContentType.
 type ImportStoryMultipartRequestBody = ImportStoryUploadRequest
+
+// AlignStorySentencesJSONRequestBody defines body for AlignStorySentences for application/json ContentType.
+type AlignStorySentencesJSONRequestBody = ReaderAlignmentBatchRequest
 
 // PostSentenceBreakdownJSONRequestBody defines body for PostSentenceBreakdown for application/json ContentType.
 type PostSentenceBreakdownJSONRequestBody PostSentenceBreakdownJSONBody

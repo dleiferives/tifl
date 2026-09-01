@@ -194,6 +194,55 @@ func TestStorySentenceAlignmentCachesSynthesizedAudioForPlayback(t *testing.T) {
 	}
 }
 
+func TestStorySentenceAlignmentBatchUsesOneCorpusRequest(t *testing.T) {
+	audioGateway := &fakeConversationSpeech{}
+	srv, repo := newServer(t, false, handler.WithSpeech(audioGateway))
+	storyID := seedStory(t, repo)
+
+	resp, err := http.Post(
+		srv.URL+"/api/v1/stories/"+storyID+"/alignments",
+		"application/json",
+		strings.NewReader(`{"positions":[0]}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var result struct {
+		Alignments []struct {
+			SentenceIndex int `json:"sentence_index"`
+			Words         []struct {
+				Position int `json:"position"`
+			} `json:"words"`
+		} `json:"alignments"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK || len(result.Alignments) != 1 || len(result.Alignments[0].Words) != 2 {
+		t.Fatalf("batch alignment = status %d, body %+v", resp.StatusCode, result)
+	}
+	if audioGateway.synthesisCalls != 1 || audioGateway.batchAlignmentCalls != 1 ||
+		len(audioGateway.batchAlignment.Items) != 1 || audioGateway.batchAlignment.Items[0].Transcript != "a b" {
+		t.Fatalf("speech calls = synth %d, batch %d, input %+v", audioGateway.synthesisCalls, audioGateway.batchAlignmentCalls, audioGateway.batchAlignment)
+	}
+
+	// An already aligned sentence is returned from Tifl's cache without another
+	// upstream corpus job.
+	resp, err = http.Post(
+		srv.URL+"/api/v1/stories/"+storyID+"/alignments",
+		"application/json",
+		strings.NewReader(`{"positions":[0]}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || audioGateway.batchAlignmentCalls != 1 {
+		t.Fatalf("cached batch = status %d, upstream calls %d", resp.StatusCode, audioGateway.batchAlignmentCalls)
+	}
+}
+
 func TestPostReaderEventsDerivesSignals(t *testing.T) {
 	srv, repo := newServer(t, false)
 	storyID := seedStory(t, repo)

@@ -2,6 +2,7 @@ import { createEffect, createSignal, For, Match, onCleanup, onMount, Show, Switc
 import type { JSX } from "solid-js";
 import { createStore } from "solid-js/store";
 import {
+  alignStorySentences,
   completeSession,
   deleteDictionaryEntry,
   getDefinition,
@@ -72,10 +73,6 @@ type SyntaxTreeBranch = {
 const FLUSH_DELAY_MS = 4000;
 const READER_POSITION_PREFIX = "tifl.reader.position.";
 const AUDIO_TTS_CONCURRENCY = 4;
-// Prometheus is configured for two concurrent jobs, and its MFA endpoint runs
-// outside the provider queue against a shared MFA root. Exceeding that limit
-// can make alignments fail instead of waiting safely.
-const AUDIO_ALIGNMENT_CONCURRENCY = 2;
 
 // 1-5 are self-rating; w/i are the well-known / ignored shortcuts. The reader
 // event log wants the keystroke ("w"/"i"); the knowledge write wants the level.
@@ -889,16 +886,35 @@ export function ReaderView(props: {
     // This keeps the audio server on one model/workload at a time and ensures
     // alignment consumes the sentence audio just warmed in the server cache.
     const alignmentQueue = missing.filter((span) => !ttsFailures.has(span.index));
-    const alignmentFailures = await runAudioGenerationPhase(
-      alignmentQueue,
-      "alignment",
-      AUDIO_ALIGNMENT_CONCURRENCY,
-      generationToken,
-      async (span) => {
-        const words = await loadSentenceAlignment(span, model);
-        if (words.length === 0) throw new Error("empty sentence alignment");
-      },
-    );
+    const alignmentFailures = new Set<number>();
+    if (alignmentQueue.length > 0) {
+      setAudioGeneration({ status: "generating", phase: "alignment", completed: 0, total: alignmentQueue.length });
+      try {
+        const response = await alignStorySentences(
+          props.storyId,
+          alignmentQueue.map((span) => span.start_position),
+        );
+        const returned = new Set<number>();
+        for (const alignment of response.alignments) {
+          const span = alignmentQueue.find((candidate) => candidate.index === alignment.sentence_index);
+          if (!span || alignment.words.length === 0) continue;
+          sentenceAlignments.set(sentenceSpeechCacheKey(span, model), alignment.words);
+          returned.add(span.index);
+        }
+        for (const span of alignmentQueue) {
+          if (!returned.has(span.index)) alignmentFailures.add(span.index);
+        }
+        setAudioCacheVersion((version) => version + 1);
+      } catch {
+        for (const span of alignmentQueue) alignmentFailures.add(span.index);
+      }
+      if (generationToken === audioGenerationToken) {
+        setAudioGeneration({
+          status: "generating", phase: "alignment",
+          completed: alignmentQueue.length, total: alignmentQueue.length,
+        });
+      }
+    }
     if (disposed || generationToken !== audioGenerationToken) return;
 
     const failures = ttsFailures.size + alignmentFailures.size;

@@ -1191,7 +1191,8 @@ paths:
       description: >
         Resolves the authoritative sentence containing the supplied token
         position and synthesizes it with the learner's selected TTS model.
-        Private browser caching avoids regenerating repeat playback.
+        The server durably stores the generated asset in its configured media
+        store; private browser caching remains an additional fast path.
       operationId: getStorySentenceAudio
       parameters:
         - name: id
@@ -1254,6 +1255,44 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ReaderSentenceAlignment"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /stories/{id}/alignments:
+    post:
+      summary: Align a set of prepared reader sentences as one MFA corpus
+      description: >
+        Loads or synthesizes the requested authoritative sentence audio, sends
+        every still-unaligned clip to the audio service in one corpus job, and
+        durably stores the per-sentence alignment sidecars. Existing durable
+        audio and alignments are reused across browser sessions and server
+        restarts.
+      operationId: alignStorySentences
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReaderAlignmentBatchRequest"
+      responses:
+        "200":
+          description: Requested sentence alignments
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReaderAlignmentBatchResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -2994,6 +3033,24 @@ components:
           items:
             $ref: "#/components/schemas/ReaderWordTiming"
       required: [sentence_index, words]
+    ReaderAlignmentBatchRequest:
+      type: object
+      properties:
+        positions:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          uniqueItems: true
+          items: { type: integer, minimum: 0 }
+      required: [positions]
+    ReaderAlignmentBatchResponse:
+      type: object
+      properties:
+        alignments:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReaderSentenceAlignment"
+      required: [alignments]
     ReaderWordTiming:
       type: object
       properties:

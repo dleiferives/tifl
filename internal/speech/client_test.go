@@ -85,6 +85,68 @@ func TestClientAlignUsesMFAJobContract(t *testing.T) {
 	}
 }
 
+func TestClientAlignBatchUsesOneCorpusJob(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/audio/alignments/batch" || r.Method != http.MethodPost {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Fatal(err)
+		}
+		files := r.MultipartForm.File["file"]
+		if len(files) != 2 {
+			t.Fatalf("files = %d, want 2", len(files))
+		}
+		first, err := files[0].Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		firstData, _ := io.ReadAll(first)
+		_ = first.Close()
+		second, err := files[1].Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		secondData, _ := io.ReadAll(second)
+		_ = second.Close()
+		if string(firstData) != "first-mp3" || string(secondData) != "second-mp3" {
+			t.Fatalf("audio = %q, %q", firstData, secondData)
+		}
+		var manifest struct {
+			Language string `json:"language"`
+			Items    []struct {
+				ID         string `json:"id"`
+				Transcript string `json:"transcript"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal([]byte(r.FormValue("manifest")), &manifest); err != nil {
+			t.Fatal(err)
+		}
+		if manifest.Language != "el" || len(manifest.Items) != 2 || manifest.Items[0].ID != "0" ||
+			manifest.Items[1].Transcript != "Τι κάνεις" {
+			t.Fatalf("manifest = %+v", manifest)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"id":"batch-1","status":"succeeded","result":{"items":[{"id":"0","alignment":{"words":[{"text":"γεια","start":0.1,"end":0.4}]}},{"id":"1","alignment":{"words":[{"text":"τι","start":0.2,"end":0.3}]}}]}}`))
+	}))
+	t.Cleanup(server.Close)
+	client := speech.New(speech.Config{BaseURL: server.URL})
+	batch, err := client.AlignBatch(context.Background(), speech.AlignmentBatchInput{
+		Language: "el",
+		Items: []speech.AlignmentBatchItem{
+			{ID: "0", Audio: speech.Audio{Data: []byte("first-mp3"), ContentType: "audio/mpeg"}, Transcript: "Γεια σου"},
+			{ID: "1", Audio: speech.Audio{Data: []byte("second-mp3"), ContentType: "audio/mpeg"}, Transcript: "Τι κάνεις"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batch.Items) != 2 || batch.Items[0].ID != "0" || batch.Items[0].Alignment.Words[0].Text != "γεια" {
+		t.Fatalf("batch = %+v", batch)
+	}
+}
+
 func TestClientTranscribeUsesMultipartContract(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/audio/transcriptions" || r.Method != http.MethodPost {
