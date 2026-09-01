@@ -34,6 +34,7 @@ type ReaderWordTiming = APISchema<"ReaderWordTiming">;
 
 type Loadable<T> = "loading" | "error" | T;
 type RemovalNotice = "removed" | "removed-failed";
+type AudioGeneration = { status: "idle" | "generating" | "error"; completed: number; total: number };
 type Analysis = { mode: "sentence"; position: number } | { mode: "word"; key: string } | null;
 type SyntaxGraph = {
   version?: string;
@@ -65,6 +66,7 @@ type SyntaxTreeBranch = {
 
 const FLUSH_DELAY_MS = 4000;
 const READER_POSITION_PREFIX = "tifl.reader.position.";
+const AUDIO_GENERATION_CONCURRENCY = 2;
 
 // 1-5 are self-rating; w/i are the well-known / ignored shortcuts. The reader
 // event log wants the keystroke ("w"/"i"); the knowledge write wants the level.
@@ -99,6 +101,8 @@ export function ReaderView(props: {
   const [definitions, setDefinitions] = createStore<Record<string, Loadable<Definition>>>({});
   const [definitionOptions, setDefinitionOptions] = createStore<Record<string, Loadable<DefinitionOption[]>>>({});
   const [sourcePickerKey, setSourcePickerKey] = createSignal("");
+  const [audioGeneration, setAudioGeneration] = createSignal<AudioGeneration>({ status: "idle", completed: 0, total: 0 });
+  const [audioCacheVersion, setAudioCacheVersion] = createSignal(0);
   // Personal-dictionary editing. Only one popup (one key) is open at a time, so
   // a single edit state suffices. `removalNotice` is keyed so the "removed"
   // message stays scoped to the word it belongs to.
@@ -123,12 +127,15 @@ export function ReaderView(props: {
   let dictionaryMutationSeq = 0;
   const dictionaryMutationIds: Record<string, number> = {};
   const sentenceAudioURLs = new Map<string, string>();
-  const sentenceAudioRequests = new Map<string, Promise<{ url: string; words: ReaderWordTiming[] }>>();
+  const sentenceAudioRequests = new Map<string, Promise<string>>();
   const sentenceAlignments = new Map<string, ReaderWordTiming[]>();
+  const sentenceAlignmentRequests = new Map<string, Promise<ReaderWordTiming[]>>();
   let sentenceAudio: HTMLAudioElement | null = null;
   let sentencePlaybackToken = 0;
+  let audioGenerationToken = 0;
   let sentenceAnimationFrame: number | undefined;
   let speakingPosition: number | undefined;
+  let disposed = false;
 
   const currentToken = () => tokens()[cursor()];
 
@@ -142,6 +149,8 @@ export function ReaderView(props: {
   });
 
   onCleanup(() => {
+    disposed = true;
+    audioGenerationToken++;
     document.removeEventListener("keydown", onKeyDown);
     document.removeEventListener("visibilitychange", onVisibilityChange);
     window.removeEventListener("beforeunload", onBeforeUnload);
@@ -155,6 +164,7 @@ export function ReaderView(props: {
     sentenceAudioURLs.clear();
     sentenceAudioRequests.clear();
     sentenceAlignments.clear();
+    sentenceAlignmentRequests.clear();
     void flush(true);
   });
 
@@ -753,31 +763,139 @@ export function ReaderView(props: {
     frame();
   }
 
-  async function loadSentenceSpeech(span: SentenceSpan): Promise<{ url: string; words: ReaderWordTiming[] }> {
-    const model = appStore.profile()?.tts_model || "default";
-    const cacheKey = `${model}:${span.index}`;
-    const cachedURL = sentenceAudioURLs.get(cacheKey);
-    if (cachedURL) return { url: cachedURL, words: sentenceAlignments.get(cacheKey) ?? [] };
+  async function loadSentenceSpeech(
+    span: SentenceSpan,
+    requireAlignment = false,
+    model = readerVoiceModel(),
+  ): Promise<{ url: string; words: ReaderWordTiming[] }> {
+    let words: ReaderWordTiming[];
+    let alignmentError: unknown;
+    try {
+      words = await loadSentenceAlignment(span, model);
+    } catch (error) {
+      // Whole-sentence playback remains usable during a transient MFA outage.
+      words = [];
+      alignmentError = error;
+    }
+    const url = await loadSentenceAudioURL(span, model);
+    if (requireAlignment && (alignmentError || words.length === 0)) {
+      throw alignmentError ?? new Error("empty sentence alignment");
+    }
+    return { url, words };
+  }
+
+  async function loadSentenceAlignment(span: SentenceSpan, model: string): Promise<ReaderWordTiming[]> {
+    const cacheKey = sentenceSpeechCacheKey(span, model);
+    const cached = sentenceAlignments.get(cacheKey);
+    if (cached?.length) return cached;
+
+    let request = sentenceAlignmentRequests.get(cacheKey);
+    if (!request) {
+      request = getStorySentenceAlignment(props.storyId, span.start_position, model)
+        .then((alignment) => {
+          sentenceAlignments.set(cacheKey, alignment.words);
+          setAudioCacheVersion((version) => version + 1);
+          return alignment.words;
+        })
+        .finally(() => sentenceAlignmentRequests.delete(cacheKey));
+      sentenceAlignmentRequests.set(cacheKey, request);
+    }
+    return request;
+  }
+
+  async function loadSentenceAudioURL(span: SentenceSpan, model: string): Promise<string> {
+    const cacheKey = sentenceSpeechCacheKey(span, model);
+    const cached = sentenceAudioURLs.get(cacheKey);
+    if (cached) return cached;
 
     let request = sentenceAudioRequests.get(cacheKey);
     if (!request) {
-      request = (async () => {
-        let words: ReaderWordTiming[] = [];
-        try {
-          const alignment = await getStorySentenceAlignment(props.storyId, span.start_position, model);
-          words = alignment.words;
-        } catch {
-          // Alignment is an enhancement: audio remains usable if MFA is down.
-        }
-        const audio = await getStorySentenceAudio(props.storyId, span.start_position, model);
-        const url = URL.createObjectURL(audio);
-        sentenceAudioURLs.set(cacheKey, url);
-        sentenceAlignments.set(cacheKey, words);
-        return { url, words };
-      })().finally(() => sentenceAudioRequests.delete(cacheKey));
+      request = getStorySentenceAudio(props.storyId, span.start_position, model)
+        .then((audio) => {
+          const url = URL.createObjectURL(audio);
+          if (disposed) {
+            URL.revokeObjectURL(url);
+            throw new Error("reader disposed");
+          }
+          sentenceAudioURLs.set(cacheKey, url);
+          setAudioCacheVersion((version) => version + 1);
+          return url;
+        })
+        .finally(() => sentenceAudioRequests.delete(cacheKey));
       sentenceAudioRequests.set(cacheKey, request);
     }
     return request;
+  }
+
+  function readerVoiceModel(): string {
+    return appStore.profile()?.tts_model || "default";
+  }
+
+  function sentenceSpeechCacheKey(span: SentenceSpan, model = readerVoiceModel()): string {
+    return `${model}:${span.index}`;
+  }
+
+  function sentenceAudioIsReady(span: SentenceSpan, model = readerVoiceModel()): boolean {
+    audioCacheVersion();
+    const cacheKey = sentenceSpeechCacheKey(span, model);
+    return sentenceAudioURLs.has(cacheKey) && Boolean(sentenceAlignments.get(cacheKey)?.length);
+  }
+
+  function missingSentenceAudio(): SentenceSpan[] {
+    const model = readerVoiceModel();
+    return sentenceSpans().filter((span) => !sentenceAudioIsReady(span, model));
+  }
+
+  function audioGenerationLabel(): string {
+    const generation = audioGeneration();
+    if (generation.status === "generating") {
+      return `Generating ${generation.completed}/${generation.total}`;
+    }
+    const missing = missingSentenceAudio().length;
+    if (missing === 0) return "Audio ready";
+    if (generation.status === "error") return `Retry audio (${missing})`;
+    return `Generate audio (${missing})`;
+  }
+
+  async function generateMissingSentenceAudio() {
+    if (audioGeneration().status === "generating") return;
+    const model = readerVoiceModel();
+    const missing = sentenceSpans().filter((span) => !sentenceAudioIsReady(span, model));
+    if (missing.length === 0) return;
+
+    const generationToken = ++audioGenerationToken;
+    let next = 0;
+    let completed = 0;
+    let failures = 0;
+    setAudioGeneration({ status: "generating", completed: 0, total: missing.length });
+
+    const worker = async () => {
+      while (!disposed && generationToken === audioGenerationToken) {
+        const index = next++;
+        if (index >= missing.length) return;
+        try {
+          await loadSentenceSpeech(missing[index], true, model);
+        } catch {
+          failures++;
+        }
+        completed++;
+        if (generationToken === audioGenerationToken) {
+          setAudioGeneration({ status: "generating", completed, total: missing.length });
+        }
+      }
+    };
+
+    await Promise.all(Array.from(
+      { length: Math.min(AUDIO_GENERATION_CONCURRENCY, missing.length) },
+      () => worker(),
+    ));
+    if (disposed || generationToken !== audioGenerationToken) return;
+    setAudioGeneration({ status: failures ? "error" : "idle", completed, total: missing.length });
+    if (failures) {
+      appStore.showToast(`${failures} sentence${failures === 1 ? "" : "s"} could not be prepared.`, "error");
+    } else {
+      appStore.showToast("Story audio is ready.");
+    }
   }
 
   function beginSpeechPlayback(): number {
@@ -1030,16 +1148,27 @@ export function ReaderView(props: {
           <span><kbd>i</kbd> ignore</span>
           <span><kbd>s</kbd> sentence · <kbd>Shift</kbd>+<kbd>s</kbd> word</span>
         </p>
-        <Show when={props.sessionId}>
+        <div class="reader-toolbar-actions">
           <button
-            class="primary-button reader-complete-button"
+            class="secondary-button reader-audio-button"
             type="button"
-            disabled={status() !== "ready" || completeStatus() === "saving" || completeStatus() === "done"}
-            onClick={() => void completeCurrentSession()}
+            disabled={status() !== "ready" || audioGeneration().status === "generating" || missingSentenceAudio().length === 0}
+            aria-busy={audioGeneration().status === "generating"}
+            onClick={() => void generateMissingSentenceAudio()}
           >
-            {completeStatus() === "done" ? "Completed" : completeStatus() === "saving" ? "Completing..." : "Complete session"}
+            {status() === "ready" ? audioGenerationLabel() : "Generate audio"}
           </button>
-        </Show>
+          <Show when={props.sessionId}>
+            <button
+              class="primary-button reader-complete-button"
+              type="button"
+              disabled={status() !== "ready" || completeStatus() === "saving" || completeStatus() === "done"}
+              onClick={() => void completeCurrentSession()}
+            >
+              {completeStatus() === "done" ? "Completed" : completeStatus() === "saving" ? "Completing..." : "Complete session"}
+            </button>
+          </Show>
+        </div>
       </header>
 
       <Switch>

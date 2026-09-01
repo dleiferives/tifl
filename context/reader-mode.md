@@ -222,6 +222,13 @@ cache lets the audio route reuse the exact bytes that were aligned. `Shift+s`
 seeks to the current word's MFA start time and stops at its MFA end time—it never
 synthesizes an isolated word.
 
+The toolbar's **Generate audio** action prepares every sentence that is still
+missing either audio or MFA timings for the selected voice model. It runs two
+sentences at a time, reports progress inside the fixed-width button, skips ready
+sentences, and leaves failed sentences available for retry. The button and the
+keyboard shortcuts share the same cache, so either path immediately benefits the
+other. Audio and alignment responses are privately browser-cacheable for one day.
+
 ---
 
 ## Signal Collection: What the Reader Logs

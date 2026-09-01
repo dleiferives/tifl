@@ -173,6 +173,9 @@ func TestStorySentenceAlignmentCachesSynthesizedAudioForPlayback(t *testing.T) {
 		alignment.Words[0].Position != 0 || alignment.Words[1].Position != 2 {
 		t.Fatalf("alignment = status %d, body %+v", resp.StatusCode, alignment)
 	}
+	if !strings.Contains(resp.Header.Get("Cache-Control"), "private") || !strings.Contains(resp.Header.Get("Cache-Control"), "max-age") {
+		t.Fatalf("sentence alignment cache control = %q", resp.Header.Get("Cache-Control"))
+	}
 	if audioGateway.synthesisCalls != 1 || audioGateway.alignment.Transcript != "a b" ||
 		audioGateway.alignment.Language != "xx" || string(audioGateway.alignment.Audio.Data) != "mp3-data" {
 		t.Fatalf("speech calls = synth %d, alignment %+v", audioGateway.synthesisCalls, audioGateway.alignment)

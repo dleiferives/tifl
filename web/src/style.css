@@ -1650,6 +1650,17 @@ select {
   white-space: nowrap;
 }
 
+.reader-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  white-space: nowrap;
+}
+
+.reader-audio-button {
+  width: 10.5rem;
+}
+
 .reader-hints {
   display: flex;
   flex-wrap: wrap;

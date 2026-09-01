@@ -154,6 +154,7 @@ func (h *Handler) storySentenceAlignment(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
+	w.Header().Set("Cache-Control", "private, max-age=86400")
 	writeJSON(w, http.StatusOK, oapigen.ReaderSentenceAlignment{
 		SentenceIndex: target.span.Index,
 		Words:         readerWordTimings(target.tokens, target.span, asset.Alignment.Words),
