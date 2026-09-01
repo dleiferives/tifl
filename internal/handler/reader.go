@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/dleiferives/tifl/internal/db"
@@ -13,7 +14,10 @@ import (
 	"github.com/dleiferives/tifl/internal/handler/oapigen"
 	"github.com/dleiferives/tifl/internal/llm"
 	"github.com/dleiferives/tifl/internal/reader"
+	"github.com/dleiferives/tifl/internal/speech"
 )
+
+const maxReaderSentenceTTSRunes = 4_000
 
 // Reader endpoints. The reader loads a whole story plus the user's knowledge for
 // that language in a single call, then runs entirely client-side, flushing
@@ -89,6 +93,62 @@ func (h *Handler) getStory(w http.ResponseWriter, r *http.Request) {
 		resp.SurfaceKnowledge[readerFormKey(s.ItemKey, s.SurfaceKey)] = readerLevelDTO{Level: oapigen.ReaderSurfaceKnowledgeLevel(s.Level)}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// storySentenceAudio synthesizes the authoritative sentence containing a token
+// position. The server resolves both text and language so clients cannot turn
+// this authenticated route into an arbitrary TTS proxy.
+func (h *Handler) storySentenceAudio(w http.ResponseWriter, r *http.Request) {
+	if h.speech == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("reader audio is not configured"))
+		return
+	}
+	position, err := strconv.Atoi(r.PathValue("position"))
+	if err != nil || position < 0 {
+		writeError(w, http.StatusBadRequest, errors.New("position must be a non-negative integer"))
+		return
+	}
+	story, err := h.repo.GetStory(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.writeStoryLookupError(w, err)
+		return
+	}
+	if story.UserID != h.currentUserID(r) {
+		writeError(w, http.StatusNotFound, errors.New("story not found"))
+		return
+	}
+	tokens, err := h.repo.ListStoryTokens(r.Context(), story.StoryID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	span, ok := reader.SentenceAt(tokens, position)
+	if !ok {
+		writeError(w, http.StatusNotFound, errors.New("sentence not found"))
+		return
+	}
+	if len([]rune(span.Text)) > maxReaderSentenceTTSRunes {
+		writeError(w, http.StatusBadRequest, errors.New("sentence is too long for speech"))
+		return
+	}
+	profile, err := h.currentProfile(r)
+	if err != nil {
+		h.writeProfileError(w, err)
+		return
+	}
+	audio, err := h.speech.Synthesize(r.Context(), speech.SynthesisInput{
+		Text: span.Text, Language: story.Language, Model: profile.TTSModel,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	w.Header().Set("Content-Type", audio.ContentType)
+	w.Header().Set("Content-Length", strconv.Itoa(len(audio.Data)))
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(audio.Data)
 }
 
 func readerTokenSurfaceKey(t domain.StoryToken) string {

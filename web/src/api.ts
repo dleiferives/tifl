@@ -143,6 +143,20 @@ export async function transcribeConversationAudio(
 }
 
 export async function getConversationTurnAudio(audioURL: string): Promise<Blob> {
+  return getAuthenticatedAudio(audioURL);
+}
+
+export async function getStorySentenceAudio(
+  storyID: string,
+  position: number,
+  voiceModel = "default",
+): Promise<Blob> {
+  return getAuthenticatedAudio(
+    `/stories/${encodeURIComponent(storyID)}/sentences/${position}/audio?voice_model=${encodeURIComponent(voiceModel)}`,
+  );
+}
+
+async function getAuthenticatedAudio(audioURL: string): Promise<Blob> {
   let response = await sendRequest(audioURL, { headers: { Accept: "audio/mpeg" } });
   if (response.status === 401 && await refreshAccessToken()) {
     response = await sendRequest(audioURL, { headers: { Accept: "audio/mpeg" } });

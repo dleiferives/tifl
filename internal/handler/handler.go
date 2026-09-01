@@ -92,6 +92,7 @@ func currentAPIRoutes() []apiRoute {
 		{Method: http.MethodPost, Path: "/api/v1/stories/{id}/tasks/generate", Handler: (*Handler).generateStoryTasks, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/stories/{id}/definition", Handler: (*Handler).getDefinition, RequireUser: true},
 		{Method: http.MethodPost, Path: "/api/v1/stories/{id}/sentence", Handler: (*Handler).postSentenceBreakdown, RequireUser: true},
+		{Method: http.MethodGet, Path: "/api/v1/stories/{id}/sentences/{position}/audio", Handler: (*Handler).storySentenceAudio, RequireUser: true},
 		{Method: http.MethodPost, Path: "/api/v1/stories/{id}/word", Handler: (*Handler).postWordBreakdown, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/dictionary/entry", Handler: (*Handler).getDictionaryEntry, RequireUser: true},
 		{Method: http.MethodPut, Path: "/api/v1/dictionary/entry", Handler: (*Handler).putDictionaryEntry, RequireUser: true},

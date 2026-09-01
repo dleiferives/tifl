@@ -2401,6 +2401,12 @@ type PostSentenceBreakdownJSONBody struct {
 	Position int `json:"position"`
 }
 
+// GetStorySentenceAudioParams defines parameters for GetStorySentenceAudio.
+type GetStorySentenceAudioParams struct {
+	// VoiceModel Client cache variant; authorization and the actual model remain server-owned.
+	VoiceModel string `form:"voice_model,omitempty" json:"voice_model,omitempty"`
+}
+
 // PostWordBreakdownJSONBody defines parameters for PostWordBreakdown.
 type PostWordBreakdownJSONBody struct {
 	Key string `json:"key"`

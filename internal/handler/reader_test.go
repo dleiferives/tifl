@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/dleiferives/tifl/internal/domain"
+	"github.com/dleiferives/tifl/internal/handler"
 )
 
 // seedStory creates a story owned by the local user with two word tokens ("a b")
@@ -114,6 +115,35 @@ func TestGetStoryReturnsTokensAndKnowledge(t *testing.T) {
 	}
 	if _, ok := out.Knowledge["b"]; ok {
 		t.Fatal("unseen word 'b' should be absent from the knowledge map")
+	}
+}
+
+func TestStorySentenceAudioUsesAuthoritativeSpanAndProfileModel(t *testing.T) {
+	audioGateway := &fakeConversationSpeech{}
+	srv, repo := newServer(t, false, handler.WithSpeech(audioGateway))
+	storyID := seedStory(t, repo)
+	ttsModel := "supertonic"
+	if _, err := repo.UpdateUserProfile(context.Background(), domain.LocalUserID, domain.UserProfilePatch{TTSModel: &ttsModel}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(srv.URL + "/api/v1/stories/" + storyID + "/sentences/2/audio?voice_model=supertonic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "audio/mpeg" || string(data) != "mp3-data" {
+		t.Fatalf("sentence audio = status %d, type %q, body %q", resp.StatusCode, resp.Header.Get("Content-Type"), data)
+	}
+	if !strings.Contains(resp.Header.Get("Cache-Control"), "private") || !strings.Contains(resp.Header.Get("Cache-Control"), "max-age") {
+		t.Fatalf("sentence audio cache control = %q", resp.Header.Get("Cache-Control"))
+	}
+	if audioGateway.synthesizedText != "a b" || audioGateway.synthesizedLanguage != "xx" || audioGateway.synthesizedModel != "supertonic" {
+		t.Fatalf("sentence synthesis = %q (%q/%q)", audioGateway.synthesizedText, audioGateway.synthesizedLanguage, audioGateway.synthesizedModel)
 	}
 }
 

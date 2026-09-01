@@ -95,7 +95,7 @@ type generationEventPayload struct {
 
 // newServer builds an httptest server over the real handler. withBroker controls
 // whether generation is wired (false exercises the 503 path).
-func newServer(t *testing.T, withBroker bool) (*httptest.Server, db.Repository) {
+func newServer(t *testing.T, withBroker bool, opts ...handler.Option) (*httptest.Server, db.Repository) {
 	t.Helper()
 	ctx := context.Background()
 	repo := dbtest.NewRepo(t)
@@ -142,7 +142,7 @@ func newServer(t *testing.T, withBroker bool) (*httptest.Server, db.Repository) 
 	}
 
 	mux := http.NewServeMux()
-	handler.New(repo, broker, client, taskRegistry, langs, "").Register(mux)
+	handler.New(repo, broker, client, taskRegistry, langs, "", opts...).Register(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv, repo

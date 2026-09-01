@@ -1668,6 +1668,13 @@ select {
   font-size: 0.8em;
 }
 
+.reader-speech-status {
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
 .reader-status {
   color: var(--text-muted);
 }

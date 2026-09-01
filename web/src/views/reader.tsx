@@ -6,6 +6,7 @@ import {
   deleteDictionaryEntry,
   getDefinition,
   getStory,
+  getStorySentenceAudio,
   postReaderEvents,
   putDictionaryEntry,
   setReaderSurfaceKnowledge,
@@ -25,6 +26,7 @@ type ReaderSurfaceKnowledge = APISchema<"ReaderSurfaceKnowledge">;
 type KnowledgeLevel = ReaderKnowledge["level"];
 type Definition = APISchema<"Definition">;
 type ReaderEvent = APISchema<"ReaderEvent">;
+type SentenceSpan = APISchema<"SentenceSpan">;
 
 type Loadable<T> = "loading" | "error" | T;
 type RemovalNotice = "removed" | "removed-failed";
@@ -83,7 +85,9 @@ export function ReaderView(props: {
   const [status, setStatus] = createSignal<"loading" | "ready" | "error">("loading");
   const [completeStatus, setCompleteStatus] = createSignal<"idle" | "saving" | "done">("idle");
   const [tokens, setTokens] = createSignal<StoryToken[]>([]);
+  const [sentenceSpans, setSentenceSpans] = createSignal<SentenceSpan[]>([]);
   const [language, setLanguage] = createSignal("");
+  const [sentenceSpeechStatus, setSentenceSpeechStatus] = createSignal<"idle" | "generating" | "playing">("idle");
   const [knowledge, setKnowledge] = createStore<Record<string, ReaderKnowledge>>({});
   const [surfaceKnowledge, setSurfaceKnowledge] = createStore<Record<string, ReaderSurfaceKnowledge>>({});
   const [cursor, setCursor] = createSignal(0);
@@ -113,6 +117,10 @@ export function ReaderView(props: {
   let readingStart: Promise<void> | null = null;
   let dictionaryMutationSeq = 0;
   const dictionaryMutationIds: Record<string, number> = {};
+  const sentenceAudioURLs = new Map<number, string>();
+  const sentenceAudioRequests = new Map<number, Promise<string>>();
+  let sentenceAudio: HTMLAudioElement | null = null;
+  let sentencePlaybackToken = 0;
 
   const currentToken = () => tokens()[cursor()];
 
@@ -131,6 +139,11 @@ export function ReaderView(props: {
     window.removeEventListener("beforeunload", onBeforeUnload);
     window.removeEventListener("resize", repositionPopup);
     window.removeEventListener("scroll", repositionPopup, true);
+    sentencePlaybackToken++;
+    sentenceAudio?.pause();
+    for (const objectURL of sentenceAudioURLs.values()) URL.revokeObjectURL(objectURL);
+    sentenceAudioURLs.clear();
+    sentenceAudioRequests.clear();
     void flush(true);
   });
 
@@ -165,6 +178,7 @@ export function ReaderView(props: {
     setKnowledge(seeded);
     setSurfaceKnowledge(seededSurface);
     setTokens(story.tokens);
+    setSentenceSpans(story.sentences);
     setLanguage(story.language);
     setCursor(resolveCursorIndex(story.tokens, readSavedCursor(props.storyId)));
   }
@@ -573,6 +587,58 @@ export function ReaderView(props: {
     void ensureSentence(position);
   }
 
+  async function playCurrentSentence() {
+    const token = currentToken();
+    if (!token) return;
+    const span = sentenceSpans().find((candidate) =>
+      token.position >= candidate.start_position && token.position < candidate.end_position);
+    if (!span) {
+      appStore.showToast("The current sentence could not be found.", "error");
+      return;
+    }
+    const playbackToken = ++sentencePlaybackToken;
+    sentenceAudio?.pause();
+    setSentenceSpeechStatus(sentenceAudioURLs.has(span.index) ? "playing" : "generating");
+    try {
+      let objectURL = sentenceAudioURLs.get(span.index);
+      if (!objectURL) {
+        let request = sentenceAudioRequests.get(span.index);
+        if (!request) {
+          request = getStorySentenceAudio(
+            props.storyId,
+            span.start_position,
+            appStore.profile()?.tts_model || "default",
+          ).then((audio) => {
+            const url = URL.createObjectURL(audio);
+            sentenceAudioURLs.set(span.index, url);
+            return url;
+          }).finally(() => sentenceAudioRequests.delete(span.index));
+          sentenceAudioRequests.set(span.index, request);
+        }
+        objectURL = await request;
+      }
+      if (playbackToken !== sentencePlaybackToken) return;
+      const player = new Audio(objectURL);
+      sentenceAudio = player;
+      setSentenceSpeechStatus("playing");
+      player.onended = () => {
+        if (playbackToken === sentencePlaybackToken) setSentenceSpeechStatus("idle");
+      };
+      player.onerror = () => {
+        if (playbackToken === sentencePlaybackToken) {
+          setSentenceSpeechStatus("idle");
+          appStore.showToast("Sentence audio could not be played.", "error");
+        }
+      };
+      await player.play();
+    } catch {
+      if (playbackToken === sentencePlaybackToken) {
+        setSentenceSpeechStatus("idle");
+        appStore.showToast("Sentence audio could not be generated.", "error");
+      }
+    }
+  }
+
   async function ensureSentence(position: number) {
     if (sentences[position] && sentences[position] !== "error") {
       return;
@@ -753,7 +819,7 @@ export function ReaderView(props: {
       case "s":
       case "S":
         event.preventDefault();
-        openSentenceBreakdown();
+        void playCurrentSentence();
         break;
       case "Escape":
         event.preventDefault();
@@ -772,8 +838,13 @@ export function ReaderView(props: {
           <span><kbd>1</kbd>–<kbd>5</kbd> rate</span>
           <span><kbd>w</kbd> known</span>
           <span><kbd>i</kbd> ignore</span>
-          <span><kbd>s</kbd> sentence</span>
+          <span><kbd>s</kbd> speak sentence</span>
         </p>
+        <Show when={sentenceSpeechStatus() !== "idle"}>
+          <span class="reader-speech-status" role="status">
+            {sentenceSpeechStatus() === "generating" ? "Generating sentence audio…" : "Playing sentence…"}
+          </span>
+        </Show>
         <Show when={props.sessionId}>
           <button
             class="primary-button reader-complete-button"

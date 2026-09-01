@@ -33,7 +33,7 @@ assumes the user is reading, not clicking around.
 | `1` – `5` | Set knowledge level for current word (1=barely, 5=nearly mastered) |
 | `w` | Mark current word as well-known (no further targeting) |
 | `i` | Mark current word as ignored (pronouns, particles, proper nouns — not worth tracking) |
-| `s` | Open sentence breakdown popup for the sentence containing the current word |
+| `s` | Generate or replay TTS for the sentence containing the current word |
 
 **Definition popup behavior**: Space toggles it. When the cursor moves to a new
 word, the popup stays open if it was open — it just updates to the new word's
@@ -110,10 +110,11 @@ pressing arrow keys while it's open.
 
 ---
 
-## The Sentence Breakdown Popup (`s` key)
+## The Sentence Breakdown Popup (currently unbound)
 
-Pressing `s` opens a richer analysis of the full sentence containing the current
-word. This is an LLM-backed call. The breakdown includes:
+Sentence breakdown is currently unbound. When opened from a future control, it
+shows a richer analysis of the full sentence containing the current word. This
+is an LLM-backed call. The breakdown includes:
 
 - The full sentence in the target language
 - A word-by-word gloss (each word's canonical form + meaning)
