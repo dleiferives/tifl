@@ -1,12 +1,14 @@
 package reader
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -39,11 +41,11 @@ type WiktionarySource interface {
 // then LLM); live results are written to the global shared cache so the next
 // learner gets them free. See context/reader-mode.md and issues #10/#40/#41.
 type DefinitionService struct {
-	repo   Store
-	client llm.Client       // nil when no gateway is configured
-	wik    WiktionarySource // nil = no Wiktionary source wired yet (#41)
-	langs  *lang.Registry   // nil = canonical-key plugin fallback disabled
-	now    func() float64
+	repo           Store
+	client         llm.Client       // nil when no gateway is configured
+	wik            WiktionarySource // nil = no Wiktionary source wired yet (#41)
+	missingEnglish MissingEnglishRecorder
+	now            func() float64
 
 	// flights deduplicates concurrent LLM calls for the same uncached key
 	// (#207): N readers hitting one uncached sentence produce one model call.
@@ -131,10 +133,15 @@ const (
 )
 
 // NewDefinitionService builds the service. client may be nil (live LLM paths then
-// return ErrLLMUnavailable); wik may be nil (Wiktionary hop is skipped);
-// langs may be nil (canonical key plugin extraction disabled).
-func NewDefinitionService(repo Store, client llm.Client, wik WiktionarySource, langs *lang.Registry) *DefinitionService {
-	return &DefinitionService{repo: repo, client: client, wik: wik, langs: langs, now: func() float64 { return float64(time.Now().Unix()) }}
+// return ErrLLMUnavailable); wik may be nil (Wiktionary hop is skipped). The
+// registry argument is retained at the composition boundary for language-owned
+// definition behavior, but canonical aliases now come only from imported data.
+func NewDefinitionService(repo Store, client llm.Client, wik WiktionarySource, _ *lang.Registry) *DefinitionService {
+	return &DefinitionService{repo: repo, client: client, wik: wik, now: func() float64 { return float64(time.Now().Unix()) }}
+}
+
+func (s *DefinitionService) SetMissingEnglishRecorder(recorder MissingEnglishRecorder) {
+	s.missingEnglish = recorder
 }
 
 // Resolve returns the best available definition for a word key in a story,
@@ -160,12 +167,26 @@ func (s *DefinitionService) ResolveWithTrace(ctx context.Context, userID, storyI
 		trace.WinningSource = d.Source
 		return DefinitionResolution{Definition: d, Trace: trace}, nil
 	}
+	storedDefinitions, err := s.repo.ListDefinitions(ctx, language, key)
+	if err != nil {
+		return DefinitionResolution{}, err
+	}
+	nativeGloss := nativeGlossFrom(storedDefinitions)
+	recordMissingEnglish := func() {
+		if language != "el" || s.missingEnglish == nil || hasDefinitionSource(storedDefinitions, domain.DefinitionSourceWiktionary) {
+			return
+		}
+		// This backlog is ancillary: an unavailable filesystem must never make a
+		// reader definition fail.
+		_ = s.missingEnglish.Record(ctx, language, key, nativeGloss)
+	}
 
 	// 1. Per-user dictionary — learner-owned overrides always win.
 	if d, err := s.repo.GetUserDefinition(ctx, userID, language, key); err == nil {
 		trace.Steps = append(trace.Steps, DefinitionTraceStep{
 			Step: "user_dictionary", Status: defTraceHit, Source: domain.DefinitionSourceUser, Key: key,
 		})
+		recordMissingEnglish()
 		return finish(domain.Definition{
 			Language: language, ItemKey: key, Source: domain.DefinitionSourceUser,
 			Gloss: d.Gloss, Notes: d.Notes, CreatedAt: d.CreatedAt,
@@ -182,6 +203,7 @@ func (s *DefinitionService) ResolveWithTrace(ctx context.Context, userID, storyI
 				trace.Steps = append(trace.Steps, DefinitionTraceStep{
 					Step: "story_glossary", Status: defTraceHit, Source: domain.DefinitionSourceGlossary, Key: key, Count: len(entries),
 				})
+				recordMissingEnglish()
 				return finish(domain.Definition{
 					Language: language, ItemKey: key, Source: domain.DefinitionSourceGlossary,
 					Gloss: g.Gloss, GrammaticalNote: g.GrammaticalNote, Example: g.Example,
@@ -204,17 +226,13 @@ func (s *DefinitionService) ResolveWithTrace(ctx context.Context, userID, storyI
 		trace.Steps = append(trace.Steps, DefinitionTraceStep{
 			Step: "knowledge_metadata", Status: defTraceHit, Source: domain.DefinitionSourceMetadata, Key: key,
 		})
+		recordMissingEnglish()
 		return finish(d)
 	}
 	trace.Steps = append(trace.Steps, DefinitionTraceStep{Step: "knowledge_metadata", Status: defTraceMiss, Source: domain.DefinitionSourceMetadata, Key: key})
 
 	// 4. Shared cache — a previously stored Wiktionary/LLM definition.
-	cached, err := s.repo.ListDefinitions(ctx, language, key)
-	if err != nil {
-		return DefinitionResolution{}, err
-	}
-	// Track the native gloss for the LLM translate path in step 6.
-	nativeGloss := nativeGlossFrom(cached)
+	cached := storedDefinitions
 	if d, ok := pickDefinition(cached); ok {
 		trace.Steps = append(trace.Steps, DefinitionTraceStep{
 			Step: "shared_cache", Status: defTraceHit, Source: d.Source, Key: key, Count: len(cached),
@@ -223,19 +241,18 @@ func (s *DefinitionService) ResolveWithTrace(ctx context.Context, userID, storyI
 		// definition. The lemma's entry is the authoritative one (it was the kaikki
 		// headword) and likely has a better English gloss than the form alias,
 		// especially after the lastNonEmpty fix produces correct leaf-sense glosses.
+		// Follow only an explicit alias recorded by the importer. Inferring a
+		// lemma from an arbitrary native gloss is unsafe: a headword can have a
+		// secondary sense whose definition mentions another lemma (for example,
+		// δηλαδή also occurs inside the surname definition for Δηλαδής).
 		canonKey := d.CanonicalKey
-		if canonKey == "" && nativeGloss != "" && s.langs != nil {
-			// Runtime fallback: extract canonical from native gloss via plugin.
-			if l, ok2 := s.langs.Get(language); ok2 {
-				canonKey, _ = lang.ExtractCanonicalKey(l, nativeGloss)
-			}
-		}
 		if canonKey != "" && canonKey != key {
 			if canonDefs, err2 := s.repo.ListDefinitions(ctx, language, canonKey); err2 == nil {
 				if canon, ok2 := pickDefinition(canonDefs); ok2 {
 					trace.Steps = append(trace.Steps, DefinitionTraceStep{
 						Step: "canonical_key_follow", Status: defTraceHit, Source: canon.Source, Key: key, TargetKey: canonKey, Count: len(canonDefs),
 					})
+					recordMissingEnglish()
 					return finish(canon)
 				}
 				trace.Steps = append(trace.Steps, DefinitionTraceStep{
@@ -247,6 +264,7 @@ func (s *DefinitionService) ResolveWithTrace(ctx context.Context, userID, storyI
 				})
 			}
 		}
+		recordMissingEnglish()
 		return finish(d)
 	}
 	trace.Steps = append(trace.Steps, DefinitionTraceStep{Step: "shared_cache", Status: defTraceMiss, Key: key, Count: len(cached)})
@@ -274,6 +292,7 @@ func (s *DefinitionService) ResolveWithTrace(ctx context.Context, userID, storyI
 			Step: "wiktionary", Status: defTraceSkipped, Source: domain.DefinitionSourceWiktionary, Key: key, Reason: "source_unconfigured",
 		})
 	}
+	recordMissingEnglish()
 
 	// 6. Live LLM — translate native gloss if available, otherwise cold generation.
 	if s.client == nil {
@@ -308,11 +327,75 @@ func (s *DefinitionService) ResolveWithTrace(ctx context.Context, userID, storyI
 	return finish(d)
 }
 
+// DefinitionOptions returns every stored definition available for a reader
+// word. It is read-only and never invokes a live provider: the normal Resolve
+// call populates the cache before the user opens the source picker.
+func (s *DefinitionService) DefinitionOptions(ctx context.Context, userID, storyID, key string) ([]domain.Definition, error) {
+	_, language, err := s.story(ctx, userID, storyID)
+	if err != nil {
+		return nil, err
+	}
+
+	var options []domain.Definition
+	if d, err := s.repo.GetUserDefinition(ctx, userID, language, key); err == nil {
+		options = append(options, domain.Definition{
+			Language: language, ItemKey: key, Source: domain.DefinitionSourceUser,
+			Gloss: d.Gloss, Notes: d.Notes, CreatedAt: d.CreatedAt,
+		})
+	} else if !errors.Is(err, db.ErrNotFound) {
+		return nil, err
+	}
+
+	if entries, err := s.repo.ListStoryGlossary(ctx, storyID); err == nil {
+		for _, g := range entries {
+			if g.ItemKey == key {
+				options = append(options, domain.Definition{
+					Language: language, ItemKey: key, Source: domain.DefinitionSourceGlossary,
+					Gloss: g.Gloss, GrammaticalNote: g.GrammaticalNote, Example: g.Example,
+				})
+				break
+			}
+		}
+	} else {
+		return nil, err
+	}
+
+	if d, ok, err := s.fromMetadata(ctx, language, key); err != nil {
+		return nil, err
+	} else if ok {
+		options = append(options, d)
+	}
+
+	stored, err := s.repo.ListDefinitions(ctx, language, key)
+	if err != nil {
+		return nil, err
+	}
+	options = append(options, stored...)
+
+	// Form aliases may have richer definitions under their explicitly linked
+	// lemma. Include those as alternatives without making them win by default.
+	canonicalKeys := make(map[string]struct{})
+	for _, d := range stored {
+		if d.CanonicalKey != "" && d.CanonicalKey != key {
+			canonicalKeys[d.CanonicalKey] = struct{}{}
+		}
+	}
+	for canonicalKey := range canonicalKeys {
+		canonical, err := s.repo.ListDefinitions(ctx, language, canonicalKey)
+		if err != nil {
+			return nil, err
+		}
+		options = append(options, canonical...)
+	}
+
+	return uniqueDefinitionOptions(options), nil
+}
+
 // ResolveStoredWithTrace returns a trace only when the definition is already
 // available from deterministic/stored sources. It never calls Wiktionary or the
 // LLM and never writes a new shared-cache row.
 func (s *DefinitionService) ResolveStoredWithTrace(ctx context.Context, userID, storyID, key string) (DefinitionResolution, bool, error) {
-	offline := &DefinitionService{repo: s.repo, langs: s.langs, now: s.now}
+	offline := &DefinitionService{repo: s.repo, now: s.now}
 
 	res, err := offline.ResolveWithTrace(ctx, userID, storyID, key)
 	if errors.Is(err, ErrLLMUnavailable) {
@@ -951,6 +1034,36 @@ func pickDefinition(defs []domain.Definition) (domain.Definition, bool) {
 	return defs[0], true
 }
 
+func uniqueDefinitionOptions(defs []domain.Definition) []domain.Definition {
+	priority := map[string]int{
+		domain.DefinitionSourceUser:       0,
+		domain.DefinitionSourceGlossary:   1,
+		domain.DefinitionSourceMetadata:   2,
+		domain.DefinitionSourceTranslated: 3,
+		domain.DefinitionSourceWiktionary: 4,
+		domain.DefinitionSourceNative:     5,
+		domain.DefinitionSourceLLM:        6,
+	}
+	slices.SortStableFunc(defs, func(a, b domain.Definition) int {
+		return cmp.Compare(priority[a.Source], priority[b.Source])
+	})
+	seen := make(map[string]struct{}, len(defs))
+	out := make([]domain.Definition, 0, len(defs))
+	for _, d := range defs {
+		gloss := strings.TrimSpace(d.Gloss)
+		if gloss == "" {
+			continue
+		}
+		identity := d.Source + "\x00" + d.ItemKey + "\x00" + gloss
+		if _, ok := seen[identity]; ok {
+			continue
+		}
+		seen[identity] = struct{}{}
+		out = append(out, d)
+	}
+	return out
+}
+
 // nativeGlossFrom returns the first native-source gloss from a definition list,
 // used to prime the LLM translate step when no English definition exists.
 func nativeGlossFrom(defs []domain.Definition) string {
@@ -960,6 +1073,15 @@ func nativeGlossFrom(defs []domain.Definition) string {
 		}
 	}
 	return ""
+}
+
+func hasDefinitionSource(defs []domain.Definition, source string) bool {
+	for _, d := range defs {
+		if d.Source == source && strings.TrimSpace(d.Gloss) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func metaString(m map[string]any, key string) string {

@@ -156,6 +156,26 @@ export async function getStorySentenceAudio(
   );
 }
 
+export async function getStorySentenceAlignment(
+  storyID: string,
+  position: number,
+  voiceModel = "default",
+): Promise<APIResponse<"getStorySentenceAlignment", 200>> {
+  return apiFetch<APIResponse<"getStorySentenceAlignment", 200>>(
+    `/stories/${encodeURIComponent(storyID)}/sentences/${position}/alignment?voice_model=${encodeURIComponent(voiceModel)}`,
+  );
+}
+
+export async function getStoryWordAudio(
+  storyID: string,
+  position: number,
+  voiceModel = "default",
+): Promise<Blob> {
+  return getAuthenticatedAudio(
+    `/stories/${encodeURIComponent(storyID)}/words/${position}/audio?voice_model=${encodeURIComponent(voiceModel)}`,
+  );
+}
+
 async function getAuthenticatedAudio(audioURL: string): Promise<Blob> {
   let response = await sendRequest(audioURL, { headers: { Accept: "audio/mpeg" } });
   if (response.status === 401 && await refreshAccessToken()) {
@@ -463,6 +483,15 @@ export async function getStory(
 export async function getDefinition(storyID: string, key: string): Promise<APIResponse<"getDefinition", 200>> {
   return apiFetch<APIResponse<"getDefinition", 200>>(
     `/stories/${encodeURIComponent(storyID)}/definition?${new URLSearchParams({ key })}`,
+  );
+}
+
+export async function getDefinitionOptions(
+  storyID: string,
+  key: string,
+): Promise<APIResponse<"getDefinitionOptions", 200>> {
+  return apiFetch<APIResponse<"getDefinitionOptions", 200>>(
+    `/stories/${encodeURIComponent(storyID)}/definition/options?key=${encodeURIComponent(key)}`,
   );
 }
 

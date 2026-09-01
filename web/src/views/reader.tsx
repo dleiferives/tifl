@@ -5,8 +5,11 @@ import {
   completeSession,
   deleteDictionaryEntry,
   getDefinition,
+  getDefinitionOptions,
   getStory,
   getStorySentenceAudio,
+  getStorySentenceAlignment,
+  getStoryWordAudio,
   postReaderEvents,
   putDictionaryEntry,
   setReaderSurfaceKnowledge,
@@ -25,8 +28,10 @@ type ReaderKnowledge = APISchema<"ReaderKnowledge">;
 type ReaderSurfaceKnowledge = APISchema<"ReaderSurfaceKnowledge">;
 type KnowledgeLevel = ReaderKnowledge["level"];
 type Definition = APISchema<"Definition">;
+type DefinitionOption = APISchema<"DefinitionOption">;
 type ReaderEvent = APISchema<"ReaderEvent">;
 type SentenceSpan = APISchema<"SentenceSpan">;
+type ReaderWordTiming = APISchema<"ReaderWordTiming">;
 
 type Loadable<T> = "loading" | "error" | T;
 type RemovalNotice = "removed" | "removed-failed";
@@ -87,13 +92,14 @@ export function ReaderView(props: {
   const [tokens, setTokens] = createSignal<StoryToken[]>([]);
   const [sentenceSpans, setSentenceSpans] = createSignal<SentenceSpan[]>([]);
   const [language, setLanguage] = createSignal("");
-  const [sentenceSpeechStatus, setSentenceSpeechStatus] = createSignal<"idle" | "generating" | "playing">("idle");
   const [knowledge, setKnowledge] = createStore<Record<string, ReaderKnowledge>>({});
   const [surfaceKnowledge, setSurfaceKnowledge] = createStore<Record<string, ReaderSurfaceKnowledge>>({});
   const [cursor, setCursor] = createSignal(0);
   const [popupVisible, setPopupVisible] = createSignal(false);
   const [popupPos, setPopupPos] = createSignal<{ top: number; left: number } | null>(null);
   const [definitions, setDefinitions] = createStore<Record<string, Loadable<Definition>>>({});
+  const [definitionOptions, setDefinitionOptions] = createStore<Record<string, Loadable<DefinitionOption[]>>>({});
+  const [sourcePickerKey, setSourcePickerKey] = createSignal("");
   // Personal-dictionary editing. Only one popup (one key) is open at a time, so
   // a single edit state suffices. `removalNotice` is keyed so the "removed"
   // message stays scoped to the word it belongs to.
@@ -117,10 +123,15 @@ export function ReaderView(props: {
   let readingStart: Promise<void> | null = null;
   let dictionaryMutationSeq = 0;
   const dictionaryMutationIds: Record<string, number> = {};
-  const sentenceAudioURLs = new Map<number, string>();
-  const sentenceAudioRequests = new Map<number, Promise<string>>();
+  const sentenceAudioURLs = new Map<string, string>();
+  const sentenceAudioRequests = new Map<string, Promise<{ url: string; words: ReaderWordTiming[] }>>();
+  const sentenceAlignments = new Map<string, ReaderWordTiming[]>();
+  const wordAudioURLs = new Map<string, string>();
+  const wordAudioRequests = new Map<string, Promise<string>>();
   let sentenceAudio: HTMLAudioElement | null = null;
   let sentencePlaybackToken = 0;
+  let sentenceAnimationFrame: number | undefined;
+  let speakingPosition: number | undefined;
 
   const currentToken = () => tokens()[cursor()];
 
@@ -141,9 +152,15 @@ export function ReaderView(props: {
     window.removeEventListener("scroll", repositionPopup, true);
     sentencePlaybackToken++;
     sentenceAudio?.pause();
+    if (sentenceAnimationFrame !== undefined) cancelAnimationFrame(sentenceAnimationFrame);
+    clearSpeakingWord();
     for (const objectURL of sentenceAudioURLs.values()) URL.revokeObjectURL(objectURL);
+    for (const objectURL of wordAudioURLs.values()) URL.revokeObjectURL(objectURL);
     sentenceAudioURLs.clear();
     sentenceAudioRequests.clear();
+    sentenceAlignments.clear();
+    wordAudioURLs.clear();
+    wordAudioRequests.clear();
     void flush(true);
   });
 
@@ -297,6 +314,40 @@ export function ReaderView(props: {
     }
   }
 
+  function toggleDefinitionSources(key: string) {
+    if (sourcePickerKey() === key) {
+      setSourcePickerKey("");
+      return;
+    }
+    setSourcePickerKey(key);
+    if (!definitionOptions[key] || definitionOptions[key] === "error") {
+      setDefinitionOptions(key, "loading");
+      void getDefinitionOptions(props.storyId, key)
+        .then((options) => setDefinitionOptions(key, options))
+        .catch(() => setDefinitionOptions(key, "error"));
+    }
+  }
+
+  function chooseDefinitionSource(key: string, option: DefinitionOption) {
+    const current = loadedDefinition(key);
+    setDefinitions(key, {
+      key: option.key,
+      source: option.source,
+      gloss: option.gloss,
+      grammatical_note: option.grammatical_note,
+      example: option.example,
+      etymology: option.etymology,
+      notes: option.notes,
+      trace: {
+        query_key: key,
+        resolved_key: option.key,
+        winning_source: option.source,
+        steps: current?.trace.steps ?? [],
+      },
+    });
+    setSourcePickerKey("");
+  }
+
   // ---- personal dictionary editing --------------------------------------
   function loadedDefinition(key: string): Definition | null {
     const entry = definitions[key];
@@ -426,9 +477,11 @@ export function ReaderView(props: {
     editError();
     editGloss();
     editNotes();
+    sourcePickerKey();
     const token = currentToken();
     if (token?.key) {
       definitions[token.key];
+      definitionOptions[token.key];
       actionError[token.key];
       removalNotice[token.key];
     }
@@ -437,11 +490,17 @@ export function ReaderView(props: {
     }
   });
 
+  createEffect(() => {
+    const key = currentToken()?.key ?? "";
+    if (sourcePickerKey() && sourcePickerKey() !== key) setSourcePickerKey("");
+  });
+
   // Closing the popup drops any half-finished edit so it does not resurface.
   createEffect(() => {
     if (!popupVisible()) {
       setEditing(false);
       setEditError("");
+      setSourcePickerKey("");
     }
   });
 
@@ -530,6 +589,14 @@ export function ReaderView(props: {
           <p class="reader-popup-notice" role="status">Your definition was removed — showing dictionary definition.</p>
         </Show>
         {definitionBody(entry, language())}
+        <Show when={loadedDefinition(key)}>
+          <button class="reader-source-picker-toggle" type="button" onClick={() => toggleDefinitionSources(key)}>
+            {sourcePickerKey() === key ? "Hide sources" : "Pick different source"}
+          </button>
+        </Show>
+        <Show when={sourcePickerKey() === key}>
+          {definitionSourcePicker(definitionOptions[key], loadedDefinition(key), (option) => chooseDefinitionSource(key, option))}
+        </Show>
       </div>
     );
   }
@@ -596,47 +663,142 @@ export function ReaderView(props: {
       appStore.showToast("The current sentence could not be found.", "error");
       return;
     }
-    const playbackToken = ++sentencePlaybackToken;
-    sentenceAudio?.pause();
-    setSentenceSpeechStatus(sentenceAudioURLs.has(span.index) ? "playing" : "generating");
+    const playbackToken = beginSpeechPlayback();
     try {
-      let objectURL = sentenceAudioURLs.get(span.index);
+      const speech = await loadSentenceSpeech(span);
+      if (playbackToken !== sentencePlaybackToken) return;
+      const player = new Audio(speech.url);
+      sentenceAudio = player;
+      player.onended = () => finishSpeechPlayback(playbackToken);
+      player.onerror = () => {
+        if (playbackToken === sentencePlaybackToken) {
+          finishSpeechPlayback(playbackToken);
+          appStore.showToast("Sentence audio could not be played.", "error");
+        }
+      };
+      await player.play();
+      animateSentencePlayback(player, speech.words, playbackToken);
+    } catch {
+      if (playbackToken === sentencePlaybackToken) {
+        finishSpeechPlayback(playbackToken);
+        appStore.showToast("Sentence audio could not be generated.", "error");
+      }
+    }
+  }
+
+  async function playCurrentWord() {
+    const token = currentToken();
+    if (!token?.is_word) return;
+    const playbackToken = beginSpeechPlayback();
+    const model = appStore.profile()?.tts_model || "default";
+    const cacheKey = `${model}:${token.position}`;
+    try {
+      let objectURL = wordAudioURLs.get(cacheKey);
       if (!objectURL) {
-        let request = sentenceAudioRequests.get(span.index);
+        let request = wordAudioRequests.get(cacheKey);
         if (!request) {
-          request = getStorySentenceAudio(
-            props.storyId,
-            span.start_position,
-            appStore.profile()?.tts_model || "default",
-          ).then((audio) => {
-            const url = URL.createObjectURL(audio);
-            sentenceAudioURLs.set(span.index, url);
-            return url;
-          }).finally(() => sentenceAudioRequests.delete(span.index));
-          sentenceAudioRequests.set(span.index, request);
+          request = getStoryWordAudio(props.storyId, token.position, model)
+            .then((audio) => {
+              const url = URL.createObjectURL(audio);
+              wordAudioURLs.set(cacheKey, url);
+              return url;
+            })
+            .finally(() => wordAudioRequests.delete(cacheKey));
+          wordAudioRequests.set(cacheKey, request);
         }
         objectURL = await request;
       }
       if (playbackToken !== sentencePlaybackToken) return;
       const player = new Audio(objectURL);
       sentenceAudio = player;
-      setSentenceSpeechStatus("playing");
-      player.onended = () => {
-        if (playbackToken === sentencePlaybackToken) setSentenceSpeechStatus("idle");
-      };
+      setSpeakingWord(token.position);
+      player.onended = () => finishSpeechPlayback(playbackToken);
       player.onerror = () => {
         if (playbackToken === sentencePlaybackToken) {
-          setSentenceSpeechStatus("idle");
-          appStore.showToast("Sentence audio could not be played.", "error");
+          finishSpeechPlayback(playbackToken);
+          appStore.showToast("Word audio could not be played.", "error");
         }
       };
       await player.play();
     } catch {
       if (playbackToken === sentencePlaybackToken) {
-        setSentenceSpeechStatus("idle");
-        appStore.showToast("Sentence audio could not be generated.", "error");
+        finishSpeechPlayback(playbackToken);
+        appStore.showToast("Word audio could not be generated.", "error");
       }
     }
+  }
+
+  async function loadSentenceSpeech(span: SentenceSpan): Promise<{ url: string; words: ReaderWordTiming[] }> {
+    const model = appStore.profile()?.tts_model || "default";
+    const cacheKey = `${model}:${span.index}`;
+    const cachedURL = sentenceAudioURLs.get(cacheKey);
+    if (cachedURL) return { url: cachedURL, words: sentenceAlignments.get(cacheKey) ?? [] };
+
+    let request = sentenceAudioRequests.get(cacheKey);
+    if (!request) {
+      request = (async () => {
+        let words: ReaderWordTiming[] = [];
+        try {
+          const alignment = await getStorySentenceAlignment(props.storyId, span.start_position, model);
+          words = alignment.words;
+        } catch {
+          // Alignment is an enhancement: audio remains usable if MFA is down.
+        }
+        const audio = await getStorySentenceAudio(props.storyId, span.start_position, model);
+        const url = URL.createObjectURL(audio);
+        sentenceAudioURLs.set(cacheKey, url);
+        sentenceAlignments.set(cacheKey, words);
+        return { url, words };
+      })().finally(() => sentenceAudioRequests.delete(cacheKey));
+      sentenceAudioRequests.set(cacheKey, request);
+    }
+    return request;
+  }
+
+  function beginSpeechPlayback(): number {
+    const playbackToken = ++sentencePlaybackToken;
+    sentenceAudio?.pause();
+    sentenceAudio = null;
+    if (sentenceAnimationFrame !== undefined) {
+      cancelAnimationFrame(sentenceAnimationFrame);
+      sentenceAnimationFrame = undefined;
+    }
+    clearSpeakingWord();
+    return playbackToken;
+  }
+
+  function finishSpeechPlayback(playbackToken: number) {
+    if (playbackToken !== sentencePlaybackToken) return;
+    if (sentenceAnimationFrame !== undefined) {
+      cancelAnimationFrame(sentenceAnimationFrame);
+      sentenceAnimationFrame = undefined;
+    }
+    clearSpeakingWord();
+    sentenceAudio = null;
+  }
+
+  function animateSentencePlayback(player: HTMLAudioElement, words: ReaderWordTiming[], playbackToken: number) {
+    const frame = () => {
+      if (playbackToken !== sentencePlaybackToken || player.paused || player.ended) return;
+      const current = words.find((word) => player.currentTime >= word.start && player.currentTime < word.end);
+      if (current) setSpeakingWord(current.position);
+      else clearSpeakingWord();
+      sentenceAnimationFrame = requestAnimationFrame(frame);
+    };
+    frame();
+  }
+
+  function setSpeakingWord(position: number) {
+    if (speakingPosition === position) return;
+    clearSpeakingWord();
+    wordEls[position]?.setAttribute("data-speaking", "");
+    speakingPosition = position;
+  }
+
+  function clearSpeakingWord() {
+    if (speakingPosition === undefined) return;
+    wordEls[speakingPosition]?.removeAttribute("data-speaking");
+    speakingPosition = undefined;
   }
 
   async function ensureSentence(position: number) {
@@ -817,9 +979,12 @@ export function ReaderView(props: {
         rate("ignored", "i");
         break;
       case "s":
-      case "S":
         event.preventDefault();
         void playCurrentSentence();
+        break;
+      case "S":
+        event.preventDefault();
+        void playCurrentWord();
         break;
       case "Escape":
         event.preventDefault();
@@ -838,13 +1003,8 @@ export function ReaderView(props: {
           <span><kbd>1</kbd>–<kbd>5</kbd> rate</span>
           <span><kbd>w</kbd> known</span>
           <span><kbd>i</kbd> ignore</span>
-          <span><kbd>s</kbd> speak sentence</span>
+          <span><kbd>s</kbd> sentence · <kbd>Shift</kbd>+<kbd>s</kbd> word</span>
         </p>
-        <Show when={sentenceSpeechStatus() !== "idle"}>
-          <span class="reader-speech-status" role="status">
-            {sentenceSpeechStatus() === "generating" ? "Generating sentence audio…" : "Playing sentence…"}
-          </span>
-        </Show>
         <Show when={props.sessionId}>
           <button
             class="primary-button reader-complete-button"
@@ -1072,6 +1232,61 @@ function definitionBody(entry: Loadable<Definition> | undefined, lang: string): 
       </Show>
     </>
   );
+}
+
+function definitionSourcePicker(
+  entry: Loadable<DefinitionOption[]> | undefined,
+  current: Definition | null,
+  choose: (option: DefinitionOption) => void,
+): JSX.Element {
+  if (!entry || entry === "loading") {
+    return <p class="reader-source-picker-status">Loading sources…</p>;
+  }
+  if (entry === "error") {
+    return <p class="reader-source-picker-status reader-popup-error">Sources could not be loaded.</p>;
+  }
+  if (entry.length === 0) {
+    return <p class="reader-source-picker-status">No other stored sources.</p>;
+  }
+  return (
+    <div class="reader-source-options" aria-label="Available definition sources">
+      <For each={entry}>
+        {(option) => {
+          const selected = () => current?.source === option.source && current.key === option.key && current.gloss === option.gloss;
+          return (
+            <button
+              class="reader-source-option"
+              type="button"
+              data-selected={selected() ? "" : undefined}
+              aria-pressed={selected()}
+              onClick={() => choose(option)}
+            >
+              <span class="reader-source-option-head">
+                <span>{definitionSourceLabel(option.source)}</span>
+                <Show when={option.key !== current?.trace.query_key}><span lang="el">{option.key}</span></Show>
+              </span>
+              <span>{option.gloss}</span>
+              <Show when={option.grammatical_note}>
+                {(note) => <small>{note()}</small>}
+              </Show>
+            </button>
+          );
+        }}
+      </For>
+    </div>
+  );
+}
+
+function definitionSourceLabel(source: DefinitionOption["source"]): string {
+  switch (source) {
+    case "wiktionary": return "English Wiktionary";
+    case "wiktionary-native": return "Greek Wiktionary";
+    case "wiktionary-translated": return "Translated Wiktionary";
+    case "glossary": return "Story glossary";
+    case "metadata": return "Learning metadata";
+    case "llm": return "AI definition";
+    case "user": return "Your definition";
+  }
 }
 
 function breakdownBody(entry: Loadable<unknown> | undefined, mode: Exclude<Analysis, null>["mode"]): JSX.Element {

@@ -182,6 +182,39 @@ func (e DefinitionSource) Valid() bool {
 	}
 }
 
+// Defines values for DefinitionOptionSource.
+const (
+	DefinitionOptionSourceGlossary             DefinitionOptionSource = "glossary"
+	DefinitionOptionSourceLlm                  DefinitionOptionSource = "llm"
+	DefinitionOptionSourceMetadata             DefinitionOptionSource = "metadata"
+	DefinitionOptionSourceUser                 DefinitionOptionSource = "user"
+	DefinitionOptionSourceWiktionary           DefinitionOptionSource = "wiktionary"
+	DefinitionOptionSourceWiktionaryNative     DefinitionOptionSource = "wiktionary-native"
+	DefinitionOptionSourceWiktionaryTranslated DefinitionOptionSource = "wiktionary-translated"
+)
+
+// Valid indicates whether the value is a known member of the DefinitionOptionSource enum.
+func (e DefinitionOptionSource) Valid() bool {
+	switch e {
+	case DefinitionOptionSourceGlossary:
+		return true
+	case DefinitionOptionSourceLlm:
+		return true
+	case DefinitionOptionSourceMetadata:
+		return true
+	case DefinitionOptionSourceUser:
+		return true
+	case DefinitionOptionSourceWiktionary:
+		return true
+	case DefinitionOptionSourceWiktionaryNative:
+		return true
+	case DefinitionOptionSourceWiktionaryTranslated:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DefinitionTraceWinningSource.
 const (
 	DefinitionTraceWinningSourceGlossary             DefinitionTraceWinningSource = "glossary"
@@ -271,31 +304,31 @@ func (e DefinitionTraceStepStatus) Valid() bool {
 
 // Defines values for DefinitionTraceStepStep.
 const (
-	DefinitionTraceStepStepCanonicalKeyFollow DefinitionTraceStepStep = "canonical_key_follow"
-	DefinitionTraceStepStepKnowledgeMetadata  DefinitionTraceStepStep = "knowledge_metadata"
-	DefinitionTraceStepStepLlmFallback        DefinitionTraceStepStep = "llm_fallback"
-	DefinitionTraceStepStepSharedCache        DefinitionTraceStepStep = "shared_cache"
-	DefinitionTraceStepStepStoryGlossary      DefinitionTraceStepStep = "story_glossary"
-	DefinitionTraceStepStepUserDictionary     DefinitionTraceStepStep = "user_dictionary"
-	DefinitionTraceStepStepWiktionary         DefinitionTraceStepStep = "wiktionary"
+	CanonicalKeyFollow DefinitionTraceStepStep = "canonical_key_follow"
+	KnowledgeMetadata  DefinitionTraceStepStep = "knowledge_metadata"
+	LlmFallback        DefinitionTraceStepStep = "llm_fallback"
+	SharedCache        DefinitionTraceStepStep = "shared_cache"
+	StoryGlossary      DefinitionTraceStepStep = "story_glossary"
+	UserDictionary     DefinitionTraceStepStep = "user_dictionary"
+	Wiktionary         DefinitionTraceStepStep = "wiktionary"
 )
 
 // Valid indicates whether the value is a known member of the DefinitionTraceStepStep enum.
 func (e DefinitionTraceStepStep) Valid() bool {
 	switch e {
-	case DefinitionTraceStepStepCanonicalKeyFollow:
+	case CanonicalKeyFollow:
 		return true
-	case DefinitionTraceStepStepKnowledgeMetadata:
+	case KnowledgeMetadata:
 		return true
-	case DefinitionTraceStepStepLlmFallback:
+	case LlmFallback:
 		return true
-	case DefinitionTraceStepStepSharedCache:
+	case SharedCache:
 		return true
-	case DefinitionTraceStepStepStoryGlossary:
+	case StoryGlossary:
 		return true
-	case DefinitionTraceStepStepUserDictionary:
+	case UserDictionary:
 		return true
-	case DefinitionTraceStepStepWiktionary:
+	case Wiktionary:
 		return true
 	default:
 		return false
@@ -1351,6 +1384,20 @@ type Definition struct {
 // DefinitionSource where the definition came from
 type DefinitionSource string
 
+// DefinitionOption One stored definition that can be selected in the reader source picker.
+type DefinitionOption struct {
+	Etymology       string                 `json:"etymology,omitempty"`
+	Example         string                 `json:"example,omitempty"`
+	Gloss           string                 `json:"gloss"`
+	GrammaticalNote string                 `json:"grammatical_note,omitempty"`
+	Key             string                 `json:"key"`
+	Notes           string                 `json:"notes,omitempty"`
+	Source          DefinitionOptionSource `json:"source"`
+}
+
+// DefinitionOptionSource defines model for DefinitionOption.Source.
+type DefinitionOptionSource string
+
 // DefinitionTrace Debug-safe source trace for a reader definition lookup.
 type DefinitionTrace struct {
 	QueryKey      string                       `json:"query_key"`
@@ -1782,6 +1829,12 @@ type ReaderKnowledge struct {
 // ReaderKnowledgeLevel explicit canonical learner mark; ” (omitted)=none
 type ReaderKnowledgeLevel string
 
+// ReaderSentenceAlignment Forced alignment between one synthesized sentence and its story word tokens.
+type ReaderSentenceAlignment struct {
+	SentenceIndex int                `json:"sentence_index"`
+	Words         []ReaderWordTiming `json:"words"`
+}
+
 // ReaderSurfaceKnowledge The reader's per-displayed-form level, keyed by StoryToken.form_key.
 type ReaderSurfaceKnowledge struct {
 	// Level learner self-rating for this exact form; ''=unseen
@@ -1834,6 +1887,14 @@ type ReaderTraceKind string
 
 // ReaderTraceStatus defines model for ReaderTrace.Status.
 type ReaderTraceStatus string
+
+// ReaderWordTiming defines model for ReaderWordTiming.
+type ReaderWordTiming struct {
+	End      float64 `json:"end"`
+	Position int     `json:"position"`
+	Start    float64 `json:"start"`
+	Surface  string  `json:"surface"`
+}
 
 // RespondConversationRequest defines model for RespondConversationRequest.
 type RespondConversationRequest struct {
@@ -2396,9 +2457,21 @@ type GetDefinitionParams struct {
 	Key string `form:"key" json:"key"`
 }
 
+// GetDefinitionOptionsParams defines parameters for GetDefinitionOptions.
+type GetDefinitionOptionsParams struct {
+	// Key canonical knowledge key to define
+	Key string `form:"key" json:"key"`
+}
+
 // PostSentenceBreakdownJSONBody defines parameters for PostSentenceBreakdown.
 type PostSentenceBreakdownJSONBody struct {
 	Position int `json:"position"`
+}
+
+// GetStorySentenceAlignmentParams defines parameters for GetStorySentenceAlignment.
+type GetStorySentenceAlignmentParams struct {
+	// VoiceModel Client cache variant; authorization and the actual model remain server-owned.
+	VoiceModel string `form:"voice_model,omitempty" json:"voice_model,omitempty"`
 }
 
 // GetStorySentenceAudioParams defines parameters for GetStorySentenceAudio.
@@ -2410,6 +2483,12 @@ type GetStorySentenceAudioParams struct {
 // PostWordBreakdownJSONBody defines parameters for PostWordBreakdown.
 type PostWordBreakdownJSONBody struct {
 	Key string `json:"key"`
+}
+
+// GetStoryWordAudioParams defines parameters for GetStoryWordAudio.
+type GetStoryWordAudioParams struct {
+	// VoiceModel Client cache variant; authorization and the actual model remain server-owned.
+	VoiceModel string `form:"voice_model,omitempty" json:"voice_model,omitempty"`
 }
 
 // LoginJSONRequestBody defines body for Login for application/json ContentType.

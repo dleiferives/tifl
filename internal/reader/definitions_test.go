@@ -4,6 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +15,8 @@ import (
 	"github.com/dleiferives/tifl/internal/db"
 	"github.com/dleiferives/tifl/internal/db/dbtest"
 	"github.com/dleiferives/tifl/internal/domain"
+	"github.com/dleiferives/tifl/internal/lang"
+	greekplugin "github.com/dleiferives/tifl/internal/lang/el"
 	"github.com/dleiferives/tifl/internal/llm"
 	"github.com/dleiferives/tifl/internal/reader"
 )
@@ -182,6 +187,57 @@ func TestResolveWithTraceCanonicalFollow(t *testing.T) {
 	}
 	if len(client.Calls) != 0 {
 		t.Fatalf("canonical cache hit must not call the LLM, got %d calls", len(client.Calls))
+	}
+}
+
+func TestResolveDoesNotInferLemmaFromUnrelatedNativeSense(t *testing.T) {
+	ctx, _, repo, client, userID, _ := defFixture(t, `{"gloss":"from llm"}`)
+	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "el", Name: "Greek", KeyStrategy: "lemma", Enabled: true}))
+	story, err := repo.CreateStory(ctx, domain.Story{UserID: userID, Language: "el", Text: "Δηλαδή.", Level: "beginner"})
+	must(t, err)
+	must(t, repo.UpsertDefinitions(ctx, []domain.Definition{
+		{Language: "el", ItemKey: "δηλαδή", Source: domain.DefinitionSourceWiktionary, Gloss: "namely; that is; therefore"},
+		{Language: "el", ItemKey: "δηλαδή", Source: domain.DefinitionSourceNative, Gloss: "επεξηγηματικός σύνδεσμος; ανδρικό επώνυμο; γενική ενικού του Δηλαδής"},
+		{Language: "el", ItemKey: "δηλαδής", Source: domain.DefinitionSourceNative, Gloss: "ανδρικό επώνυμο"},
+	}))
+	registry := lang.NewRegistry()
+	registry.Register(greekplugin.New())
+	svc := reader.NewDefinitionService(repo, client, nil, registry)
+
+	res, err := svc.ResolveWithTrace(ctx, userID, story.StoryID, "δηλαδή")
+	must(t, err)
+	if res.Definition.ItemKey != "δηλαδή" || res.Definition.Source != domain.DefinitionSourceWiktionary ||
+		res.Definition.Gloss != "namely; that is; therefore" {
+		t.Fatalf("false canonical follow: %+v", res)
+	}
+	if _, ok := traceStep(res.Trace, "canonical_key_follow"); ok {
+		t.Fatalf("headword lookup must not infer a canonical alias: %+v", res.Trace)
+	}
+}
+
+func TestResolveRecordsMissingEnglishWiktionaryKey(t *testing.T) {
+	ctx, _, repo, client, userID, _ := defFixture(t, `{"gloss":"from llm"}`)
+	must(t, repo.UpsertLanguage(ctx, domain.Language{Code: "el", Name: "Greek", KeyStrategy: "lemma", Enabled: true}))
+	story, err := repo.CreateStory(ctx, domain.Story{UserID: userID, Language: "el", Text: "λέξη.", Level: "beginner"})
+	must(t, err)
+	must(t, repo.UpsertDefinition(ctx, domain.Definition{
+		Language: "el", ItemKey: "λέξη", Source: domain.DefinitionSourceNative, Gloss: "γλωσσική μονάδα",
+	}))
+	path := filepath.Join(t.TempDir(), "wikitionary_en_missing.json")
+	svc := reader.NewDefinitionService(repo, client, nil, nil)
+	svc.SetMissingEnglishRecorder(reader.NewJSONMissingEnglishRecorder(path))
+
+	for range 2 {
+		if _, err := svc.Resolve(ctx, userID, story.StoryID, "λέξη"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, err := os.ReadFile(path)
+	must(t, err)
+	var entries []reader.MissingEnglishDefinition
+	must(t, json.Unmarshal(data, &entries))
+	if len(entries) != 1 || entries[0].Language != "el" || entries[0].Key != "λέξη" || entries[0].NativeGloss != "γλωσσική μονάδα" {
+		t.Fatalf("missing English backlog = %+v", entries)
 	}
 }
 

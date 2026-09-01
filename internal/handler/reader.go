@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/dleiferives/tifl/internal/db"
@@ -14,7 +13,6 @@ import (
 	"github.com/dleiferives/tifl/internal/handler/oapigen"
 	"github.com/dleiferives/tifl/internal/llm"
 	"github.com/dleiferives/tifl/internal/reader"
-	"github.com/dleiferives/tifl/internal/speech"
 )
 
 const maxReaderSentenceTTSRunes = 4_000
@@ -99,56 +97,16 @@ func (h *Handler) getStory(w http.ResponseWriter, r *http.Request) {
 // position. The server resolves both text and language so clients cannot turn
 // this authenticated route into an arbitrary TTS proxy.
 func (h *Handler) storySentenceAudio(w http.ResponseWriter, r *http.Request) {
-	if h.speech == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("reader audio is not configured"))
-		return
-	}
-	position, err := strconv.Atoi(r.PathValue("position"))
-	if err != nil || position < 0 {
-		writeError(w, http.StatusBadRequest, errors.New("position must be a non-negative integer"))
-		return
-	}
-	story, err := h.repo.GetStory(r.Context(), r.PathValue("id"))
-	if err != nil {
-		h.writeStoryLookupError(w, err)
-		return
-	}
-	if story.UserID != h.currentUserID(r) {
-		writeError(w, http.StatusNotFound, errors.New("story not found"))
-		return
-	}
-	tokens, err := h.repo.ListStoryTokens(r.Context(), story.StoryID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	span, ok := reader.SentenceAt(tokens, position)
+	target, ok := h.readerSentenceSpeechTarget(w, r)
 	if !ok {
-		writeError(w, http.StatusNotFound, errors.New("sentence not found"))
 		return
 	}
-	if len([]rune(span.Text)) > maxReaderSentenceTTSRunes {
-		writeError(w, http.StatusBadRequest, errors.New("sentence is too long for speech"))
-		return
-	}
-	profile, err := h.currentProfile(r)
-	if err != nil {
-		h.writeProfileError(w, err)
-		return
-	}
-	audio, err := h.speech.Synthesize(r.Context(), speech.SynthesisInput{
-		Text: span.Text, Language: story.Language, Model: profile.TTSModel,
-	})
+	asset, err := h.synthesizeReaderSentence(r.Context(), target)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
-	w.Header().Set("Content-Type", audio.ContentType)
-	w.Header().Set("Content-Length", strconv.Itoa(len(audio.Data)))
-	w.Header().Set("Cache-Control", "private, max-age=86400")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(audio.Data)
+	writeReaderAudio(w, asset.Audio)
 }
 
 func readerTokenSurfaceKey(t domain.StoryToken) string {
@@ -321,6 +279,7 @@ func (h *Handler) writeReaderError(w http.ResponseWriter, err error) {
 
 type (
 	definitionDTO         = oapigen.Definition
+	definitionOptionDTO   = oapigen.DefinitionOption
 	definitionTraceDTO    = oapigen.DefinitionTrace
 	breakdownTraceDTO     = oapigen.BreakdownTrace
 	sentenceBreakdownDTO  = oapigen.SentenceBreakdownTrace
@@ -351,6 +310,30 @@ func (h *Handler) getDefinition(w http.ResponseWriter, r *http.Request) {
 		GrammaticalNote: d.GrammaticalNote, Example: d.Example, Etymology: d.Etymology, Notes: d.Notes,
 		Trace: definitionTraceFromReader(res.Trace),
 	})
+}
+
+// getDefinitionOptions lists the already-available definitions from each
+// source so the learner can inspect a different dictionary rather than being
+// locked to the resolver's default choice.
+func (h *Handler) getDefinitionOptions(w http.ResponseWriter, r *http.Request) {
+	key := r.URL.Query().Get("key")
+	if key == "" {
+		writeError(w, http.StatusBadRequest, errors.New("key query parameter is required"))
+		return
+	}
+	definitions, err := h.defs.DefinitionOptions(r.Context(), h.currentUserID(r), r.PathValue("id"), key)
+	if err != nil {
+		h.writeReaderError(w, err)
+		return
+	}
+	options := make([]definitionOptionDTO, 0, len(definitions))
+	for _, d := range definitions {
+		options = append(options, definitionOptionDTO{
+			Key: d.ItemKey, Source: oapigen.DefinitionOptionSource(d.Source), Gloss: d.Gloss,
+			GrammaticalNote: d.GrammaticalNote, Example: d.Example, Etymology: d.Etymology, Notes: d.Notes,
+		})
+	}
+	writeJSON(w, http.StatusOK, options)
 }
 
 func definitionTraceFromReader(trace reader.DefinitionTrace) definitionTraceDTO {

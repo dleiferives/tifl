@@ -264,13 +264,24 @@ type fakeConversationSpeech struct {
 	synthesizedText     string
 	synthesizedLanguage string
 	synthesizedModel    string
+	synthesisCalls      int
+	alignment           speech.AlignmentInput
 }
 
 func (f *fakeConversationSpeech) Synthesize(_ context.Context, input speech.SynthesisInput) (speech.Audio, error) {
+	f.synthesisCalls++
 	f.synthesizedText = input.Text
 	f.synthesizedLanguage = input.Language
 	f.synthesizedModel = input.Model
 	return speech.Audio{Data: []byte("mp3-data"), ContentType: "audio/mpeg"}, nil
+}
+
+func (f *fakeConversationSpeech) Align(_ context.Context, input speech.AlignmentInput) (speech.Alignment, error) {
+	f.alignment = input
+	return speech.Alignment{Words: []speech.WordTiming{
+		{Text: "a", Start: 0.1, End: 0.3},
+		{Text: "b", Start: 0.3, End: 0.6},
+	}}, nil
 }
 
 func (f *fakeConversationSpeech) Transcribe(_ context.Context, input speech.TranscriptionInput) (string, error) {

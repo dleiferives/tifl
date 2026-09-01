@@ -13,13 +13,17 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"strings"
 	"time"
 )
 
 const (
 	maxSynthesisBytes = 32 << 20
+	maxAlignmentBytes = 4 << 20
 	maxErrorBytes     = 64 << 10
+	alignmentTimeout  = 90 * time.Second
+	alignmentPollWait = 500 * time.Millisecond
 )
 
 var ErrEmptyTranscript = errors.New("speech: transcription is empty")
@@ -52,10 +56,28 @@ type SynthesisInput struct {
 	Model    string
 }
 
+type AlignmentInput struct {
+	Audio      Audio
+	Filename   string
+	Transcript string
+	Language   string
+}
+
+type WordTiming struct {
+	Text  string  `json:"text"`
+	Start float64 `json:"start"`
+	End   float64 `json:"end"`
+}
+
+type Alignment struct {
+	Words []WordTiming `json:"words"`
+}
+
 // Gateway is the handler-facing audio service contract. *Client and test fakes
 // satisfy it.
 type Gateway interface {
 	Synthesize(ctx context.Context, input SynthesisInput) (Audio, error)
+	Align(ctx context.Context, input AlignmentInput) (Alignment, error)
 	Transcribe(ctx context.Context, input TranscriptionInput) (string, error)
 }
 
@@ -136,6 +158,152 @@ func (c *Client) Synthesize(ctx context.Context, input SynthesisInput) (Audio, e
 		return Audio{}, fmt.Errorf("speech: synthesize returned unexpected content type %q", contentType)
 	}
 	return Audio{Data: data, ContentType: contentType}, nil
+}
+
+// Align queues MFA forced alignment on the audio server and polls the short-
+// lived job until its word timings are available.
+func (c *Client) Align(ctx context.Context, input AlignmentInput) (Alignment, error) {
+	if c.baseURL == "" {
+		return Alignment{}, errors.New("speech: audio server is not configured")
+	}
+	if len(input.Audio.Data) == 0 || strings.TrimSpace(input.Transcript) == "" || strings.TrimSpace(input.Language) == "" {
+		return Alignment{}, errors.New("speech: alignment audio, transcript, and language are required")
+	}
+	ctx, cancel := context.WithTimeout(ctx, alignmentTimeout)
+	defer cancel()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	filename := strings.TrimSpace(input.Filename)
+	if filename == "" {
+		filename = "speech.mp3"
+	}
+	header := make(textproto.MIMEHeader)
+	header.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename=%q`, filename))
+	if input.Audio.ContentType != "" {
+		header.Set("Content-Type", input.Audio.ContentType)
+	}
+	part, err := writer.CreatePart(header)
+	if err != nil {
+		return Alignment{}, err
+	}
+	if _, err := part.Write(input.Audio.Data); err != nil {
+		return Alignment{}, err
+	}
+	if err := writer.WriteField("transcript", input.Transcript); err != nil {
+		return Alignment{}, err
+	}
+	if err := writer.WriteField("language", input.Language); err != nil {
+		return Alignment{}, err
+	}
+	if err := writer.Close(); err != nil {
+		return Alignment{}, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/audio/alignments", &body)
+	if err != nil {
+		return Alignment{}, err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	c.authorize(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return Alignment{}, fmt.Errorf("speech: align: %w", err)
+	}
+	if resp.StatusCode != http.StatusAccepted {
+		defer resp.Body.Close()
+		return Alignment{}, upstreamError("align", resp)
+	}
+	job, err := decodeAlignmentJob(resp)
+	if err != nil {
+		return Alignment{}, err
+	}
+	for {
+		switch job.Status {
+		case "succeeded":
+			if len(job.Result.Words) > 0 {
+				return job.Result, nil
+			}
+			return c.alignmentResult(ctx, job.ID)
+		case "failed":
+			if strings.TrimSpace(job.Error) == "" {
+				job.Error = "alignment job failed"
+			}
+			return Alignment{}, errors.New("speech: align: " + job.Error)
+		case "queued", "running":
+		default:
+			return Alignment{}, fmt.Errorf("speech: align: unexpected job status %q", job.Status)
+		}
+
+		timer := time.NewTimer(alignmentPollWait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return Alignment{}, fmt.Errorf("speech: align: %w", ctx.Err())
+		case <-timer.C:
+		}
+		job, err = c.alignmentJob(ctx, job.ID)
+		if err != nil {
+			return Alignment{}, err
+		}
+	}
+}
+
+type alignmentJob struct {
+	ID     string    `json:"id"`
+	Status string    `json:"status"`
+	Error  string    `json:"error"`
+	Result Alignment `json:"result"`
+}
+
+func decodeAlignmentJob(resp *http.Response) (alignmentJob, error) {
+	defer resp.Body.Close()
+	var job alignmentJob
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxAlignmentBytes)).Decode(&job); err != nil {
+		return alignmentJob{}, fmt.Errorf("speech: decode alignment job: %w", err)
+	}
+	if strings.TrimSpace(job.ID) == "" {
+		return alignmentJob{}, errors.New("speech: alignment job returned no id")
+	}
+	return job, nil
+}
+
+func (c *Client) alignmentJob(ctx context.Context, id string) (alignmentJob, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/audio/alignments/"+url.PathEscape(id), nil)
+	if err != nil {
+		return alignmentJob{}, err
+	}
+	c.authorize(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return alignmentJob{}, fmt.Errorf("speech: poll alignment: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		defer resp.Body.Close()
+		return alignmentJob{}, upstreamError("poll alignment", resp)
+	}
+	return decodeAlignmentJob(resp)
+}
+
+func (c *Client) alignmentResult(ctx context.Context, id string) (Alignment, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/audio/alignments/"+url.PathEscape(id)+"/result", nil)
+	if err != nil {
+		return Alignment{}, err
+	}
+	c.authorize(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return Alignment{}, fmt.Errorf("speech: fetch alignment result: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return Alignment{}, upstreamError("fetch alignment result", resp)
+	}
+	var alignment Alignment
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxAlignmentBytes)).Decode(&alignment); err != nil {
+		return Alignment{}, fmt.Errorf("speech: decode alignment result: %w", err)
+	}
+	return alignment, nil
 }
 
 func (c *Client) Transcribe(ctx context.Context, input TranscriptionInput) (string, error) {

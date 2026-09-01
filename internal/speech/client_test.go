@@ -44,6 +44,47 @@ func TestClientSynthesizeUsesAudioServerContract(t *testing.T) {
 	}
 }
 
+func TestClientAlignUsesMFAJobContract(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/audio/alignments" || r.Method != http.MethodPost {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer secret" {
+			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
+		}
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Fatal(err)
+		}
+		file, header, err := r.FormFile("file")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer file.Close()
+		data, _ := io.ReadAll(file)
+		if header.Filename != "sentence.mp3" || string(data) != "mp3-data" {
+			t.Fatalf("file = %q %q", header.Filename, data)
+		}
+		if r.FormValue("transcript") != "Η Μαρία βλέπει." || r.FormValue("language") != "el" {
+			t.Fatalf("form = %#v", r.MultipartForm.Value)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"id":"align-1","status":"succeeded","result":{"words":[{"text":"η","start":0.1,"end":0.2},{"text":"μαρία","start":0.2,"end":0.6},{"text":"βλέπει","start":0.6,"end":1.0}]}}`))
+	}))
+	t.Cleanup(server.Close)
+	client := speech.New(speech.Config{BaseURL: server.URL, APIKey: "secret"})
+	alignment, err := client.Align(context.Background(), speech.AlignmentInput{
+		Audio:    speech.Audio{Data: []byte("mp3-data"), ContentType: "audio/mpeg"},
+		Filename: "sentence.mp3", Transcript: "Η Μαρία βλέπει.", Language: "el",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(alignment.Words) != 3 || alignment.Words[1].Text != "μαρία" || alignment.Words[1].Start != 0.2 {
+		t.Fatalf("alignment = %#v", alignment)
+	}
+}
+
 func TestClientTranscribeUsesMultipartContract(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/audio/transcriptions" || r.Method != http.MethodPost {

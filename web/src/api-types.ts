@@ -656,6 +656,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/stories/{id}/definition/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the available definition sources for a reader word
+         * @description Returns definitions already available from the learner dictionary, story glossary, knowledge metadata, Wiktionary imports, and model cache. This read-only route does not invoke a live provider.
+         */
+        get: operations["getDefinitionOptions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/dictionary/entry": {
         parameters: {
             query?: never;
@@ -716,6 +736,46 @@ export interface paths {
          * @description Resolves the authoritative sentence containing the supplied token position and synthesizes it with the learner's selected TTS model. Private browser caching avoids regenerating repeat playback.
          */
         get: operations["getStorySentenceAudio"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stories/{id}/sentences/{position}/alignment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Generate or retrieve forced word alignment for a reader sentence
+         * @description Synthesizes the authoritative sentence with the learner's selected TTS model and uses the configured audio server's forced aligner to map each story word position to its actual start and end time.
+         */
+        get: operations["getStorySentenceAlignment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stories/{id}/words/{position}/audio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Generate or retrieve speech for one reader word
+         * @description Resolves the authoritative word at the supplied story token position and synthesizes only that word with the learner's selected TTS model.
+         */
+        get: operations["getStoryWordAudio"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1776,6 +1836,17 @@ export interface components {
             notes?: string;
             trace: components["schemas"]["DefinitionTrace"];
         };
+        /** @description One stored definition that can be selected in the reader source picker. */
+        DefinitionOption: {
+            key: string;
+            /** @enum {string} */
+            source: "user" | "glossary" | "metadata" | "wiktionary" | "wiktionary-native" | "wiktionary-translated" | "llm";
+            gloss: string;
+            grammatical_note?: string;
+            example?: string;
+            etymology?: string;
+            notes?: string;
+        };
         /** @description Debug-safe source trace for a reader definition lookup. */
         DefinitionTrace: {
             query_key: string;
@@ -1810,6 +1881,19 @@ export interface components {
             key: string;
             gloss: string;
             notes?: string;
+        };
+        /** @description Forced alignment between one synthesized sentence and its story word tokens. */
+        ReaderSentenceAlignment: {
+            sentence_index: number;
+            words: components["schemas"]["ReaderWordTiming"][];
+        };
+        ReaderWordTiming: {
+            position: number;
+            surface: string;
+            /** Format: double */
+            start: number;
+            /** Format: double */
+            end: number;
         };
         /** @description The outcome of grading one task response. */
         Grade: {
@@ -2987,6 +3071,35 @@ export interface operations {
             503: components["responses"]["ServiceUnavailable"];
         };
     };
+    getDefinitionOptions: {
+        parameters: {
+            query: {
+                /** @description canonical knowledge key to define */
+                key: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Available sourced definitions in display priority order */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DefinitionOption"][];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     getDictionaryEntry: {
         parameters: {
             query: {
@@ -3118,6 +3231,68 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Synthesized sentence audio */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/mpeg": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getStorySentenceAlignment: {
+        parameters: {
+            query?: {
+                /** @description Client cache variant; authorization and the actual model remain server-owned. */
+                voice_model?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+                position: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Forced word timings for the sentence audio */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReaderSentenceAlignment"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getStoryWordAudio: {
+        parameters: {
+            query?: {
+                /** @description Client cache variant; authorization and the actual model remain server-owned. */
+                voice_model?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+                position: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Synthesized word audio */
             200: {
                 headers: {
                     [name: string]: unknown;

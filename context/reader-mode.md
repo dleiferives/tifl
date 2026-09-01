@@ -33,7 +33,8 @@ assumes the user is reading, not clicking around.
 | `1` – `5` | Set knowledge level for current word (1=barely, 5=nearly mastered) |
 | `w` | Mark current word as well-known (no further targeting) |
 | `i` | Mark current word as ignored (pronouns, particles, proper nouns — not worth tracking) |
-| `s` | Generate or replay TTS for the sentence containing the current word |
+| `s` | Generate or replay TTS for the current sentence; highlight words from forced-alignment timings |
+| `Shift+s` | Generate or replay TTS for only the current word |
 
 **Definition popup behavior**: Space toggles it. When the cursor moves to a new
 word, the popup stays open if it was open — it just updates to the new word's
@@ -107,6 +108,18 @@ full breakdown.
 
 The popup is not a modal — it does not block navigation. The user can continue
 pressing arrow keys while it's open.
+
+The resolver chooses a default using source priority, but the popup also offers
+**Pick different source**. That view lists every definition already available
+from the learner dictionary, story glossary, metadata, English Wiktionary,
+target-language Wiktionary, translated Wiktionary, and the model cache. Choosing
+one changes the definition shown for the rest of the reader page session; the
+edit control remains the way to save a permanent learner-owned override.
+
+For Greek lookups, a key with no imported English-Wiktionary definition is
+appended (deduplicated, with any native gloss) to
+`data/wikitionary_en_missing.json`. This ignored runtime file is an input backlog
+for later batch resolution or upstream dictionary contribution work.
 
 ---
 
@@ -198,6 +211,14 @@ Greek ano teleia `·`, and ellipsis `…` close a sentence; paragraph breaks spl
 spans; a final sentence without terminal punctuation is still returned. The span
 `text` is the same reconstructed sentence text used for the sentence-breakdown
 cache key.
+
+Sentence speech is synthesized through the configured audio server, then sent to
+its Greek MFA forced-alignment endpoint. The server maps the resulting word
+start/end seconds back to authoritative story-token positions. While audio plays,
+the client marks only the currently spoken token without inserting any toolbar
+status element or otherwise changing reader layout. Sentence and word audio are
+cached in the browser for repeat shortcuts; a bounded server cache lets the audio
+route reuse the exact bytes that were aligned.
 
 ---
 

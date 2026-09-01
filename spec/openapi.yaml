@@ -1025,6 +1025,41 @@ paths:
           $ref: "#/components/responses/ServiceUnavailable"
         "500":
           $ref: "#/components/responses/InternalError"
+  /stories/{id}/definition/options:
+    get:
+      summary: List the available definition sources for a reader word
+      description: >
+        Returns definitions already available from the learner dictionary,
+        story glossary, knowledge metadata, Wiktionary imports, and model cache.
+        This read-only route does not invoke a live provider.
+      operationId: getDefinitionOptions
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: key
+          in: query
+          required: true
+          description: canonical knowledge key to define
+          schema: { type: string }
+      responses:
+        "200":
+          description: Available sourced definitions in display priority order
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DefinitionOption"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /dictionary/entry:
     get:
       summary: Get one user dictionary entry
@@ -1175,6 +1210,84 @@ paths:
       responses:
         "200":
           description: Synthesized sentence audio
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /stories/{id}/sentences/{position}/alignment:
+    get:
+      summary: Generate or retrieve forced word alignment for a reader sentence
+      description: >
+        Synthesizes the authoritative sentence with the learner's selected TTS
+        model and uses the configured audio server's forced aligner to map each
+        story word position to its actual start and end time.
+      operationId: getStorySentenceAlignment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: position
+          in: path
+          required: true
+          schema: { type: integer, minimum: 0 }
+        - name: voice_model
+          in: query
+          required: false
+          description: Client cache variant; authorization and the actual model remain server-owned.
+          schema: { type: string }
+      responses:
+        "200":
+          description: Forced word timings for the sentence audio
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReaderSentenceAlignment"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /stories/{id}/words/{position}/audio:
+    get:
+      summary: Generate or retrieve speech for one reader word
+      description: >
+        Resolves the authoritative word at the supplied story token position
+        and synthesizes only that word with the learner's selected TTS model.
+      operationId: getStoryWordAudio
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: position
+          in: path
+          required: true
+          schema: { type: integer, minimum: 0 }
+        - name: voice_model
+          in: query
+          required: false
+          description: Client cache variant; authorization and the actual model remain server-owned.
+          schema: { type: string }
+      responses:
+        "200":
+          description: Synthesized word audio
           content:
             audio/mpeg:
               schema:
@@ -2843,6 +2956,20 @@ components:
         trace:
           $ref: "#/components/schemas/DefinitionTrace"
       required: [key, source, gloss, trace]
+    DefinitionOption:
+      type: object
+      description: One stored definition that can be selected in the reader source picker.
+      properties:
+        key: { type: string }
+        source:
+          type: string
+          enum: [user, glossary, metadata, wiktionary, wiktionary-native, wiktionary-translated, llm]
+        gloss: { type: string }
+        grammatical_note: { type: string }
+        example: { type: string }
+        etymology: { type: string }
+        notes: { type: string }
+      required: [key, source, gloss]
     DefinitionTrace:
       type: object
       description: Debug-safe source trace for a reader definition lookup.
@@ -2896,6 +3023,24 @@ components:
         gloss: { type: string }
         notes: { type: string }
       required: [language, key, gloss]
+    ReaderSentenceAlignment:
+      type: object
+      description: Forced alignment between one synthesized sentence and its story word tokens.
+      properties:
+        sentence_index: { type: integer, minimum: 0 }
+        words:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReaderWordTiming"
+      required: [sentence_index, words]
+    ReaderWordTiming:
+      type: object
+      properties:
+        position: { type: integer, minimum: 0 }
+        surface: { type: string }
+        start: { type: number, format: double, minimum: 0 }
+        end: { type: number, format: double, minimum: 0 }
+      required: [position, surface, start, end]
     Grade:
       type: object
       description: The outcome of grading one task response.

@@ -147,6 +147,69 @@ func TestStorySentenceAudioUsesAuthoritativeSpanAndProfileModel(t *testing.T) {
 	}
 }
 
+func TestStorySentenceAlignmentCachesSynthesizedAudioForPlayback(t *testing.T) {
+	audioGateway := &fakeConversationSpeech{}
+	srv, repo := newServer(t, false, handler.WithSpeech(audioGateway))
+	storyID := seedStory(t, repo)
+
+	resp, err := http.Get(srv.URL + "/api/v1/stories/" + storyID + "/sentences/0/alignment")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var alignment struct {
+		SentenceIndex int `json:"sentence_index"`
+		Words         []struct {
+			Position int     `json:"position"`
+			Surface  string  `json:"surface"`
+			Start    float64 `json:"start"`
+			End      float64 `json:"end"`
+		} `json:"words"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&alignment); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK || alignment.SentenceIndex != 0 || len(alignment.Words) != 2 ||
+		alignment.Words[0].Position != 0 || alignment.Words[1].Position != 2 {
+		t.Fatalf("alignment = status %d, body %+v", resp.StatusCode, alignment)
+	}
+	if audioGateway.synthesisCalls != 1 || audioGateway.alignment.Transcript != "a b" ||
+		audioGateway.alignment.Language != "xx" || string(audioGateway.alignment.Audio.Data) != "mp3-data" {
+		t.Fatalf("speech calls = synth %d, alignment %+v", audioGateway.synthesisCalls, audioGateway.alignment)
+	}
+
+	resp, err = http.Get(srv.URL + "/api/v1/stories/" + storyID + "/sentences/0/audio")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if _, err := io.ReadAll(resp.Body); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK || audioGateway.synthesisCalls != 1 {
+		t.Fatalf("cached audio = status %d, synth calls %d", resp.StatusCode, audioGateway.synthesisCalls)
+	}
+}
+
+func TestStoryWordAudioSynthesizesOnlyAuthoritativeWord(t *testing.T) {
+	audioGateway := &fakeConversationSpeech{}
+	srv, repo := newServer(t, false, handler.WithSpeech(audioGateway))
+	storyID := seedStory(t, repo)
+
+	resp, err := http.Get(srv.URL + "/api/v1/stories/" + storyID + "/words/2/audio")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK || string(data) != "mp3-data" || audioGateway.synthesizedText != "b" {
+		t.Fatalf("word audio = status %d, text %q, body %q", resp.StatusCode, audioGateway.synthesizedText, data)
+	}
+}
+
 func TestPostReaderEventsDerivesSignals(t *testing.T) {
 	srv, repo := newServer(t, false)
 	storyID := seedStory(t, repo)
@@ -389,6 +452,35 @@ func TestGetDefinitionLiveLLM(t *testing.T) {
 	if len(out.Trace.Steps) == 0 || out.Trace.Steps[len(out.Trace.Steps)-1].Step != "llm_fallback" ||
 		out.Trace.Steps[len(out.Trace.Steps)-1].Status != "hit" {
 		t.Fatalf("expected llm fallback trace hit, got %+v", out.Trace.Steps)
+	}
+}
+
+func TestGetDefinitionOptionsReturnsEachStoredSource(t *testing.T) {
+	srv, repo := newServer(t, false)
+	storyID := seedStory(t, repo)
+	if err := repo.UpsertDefinitions(context.Background(), []domain.Definition{
+		{Language: "xx", ItemKey: "a", Source: domain.DefinitionSourceWiktionary, Gloss: "English gloss"},
+		{Language: "xx", ItemKey: "a", Source: domain.DefinitionSourceNative, Gloss: "native gloss"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(srv.URL + "/api/v1/stories/" + storyID + "/definition/options?key=a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var options []struct {
+		Key    string `json:"key"`
+		Source string `json:"source"`
+		Gloss  string `json:"gloss"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&options); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK || len(options) != 2 ||
+		options[0].Source != domain.DefinitionSourceWiktionary || options[1].Source != domain.DefinitionSourceNative {
+		t.Fatalf("definition options = status %d, body %+v", resp.StatusCode, options)
 	}
 }
 

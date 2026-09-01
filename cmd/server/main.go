@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -191,6 +192,9 @@ func main() {
 	handlerOpts = append(handlerOpts, handler.WithMediaStore(mediaStore))
 	handlerOpts = append(handlerOpts, handler.WithModelPricing(modelPricingTable(cfg)))
 	handlerOpts = append(handlerOpts, handler.WithAdminEmails(cfg.AdminEmails))
+	handlerOpts = append(handlerOpts, handler.WithMissingEnglishRecorder(
+		reader.NewJSONMissingEnglishRecorder(filepath.Join(filepath.Dir(cfg.DBPath), "wikitionary_en_missing.json")),
+	))
 	if cfg.AudioBaseURL != "" {
 		handlerOpts = append(handlerOpts, handler.WithSpeech(speech.New(speech.Config{
 			BaseURL: cfg.AudioBaseURL, APIKey: cfg.AudioAPIKey,
