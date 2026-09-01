@@ -28,9 +28,67 @@ var storyImportExtractors = document.DefaultRegistry()
 
 // Wire types are spec-generated (#213).
 type (
-	importStoryRequest  = oapigen.ImportStoryRequest
-	importStoryResponse = oapigen.ImportStoryResponse
+	importStoryRequest        = oapigen.ImportStoryRequest
+	importStoryResponse       = oapigen.ImportStoryResponse
+	updateStoryRequest        = oapigen.UpdateStoryRequest
+	generateStoryTasksRequest = oapigen.GenerateStoryTasksRequest
 )
+
+func (h *Handler) updateStory(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxStoryImportBytes)
+	var req updateStoryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
+		return
+	}
+
+	userID := h.currentUserID(r)
+	stored, err := h.repo.GetStory(r.Context(), r.PathValue("id"))
+	if err != nil || stored.UserID != userID {
+		if err == nil {
+			err = db.ErrNotFound
+		}
+		h.writeStoryLookupError(w, err)
+		return
+	}
+	if stored.SessionID == nil {
+		writeError(w, http.StatusConflict, errors.New("only user-added stories can be edited"))
+		return
+	}
+	sess, err := h.repo.GetSession(r.Context(), *stored.SessionID)
+	if err != nil || sess.UserID != userID {
+		if err == nil {
+			err = db.ErrNotFound
+		}
+		h.writeSessionLookupError(w, err)
+		return
+	}
+	if sess.SessionType != domain.SessionUserAdded {
+		writeError(w, http.StatusConflict, errors.New("only user-added stories can be edited"))
+		return
+	}
+	plugin, ok := h.langs.Get(stored.Language)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("unknown story language %q", stored.Language))
+		return
+	}
+	_, err = story.UpdateText(r.Context(), h.repo, plugin, story.UpdateRequest{
+		UserID: userID, Session: sess, Story: stored, Text: req.Text,
+	})
+	if errors.Is(err, story.ErrImportEmptyText) {
+		writeError(w, http.StatusBadRequest, errors.New("text is required"))
+		return
+	}
+	if errors.Is(err, db.ErrUserStoryConflict) {
+		writeError(w, http.StatusConflict, errors.New("story cannot be edited while task generation is active"))
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
 
 func (h *Handler) importStory(w http.ResponseWriter, r *http.Request) {
 	req, err := decodeImportStoryRequest(w, r)
@@ -145,6 +203,37 @@ func (h *Handler) generateStoryTasks(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(existing) > 0 {
 		writeError(w, http.StatusConflict, errors.New("story already has generated tasks"))
+		return
+	}
+	var req generateStoryTasksRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
+		return
+	}
+	focus := req.StartPosition != nil || req.EndPosition != nil
+	if (req.StartPosition == nil) != (req.EndPosition == nil) {
+		writeError(w, http.StatusBadRequest, errors.New("start_position and end_position must be provided together"))
+		return
+	}
+	startPosition, endPosition := 0, 0
+	if focus {
+		startPosition, endPosition = *req.StartPosition, *req.EndPosition
+	}
+	plugin, ok := h.langs.Get(imported.Language)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("unknown story language %q", imported.Language))
+		return
+	}
+	if _, err := story.PrepareTaskSource(r.Context(), h.repo, plugin, userID, sess, imported,
+		focus, startPosition, endPosition); err != nil {
+		switch {
+		case errors.Is(err, story.ErrTaskSourceRange), errors.Is(err, story.ErrTaskSourceEmpty):
+			writeError(w, http.StatusBadRequest, err)
+		case errors.Is(err, db.ErrUserStoryConflict):
+			writeError(w, http.StatusConflict, errors.New("story already has generated tasks or is currently generating"))
+		default:
+			writeError(w, http.StatusInternalServerError, err)
+		}
 		return
 	}
 

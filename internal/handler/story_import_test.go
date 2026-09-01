@@ -186,6 +186,152 @@ func TestGenerateTasksForUserAddedStoryKeepsOriginalText(t *testing.T) {
 	}
 }
 
+func TestGenerateTasksForSelectedStoryRangePersistsFocusedSource(t *testing.T) {
+	srv, repo := newServer(t, true)
+
+	resp, err := http.Post(srv.URL+"/api/v1/stories/import", "application/json",
+		bytes.NewReader([]byte(`{"language":"xx","level":"beginner","text":"Alpha beta gamma delta"}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var imported struct {
+		StoryID   string `json:"story_id"`
+		SessionID string `json:"session_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&imported); err != nil {
+		t.Fatal(err)
+	}
+
+	generateResp, err := http.Post(srv.URL+"/api/v1/stories/"+imported.StoryID+"/tasks/generate", "application/json",
+		bytes.NewReader([]byte(`{"start_position":1,"end_position":3}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	generateResp.Body.Close()
+	if generateResp.StatusCode != http.StatusAccepted {
+		t.Fatalf("generate selected tasks = %d, want 202", generateResp.StatusCode)
+	}
+
+	sess, err := repo.GetSession(context.Background(), imported.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// fakeLang intentionally omits whitespace tokens; the important invariant is
+	// that only the selected authoritative token surfaces reach the worker.
+	if sess.TaskSourceText != "betagamma" {
+		t.Fatalf("task source = %q, want selected token text", sess.TaskSourceText)
+	}
+	if len(sess.SelectedTargets) != 2 {
+		t.Fatalf("selected targets = %v, want two range words", sess.SelectedTargets)
+	}
+	var keys []string
+	for _, itemID := range sess.SelectedTargets {
+		item, err := repo.GetKnowledgeItem(context.Background(), itemID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		keys = append(keys, item.Key)
+	}
+	if strings.Join(keys, ",") != "beta,gamma" {
+		t.Fatalf("selected target keys = %v", keys)
+	}
+}
+
+func TestUpdateUserAddedStoryRetokenizesAndResetsDerivedSessionState(t *testing.T) {
+	srv, repo := newServer(t, false)
+
+	resp, err := http.Post(srv.URL+"/api/v1/stories/import", "application/json",
+		bytes.NewReader([]byte(`{"language":"xx","level":"beginner","text":"Alpha beta"}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var imported struct {
+		StoryID   string `json:"story_id"`
+		SessionID string `json:"session_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&imported); err != nil {
+		t.Fatal(err)
+	}
+	targetID, err := repo.UpsertKnowledgeItem(context.Background(), domain.KnowledgeItem{
+		Language: "xx", ItemType: "word", Key: "alpha",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateTask(context.Background(), domain.Task{
+		SessionID: imported.SessionID, UserID: domain.LocalUserID, TaskType: tasks.TypeComprehensionMC,
+		Language: "xx", Content: map[string]any{"question": "Old?", "choices": []any{"A", "B"}, "answer": 0.0},
+	}, []string{targetID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpsertStage(context.Background(), domain.GenerationStage{
+		SessionID: imported.SessionID, Stage: domain.StageForTask(tasks.TypeComprehensionMC), Status: domain.StageComplete,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.MarkSessionReading(context.Background(), domain.LocalUserID, imported.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.MarkSessionComplete(context.Background(), domain.LocalUserID, imported.SessionID); err != nil {
+		t.Fatal(err)
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, srv.URL+"/api/v1/stories/"+imported.StoryID,
+		bytes.NewReader([]byte(`{"text":"Gamma delta"}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	updateResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updateResp.Body.Close()
+	if updateResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("update story = %d, want 204", updateResp.StatusCode)
+	}
+
+	stored, err := repo.GetStory(context.Background(), imported.StoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Text != "Gamma delta" {
+		t.Fatalf("story text = %q", stored.Text)
+	}
+	tokens, err := repo.ListStoryTokens(context.Background(), imported.StoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tokens) != 2 || tokens[0].ItemKey != "gamma" || tokens[1].ItemKey != "delta" {
+		t.Fatalf("updated tokens = %+v", tokens)
+	}
+	sess, err := repo.GetSession(context.Background(), imported.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.Status != domain.StatusReady || sess.ReadingStartedAt != nil || sess.CompletedAt != nil || len(sess.SelectedTargets) != 2 {
+		t.Fatalf("session was not reset: %+v", sess)
+	}
+	remainingTasks, err := repo.ListSessionTasks(context.Background(), imported.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(remainingTasks) != 0 {
+		t.Fatalf("stale tasks remain: %+v", remainingTasks)
+	}
+	stages, err := repo.ListStages(context.Background(), imported.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stage := range stages {
+		if strings.HasPrefix(stage.Stage, domain.StageTaskPrefix) {
+			t.Fatalf("stale task checkpoint remains: %+v", stage)
+		}
+	}
+}
+
 func TestGenerateTasksForUserAddedStoryRequiresLLM(t *testing.T) {
 	srv, _ := newServer(t, false)
 	resp, err := http.Post(srv.URL+"/api/v1/stories/import", "application/json",

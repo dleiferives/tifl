@@ -1661,6 +1661,53 @@ select {
   width: 10.5rem;
 }
 
+.reader-selection-task-button {
+  width: 13rem;
+}
+
+.reader-story-action-error {
+  margin: 0;
+}
+
+.reader-story-editor {
+  display: grid;
+  width: min(100%, 48rem);
+  gap: 0.75rem;
+  padding: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--surface);
+}
+
+.reader-story-editor label {
+  font-weight: 650;
+}
+
+.reader-story-editor textarea {
+  width: 100%;
+  min-height: 18rem;
+  resize: vertical;
+  padding: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  background: var(--surface-subtle);
+  color: var(--text);
+  font: inherit;
+  font-size: 1.05rem;
+  line-height: 1.55;
+}
+
+.reader-story-edit-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.reader-story-edit-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
 .reader-hints {
   display: flex;
   flex-wrap: wrap;
@@ -1701,6 +1748,12 @@ select {
 
 .reader-gap {
   white-space: pre-wrap;
+}
+
+.reader-gap[data-task-selected],
+.reader-word[data-task-selected] {
+  outline: 2px solid color-mix(in srgb, var(--accent) 72%, transparent);
+  outline-offset: 1px;
 }
 
 .reader-word {

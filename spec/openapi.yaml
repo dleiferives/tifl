@@ -933,6 +933,40 @@ paths:
           $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
+    patch:
+      summary: Edit a user-added story
+      description: >
+        Replaces and retokenizes caller-authored story text. Only a story backed
+        by a user_added session can be edited. Saving clears generated tasks,
+        task checkpoints, reader-position events, glossary, and story audio
+        derived from the previous revision, and resets the session to ready.
+        Learner knowledge is preserved. A story currently generating returns
+        409.
+      operationId: updateStory
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateStoryRequest"
+      responses:
+        "204":
+          description: Story updated and session-derived state reset
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
     delete:
       summary: Delete a story (imported or generated)
       description: >
@@ -964,13 +998,21 @@ paths:
         Starts the existing checkpointed task-generation pipeline against the
         caller's persisted user-added story. The source text is never regenerated
         or replaced. Repeated requests while generation is active are idempotent;
-        a story that already has tasks returns 409.
+        a story that already has tasks returns 409. An optional half-open token
+        range focuses generation on exactly that reader selection and uses its
+        words as the task targets.
       operationId: generateStoryTasks
       parameters:
         - name: id
           in: path
           required: true
           schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateStoryTasksRequest"
       responses:
         "202":
           description: Task generation started
@@ -2090,6 +2132,28 @@ components:
         language: { type: string }
         title: { type: string }
       required: [story_id, session_id, language]
+    UpdateStoryRequest:
+      type: object
+      properties:
+        text:
+          type: string
+          description: Complete replacement target-language text.
+      required: [text]
+    GenerateStoryTasksRequest:
+      type: object
+      description: >
+        Omit both positions to use the full story. When present they form a
+        half-open range over StoryLoad.tokens: start_position is included and
+        end_position is excluded.
+      properties:
+        start_position:
+          type: integer
+          minimum: 0
+          x-go-type-skip-optional-pointer: false
+        end_position:
+          type: integer
+          minimum: 1
+          x-go-type-skip-optional-pointer: false
     ImportedStory:
       type: object
       description: One row in the imported-story (standalone reader content) list.

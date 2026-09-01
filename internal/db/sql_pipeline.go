@@ -21,7 +21,7 @@ import (
 // sessionColumns is the ordered SELECT column list consumed by scanSessionPrefix.
 // Every SELECT from the sessions table must use this constant to stay in sync.
 const sessionColumns = "session_id, user_id, story_id, language, level, selected_targets, selected_new," +
-	" session_type, topic, user_expressions, expression_output, status," +
+	" session_type, topic, user_expressions, expression_output, task_source_text, status," +
 	" created_at, archived_at, reading_started_at, completed_at"
 
 func (r *SQLRepository) CreateSession(ctx context.Context, s domain.Session) (domain.Session, error) {
@@ -40,13 +40,13 @@ func (r *SQLRepository) CreateSession(ctx context.Context, s domain.Session) (do
 	_, err := r.exec(ctx,
 		`INSERT INTO sessions(
 		   session_id, user_id, story_id, language, level, selected_targets, selected_new,
-		   session_type, topic, user_expressions, expression_output, status,
+		   session_type, topic, user_expressions, expression_output, task_source_text, status,
 		   created_at, archived_at, reading_started_at, completed_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		s.SessionID, s.UserID, s.StoryID, s.Language, s.Level,
 		marshalStrings(s.SelectedTargets), marshalStrings(s.SelectedNew),
 		string(s.SessionType), nullEmpty(s.Topic), marshalStrings(s.UserExpressions),
-		nullEmpty(s.ExpressionOutput), string(s.Status), s.CreatedAt,
+		nullEmpty(s.ExpressionOutput), nullEmpty(s.TaskSourceText), string(s.Status), s.CreatedAt,
 		nullFloat(s.ArchivedAt), nullFloat(s.ReadingStartedAt), nullFloat(s.CompletedAt))
 	if err != nil {
 		return domain.Session{}, err
@@ -377,6 +377,44 @@ func (r *SQLRepository) SetSessionSelection(ctx context.Context, sessionID, stor
 	return requireRow(res)
 }
 
+// SetUserStoryTaskSource atomically records the excerpt and vocabulary targets
+// an asynchronous task-generation worker must use. It refuses to change a
+// session while generation is active or after tasks already exist.
+func (r *SQLRepository) SetUserStoryTaskSource(ctx context.Context, userID, sessionID, storyID, sourceText string, targets []string) error {
+	return r.inTx(ctx, func(tx *dtx) error {
+		var status, sessionType string
+		err := tx.queryRow(ctx,
+			`SELECT status, session_type FROM sessions
+			 WHERE session_id = ? AND user_id = ? AND story_id = ?`,
+			sessionID, userID, storyID).Scan(&status, &sessionType)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if sessionType != string(domain.SessionUserAdded) || status == string(domain.StatusPending) || status == string(domain.StatusGenerating) {
+			return ErrUserStoryConflict
+		}
+		var taskCount int
+		if err := tx.queryRow(ctx, `SELECT COUNT(*) FROM tasks WHERE session_id = ?`, sessionID).Scan(&taskCount); err != nil {
+			return err
+		}
+		if taskCount != 0 {
+			return ErrUserStoryConflict
+		}
+		res, err := tx.exec(ctx,
+			`UPDATE sessions
+			 SET selected_targets = ?, selected_new = ?, task_source_text = ?
+			 WHERE session_id = ? AND user_id = ? AND story_id = ?`,
+			marshalStrings(targets), marshalStrings(nil), nullEmpty(sourceText), sessionID, userID, storyID)
+		if err != nil {
+			return err
+		}
+		return requireRow(res)
+	})
+}
+
 func (r *SQLRepository) UpsertStage(ctx context.Context, st domain.GenerationStage) error {
 	_, err := r.exec(ctx,
 		`INSERT INTO session_generation_stages(
@@ -535,6 +573,83 @@ func (r *SQLRepository) ReplaceStoryTokens(ctx context.Context, storyID string, 
 			}
 		}
 		return nil
+	})
+}
+
+// ReplaceUserStory changes caller-authored story text and resets every piece of
+// session state derived from the old text. Learner knowledge is intentionally
+// retained, while positional reader events, tasks, task checkpoints, glossary,
+// and legacy story audio are removed as stale.
+func (r *SQLRepository) ReplaceUserStory(ctx context.Context, userID, sessionID, storyID, text string, tokens []domain.StoryToken, targets []string) error {
+	return r.inTx(ctx, func(tx *dtx) error {
+		var status, sessionType string
+		err := tx.queryRow(ctx,
+			`SELECT s.status, s.session_type
+			 FROM sessions s JOIN stories st ON st.story_id = s.story_id
+			 WHERE s.session_id = ? AND s.user_id = ? AND s.story_id = ?
+			   AND st.user_id = ? AND st.session_id = s.session_id`,
+			sessionID, userID, storyID, userID).Scan(&status, &sessionType)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if sessionType != string(domain.SessionUserAdded) || status == string(domain.StatusPending) || status == string(domain.StatusGenerating) {
+			return ErrUserStoryConflict
+		}
+
+		if _, err := tx.exec(ctx,
+			`DELETE FROM task_targets WHERE task_id IN (SELECT task_id FROM tasks WHERE session_id = ?)`,
+			sessionID); err != nil {
+			return err
+		}
+		if _, err := tx.exec(ctx, `DELETE FROM tasks WHERE session_id = ?`, sessionID); err != nil {
+			return err
+		}
+		if _, err := tx.exec(ctx,
+			`DELETE FROM session_generation_stages WHERE session_id = ? AND stage LIKE ?`,
+			sessionID, domain.StageTaskPrefix+"%"); err != nil {
+			return err
+		}
+		if _, err := tx.exec(ctx, `DELETE FROM session_preview_guesses WHERE session_id = ?`, sessionID); err != nil {
+			return err
+		}
+		if _, err := tx.exec(ctx, `DELETE FROM reader_events WHERE story_id = ?`, storyID); err != nil {
+			return err
+		}
+		if _, err := tx.exec(ctx, `DELETE FROM story_glossary WHERE story_id = ?`, storyID); err != nil {
+			return err
+		}
+		if _, err := tx.exec(ctx, `DELETE FROM story_audio WHERE story_id = ?`, storyID); err != nil {
+			return err
+		}
+		if _, err := tx.exec(ctx, `DELETE FROM story_tokens WHERE story_id = ?`, storyID); err != nil {
+			return err
+		}
+		for _, token := range tokens {
+			if _, err := tx.exec(ctx,
+				`INSERT INTO story_tokens(story_id, position, surface, item_key, surface_key, is_word)
+				 VALUES(?, ?, ?, ?, ?, ?)`,
+				storyID, token.Position, token.Surface, nullEmpty(token.ItemKey), nullEmpty(token.SurfaceKey), boolToInt(token.IsWord)); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.exec(ctx,
+			`UPDATE stories SET text = ?, estimated_coverage = NULL, audio_id = NULL WHERE story_id = ? AND user_id = ?`,
+			text, storyID, userID); err != nil {
+			return err
+		}
+		res, err := tx.exec(ctx,
+			`UPDATE sessions
+			 SET selected_targets = ?, selected_new = ?, task_source_text = NULL,
+			     status = ?, reading_started_at = NULL, completed_at = NULL
+			 WHERE session_id = ? AND user_id = ? AND story_id = ?`,
+			marshalStrings(targets), marshalStrings(nil), string(domain.StatusReady), sessionID, userID, storyID)
+		if err != nil {
+			return err
+		}
+		return requireRow(res)
 	})
 }
 
@@ -950,12 +1065,12 @@ func scanSessionPrefix(row rowScanner, extra ...any) (domain.Session, error) {
 		s                                   domain.Session
 		sessType, status                    string
 		storyIDNull                         sql.NullString
-		topic, exprOut                      sql.NullString
+		topic, exprOut, taskSource          sql.NullString
 		targets, news, exprs                sql.NullString
 		archived, readingStarted, completed sql.NullFloat64
 	)
 	dest := []any{&s.SessionID, &s.UserID, &storyIDNull, &s.Language, &s.Level,
-		&targets, &news, &sessType, &topic, &exprs, &exprOut, &status,
+		&targets, &news, &sessType, &topic, &exprs, &exprOut, &taskSource, &status,
 		&s.CreatedAt, &archived, &readingStarted, &completed}
 	dest = append(dest, extra...)
 	err := row.Scan(dest...)
@@ -970,6 +1085,7 @@ func scanSessionPrefix(row rowScanner, extra ...any) (domain.Session, error) {
 	s.Status = domain.SessionStatus(status)
 	s.Topic = topic.String
 	s.ExpressionOutput = exprOut.String
+	s.TaskSourceText = taskSource.String
 	s.SelectedTargets = unmarshalStrings(targets)
 	s.SelectedNew = unmarshalStrings(news)
 	s.UserExpressions = unmarshalStrings(exprs)

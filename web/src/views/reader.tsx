@@ -16,6 +16,8 @@ import {
   sentenceBreakdown,
   startReading,
   setWordKnowledge,
+  generateStoryTasks,
+  updateStory,
   wordBreakdown,
 } from "../api";
 import type { APISchema } from "../api";
@@ -40,6 +42,11 @@ type AudioGeneration = {
   phase?: "tts" | "alignment";
   completed: number;
   total: number;
+};
+type TaskSelection = {
+  startPosition: number;
+  endPosition: number;
+  wordCount: number;
 };
 type Analysis = { mode: "sentence"; position: number } | { mode: "word"; key: string } | null;
 type SyntaxGraph = {
@@ -91,8 +98,12 @@ export function ReaderView(props: {
   sessionId?: string;
   story?: StoryLoad | null;
   active?: boolean;
+  editable?: boolean;
+  canGenerateTasks?: boolean;
   onReadingStarted?: () => void;
   onSessionComplete?: () => void;
+  onStoryUpdated?: () => void;
+  onTasksGenerating?: () => void;
 }) {
   const [status, setStatus] = createSignal<"loading" | "ready" | "error">("loading");
   const [completeStatus, setCompleteStatus] = createSignal<"idle" | "saving" | "done">("idle");
@@ -109,6 +120,12 @@ export function ReaderView(props: {
   const [sourcePickerKey, setSourcePickerKey] = createSignal("");
   const [audioGeneration, setAudioGeneration] = createSignal<AudioGeneration>({ status: "idle", completed: 0, total: 0 });
   const [audioCacheVersion, setAudioCacheVersion] = createSignal(0);
+  const [storyEditorOpen, setStoryEditorOpen] = createSignal(false);
+  const [storyDraft, setStoryDraft] = createSignal("");
+  const [storySaving, setStorySaving] = createSignal(false);
+  const [storyActionError, setStoryActionError] = createSignal("");
+  const [taskSelection, setTaskSelection] = createSignal<TaskSelection | null>(null);
+  const [taskGenerating, setTaskGenerating] = createSignal(false);
   // Personal-dictionary editing. Only one popup (one key) is open at a time, so
   // a single edit state suffices. `removalNotice` is keyed so the "removed"
   // message stays scoped to the word it belongs to.
@@ -125,6 +142,8 @@ export function ReaderView(props: {
   // One element ref per word token, indexed by token position. Used to move the
   // cursor highlight surgically (two DOM writes) and to anchor the popup.
   const wordEls: (HTMLElement | undefined)[] = [];
+  const tokenEls: (HTMLElement | undefined)[] = [];
+  let readerTextEl: HTMLDivElement | undefined;
   // The popup element, so reposition can measure its (edit-mode-variable) height.
   let popupEl: HTMLElement | undefined;
   let pending: ReaderEvent[] = [];
@@ -151,6 +170,7 @@ export function ReaderView(props: {
     window.addEventListener("beforeunload", onBeforeUnload);
     window.addEventListener("resize", repositionPopup);
     window.addEventListener("scroll", repositionPopup, true);
+    document.addEventListener("selectionchange", captureTaskSelection);
     void load();
   });
 
@@ -162,6 +182,7 @@ export function ReaderView(props: {
     window.removeEventListener("beforeunload", onBeforeUnload);
     window.removeEventListener("resize", repositionPopup);
     window.removeEventListener("scroll", repositionPopup, true);
+    document.removeEventListener("selectionchange", captureTaskSelection);
     sentencePlaybackToken++;
     sentenceAudio?.pause();
     if (sentenceAnimationFrame !== undefined) cancelAnimationFrame(sentenceAnimationFrame);
@@ -208,6 +229,96 @@ export function ReaderView(props: {
     setSentenceSpans(story.sentences);
     setLanguage(story.language);
     setCursor(resolveCursorIndex(story.tokens, readSavedCursor(props.storyId)));
+  }
+
+  function captureTaskSelection() {
+    if (!props.canGenerateTasks || storyEditorOpen() || !readerTextEl) {
+      setTaskSelection(null);
+      return;
+    }
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0 ||
+      !selection.anchorNode || !selection.focusNode ||
+      !readerTextEl.contains(selection.anchorNode) || !readerTextEl.contains(selection.focusNode)) {
+      setTaskSelection(null);
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    const positions: number[] = [];
+    for (const token of tokens()) {
+      const element = tokenEls[token.position];
+      if (element && range.intersectsNode(element)) positions.push(token.position);
+    }
+    if (positions.length === 0) {
+      setTaskSelection(null);
+      return;
+    }
+    const startPosition = Math.min(...positions);
+    const endPosition = Math.max(...positions) + 1;
+    const wordCount = tokens().filter((token) =>
+      token.position >= startPosition && token.position < endPosition && token.is_word).length;
+    setTaskSelection(wordCount > 0 ? { startPosition, endPosition, wordCount } : null);
+  }
+
+  function taskTokenSelected(position: number): boolean {
+    const selected = taskSelection();
+    return !!selected && position >= selected.startPosition && position < selected.endPosition;
+  }
+
+  function beginStoryEdit() {
+    setStoryDraft(tokens().map((token) => token.surface).join(""));
+    setStoryActionError("");
+    setTaskSelection(null);
+    window.getSelection()?.removeAllRanges();
+    closeOverlays();
+    setStoryEditorOpen(true);
+  }
+
+  function cancelStoryEdit() {
+    if (storySaving()) return;
+    setStoryEditorOpen(false);
+    setStoryActionError("");
+  }
+
+  async function saveStoryEdit() {
+    const text = storyDraft().trim();
+    if (!text) {
+      setStoryActionError("Story text cannot be empty.");
+      return;
+    }
+    setStorySaving(true);
+    setStoryActionError("");
+    try {
+      // Flush old positional events before the server removes them as part of
+      // the edit reset. Never let a failed flush reinsert stale positions later.
+      await flush();
+      await updateStory(props.storyId, { text });
+      pending = [];
+      setStoryEditorOpen(false);
+      props.onStoryUpdated?.();
+    } catch (error) {
+      setStoryActionError(readerStoryActionMessage(error, "The story could not be saved."));
+    } finally {
+      setStorySaving(false);
+    }
+  }
+
+  async function generateTasksForSelection() {
+    const selected = taskSelection();
+    if (!selected || taskGenerating()) return;
+    setTaskGenerating(true);
+    setStoryActionError("");
+    try {
+      await generateStoryTasks(props.storyId, {
+        start_position: selected.startPosition,
+        end_position: selected.endPosition,
+      });
+      props.onTasksGenerating?.();
+    } catch (error) {
+      setStoryActionError(readerStoryActionMessage(error, "Tasks could not be generated for that selection."));
+    } finally {
+      setTaskGenerating(false);
+    }
   }
 
   // Cursor highlight: clear the previous word, mark the new one. Two writes.
@@ -1131,6 +1242,13 @@ export function ReaderView(props: {
     // While editing a dictionary entry every reader shortcut is inert; only
     // Escape acts (cancel edit first). Returning without preventDefault leaves
     // native typing in the edit fields untouched.
+    if (storyEditorOpen()) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cancelStoryEdit();
+      }
+      return;
+    }
     if (editing()) {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -1213,6 +1331,32 @@ export function ReaderView(props: {
           <span><kbd>s</kbd> sentence · <kbd>Shift</kbd>+<kbd>s</kbd> word</span>
         </p>
         <div class="reader-toolbar-actions">
+          <Show when={props.editable}>
+            <button
+              class="secondary-button"
+              type="button"
+              disabled={status() !== "ready" || storySaving()}
+              onClick={beginStoryEdit}
+            >
+              Edit story
+            </button>
+          </Show>
+          <Show when={props.canGenerateTasks}>
+            <button
+              class="secondary-button reader-selection-task-button"
+              type="button"
+              disabled={status() !== "ready" || !taskSelection() || taskGenerating()}
+              title={taskSelection() ? "Generate practice tasks from the highlighted passage" : "Select a passage in the story first"}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => void generateTasksForSelection()}
+            >
+              {taskGenerating()
+                ? "Starting tasks…"
+                : taskSelection()
+                  ? `Generate tasks (${taskSelection()!.wordCount} words)`
+                  : "Select text for tasks"}
+            </button>
+          </Show>
           <button
             class="secondary-button reader-audio-button"
             type="button"
@@ -1235,38 +1379,84 @@ export function ReaderView(props: {
         </div>
       </header>
 
-      <Switch>
-        <Match when={status() === "loading"}>
-          <p class="reader-status" role="status" aria-busy="true">Loading story…</p>
-        </Match>
-        <Match when={status() === "error"}>
-          <div class="reader-status reader-status-error" role="alert">
-            <p>This story could not be loaded.</p>
-            <p><a href={routeHref("/")}>Back home</a></p>
+      <Show when={storyActionError()}>
+        {(message) => <p class="form-error reader-story-action-error" role="alert">{message()}</p>}
+      </Show>
+
+      <Show when={storyEditorOpen()}>
+        <form
+          class="reader-story-editor"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void saveStoryEdit();
+          }}
+        >
+          <label for="reader-story-text">Story text</label>
+          <textarea
+            id="reader-story-text"
+            rows={14}
+            value={storyDraft()}
+            disabled={storySaving()}
+            ref={(element) => window.setTimeout(() => element.focus())}
+            onInput={(event) => {
+              setStoryDraft(event.currentTarget.value);
+              setStoryActionError("");
+            }}
+          />
+          <p class="reader-story-edit-note">
+            Saving retokenizes the story and resets this session’s reading progress, generated tasks, glossary, and prepared audio. Your learned-word history stays intact.
+          </p>
+          <div class="reader-story-edit-actions">
+            <button class="primary-button" type="submit" disabled={storySaving()}>
+              {storySaving() ? "Saving…" : "Save story"}
+            </button>
+            <button class="secondary-button" type="button" disabled={storySaving()} onClick={cancelStoryEdit}>Cancel</button>
           </div>
-        </Match>
-        <Match when={status() === "ready"}>
-          <div class="reader-text" lang={language()}>
-            <For each={tokens()}>
-              {(token) => (
-                <Show
-                  when={token.is_word && token.key}
-                  fallback={<span class="reader-gap">{token.surface}</span>}
-                >
-                  <span
-                    class="reader-word"
-                    data-level={dataLevel(displayLevel(token))}
-                    ref={(el) => (wordEls[token.position] = el)}
-                    onClick={() => setReaderCursorPosition(token.position)}
+        </form>
+      </Show>
+
+      <Show when={!storyEditorOpen()}>
+        <Switch>
+          <Match when={status() === "loading"}>
+            <p class="reader-status" role="status" aria-busy="true">Loading story…</p>
+          </Match>
+          <Match when={status() === "error"}>
+            <div class="reader-status reader-status-error" role="alert">
+              <p>This story could not be loaded.</p>
+              <p><a href={routeHref("/")}>Back home</a></p>
+            </div>
+          </Match>
+          <Match when={status() === "ready"}>
+            <div class="reader-text" lang={language()} ref={readerTextEl}>
+              <For each={tokens()}>
+                {(token) => (
+                  <Show
+                    when={token.is_word && token.key}
+                    fallback={<span
+                      class="reader-gap"
+                      data-task-selected={taskTokenSelected(token.position) ? "" : undefined}
+                      ref={(element) => (tokenEls[token.position] = element)}
+                    >{token.surface}</span>}
                   >
-                    {token.surface}
-                  </span>
-                </Show>
-              )}
-            </For>
-          </div>
-        </Match>
-      </Switch>
+                    <span
+                      class="reader-word"
+                      data-level={dataLevel(displayLevel(token))}
+                      data-task-selected={taskTokenSelected(token.position) ? "" : undefined}
+                      ref={(el) => {
+                        wordEls[token.position] = el;
+                        tokenEls[token.position] = el;
+                      }}
+                      onClick={() => setReaderCursorPosition(token.position)}
+                    >
+                      {token.surface}
+                    </span>
+                  </Show>
+                )}
+              </For>
+            </div>
+          </Match>
+        </Switch>
+      </Show>
 
       <Show when={popupVisible() ? currentToken() : undefined}>
         {(token) => (
@@ -1391,6 +1581,10 @@ function writeSavedCursor(storyId: string, position: number) {
   } catch {
     // Reading should continue even when localStorage is unavailable.
   }
+}
+
+function readerStoryActionMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
 }
 
 function readerPositionKey(storyId: string): string {

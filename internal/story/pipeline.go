@@ -345,7 +345,7 @@ func (p *Pipeline) completedContent(ctx context.Context, sess domain.Session, st
 	if err != nil {
 		return "", false
 	}
-	return story.Text, true
+	return taskSourceText(sess, story.Text), true
 }
 
 // stageIndex returns the session's stages keyed by stage name for quick lookup.
@@ -802,7 +802,14 @@ func (p *Pipeline) sourceTextForTaskRegeneration(ctx context.Context, sess domai
 	if err != nil {
 		return "", err
 	}
-	return story.Text, nil
+	return taskSourceText(sess, story.Text), nil
+}
+
+func taskSourceText(sess domain.Session, fullStory string) string {
+	if sess.SessionType == domain.SessionUserAdded && strings.TrimSpace(sess.TaskSourceText) != "" {
+		return sess.TaskSourceText
+	}
+	return fullStory
 }
 
 func (p *Pipeline) priorTaskQuestions(ctx context.Context, rejected domain.Task) ([]string, error) {

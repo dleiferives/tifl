@@ -14,13 +14,21 @@ import (
 
 var ErrImportEmptyText = errors.New("story import: text is required")
 
+var (
+	ErrTaskSourceRange = errors.New("story task source: invalid token range")
+	ErrTaskSourceEmpty = errors.New("story task source: selection must include at least one word")
+)
+
 type ImportRepository interface {
 	Tx(context.Context, func(db.Repository) error) error
 	ListKnowledgeItems(context.Context, string) ([]domain.KnowledgeItem, error)
+	ListStoryTokens(context.Context, string) ([]domain.StoryToken, error)
 	CreateSession(context.Context, domain.Session) (domain.Session, error)
 	CreateStory(context.Context, domain.Story) (domain.Story, error)
 	ReplaceStoryTokens(context.Context, string, []domain.StoryToken) error
+	ReplaceUserStory(context.Context, string, string, string, string, []domain.StoryToken, []string) error
 	SetSessionSelection(context.Context, string, string, []string, []string) error
+	SetUserStoryTaskSource(context.Context, string, string, string, string, []string) error
 	UpsertKnowledgeItem(context.Context, domain.KnowledgeItem) (string, error)
 	UpsertStage(context.Context, domain.GenerationStage) error
 }
@@ -38,6 +46,120 @@ type ImportRequest struct {
 type ImportResult struct {
 	Session domain.Session
 	Story   domain.Story
+}
+
+// UpdateRequest identifies one caller-owned, session-backed user story whose
+// source text should be replaced.
+type UpdateRequest struct {
+	UserID  string
+	Session domain.Session
+	Story   domain.Story
+	Text    string
+}
+
+// UpdateText retokenizes caller-authored text and atomically clears state that
+// was derived from the previous revision. Knowledge catalogue rows are
+// idempotently prepared first; learner knowledge itself is never reset.
+func UpdateText(ctx context.Context, repo ImportRepository, plugin lang.Language, req UpdateRequest) (ImportResult, error) {
+	text := strings.TrimSpace(req.Text)
+	if text == "" {
+		return ImportResult{}, ErrImportEmptyText
+	}
+	tokens := plugin.Tokenize(text)
+	targets, err := importedStoryTargets(ctx, repo, req.Story.Language, req.Session.Level, tokens)
+	if err != nil {
+		return ImportResult{}, fmt.Errorf("select updated story targets: %w", err)
+	}
+	targetIDs, err := persistImportedTargets(ctx, repo, targets)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	if err := repo.ReplaceUserStory(ctx, req.UserID, req.Session.SessionID, req.Story.StoryID,
+		text, toStoryTokens(req.Story.StoryID, tokens), targetIDs); err != nil {
+		return ImportResult{}, fmt.Errorf("replace user story: %w", err)
+	}
+	req.Story.Text = text
+	req.Story.EstimatedCoverage = nil
+	req.Session.SelectedTargets = targetIDs
+	req.Session.SelectedNew = nil
+	req.Session.TaskSourceText = ""
+	req.Session.Status = domain.StatusReady
+	req.Session.ReadingStartedAt = nil
+	req.Session.CompletedAt = nil
+	return ImportResult{Session: req.Session, Story: req.Story}, nil
+}
+
+// TaskSource describes the persisted source excerpt and target vocabulary for
+// one task-generation run. SourceText is empty when the full story is used.
+type TaskSource struct {
+	SourceText string
+	TargetIDs  []string
+}
+
+// PrepareTaskSource validates an optional half-open token range, derives the
+// excerpt exactly from authoritative stored tokens, and persists it for the
+// asynchronous generation worker. With focus=false it clears any prior excerpt
+// and reselects targets from the full story.
+func PrepareTaskSource(ctx context.Context, repo ImportRepository, plugin lang.Language, userID string,
+	sess domain.Session, source domain.Story, focus bool, startPosition, endPosition int) (TaskSource, error) {
+	stored, err := repo.ListStoryTokens(ctx, source.StoryID)
+	if err != nil {
+		return TaskSource{}, err
+	}
+	selected := stored
+	if focus {
+		if startPosition < 0 || endPosition <= startPosition || endPosition > len(stored) {
+			return TaskSource{}, ErrTaskSourceRange
+		}
+		selected = stored[startPosition:endPosition]
+	}
+	wordFound := false
+	var excerpt strings.Builder
+	for _, token := range selected {
+		excerpt.WriteString(token.Surface)
+		wordFound = wordFound || token.IsWord
+	}
+	if !wordFound || strings.TrimSpace(excerpt.String()) == "" {
+		return TaskSource{}, ErrTaskSourceEmpty
+	}
+	langTokens := make([]lang.Token, len(selected))
+	for i, token := range selected {
+		langTokens[i] = lang.Token{
+			Surface: token.Surface, Key: token.ItemKey, SurfaceKey: token.SurfaceKey,
+			IsWord: token.IsWord, Position: i,
+		}
+	}
+	targets, err := importedStoryTargets(ctx, repo, source.Language, sess.Level, langTokens)
+	if err != nil {
+		return TaskSource{}, fmt.Errorf("select task source targets: %w", err)
+	}
+	targetIDs, err := persistImportedTargets(ctx, repo, targets)
+	if err != nil {
+		return TaskSource{}, err
+	}
+	sourceText := ""
+	if focus {
+		sourceText = strings.TrimSpace(excerpt.String())
+	}
+	if err := repo.SetUserStoryTaskSource(ctx, userID, sess.SessionID, source.StoryID, sourceText, targetIDs); err != nil {
+		return TaskSource{}, err
+	}
+	return TaskSource{SourceText: sourceText, TargetIDs: targetIDs}, nil
+}
+
+func persistImportedTargets(ctx context.Context, repo ImportRepository, targets []domain.KnowledgeItem) ([]string, error) {
+	targetIDs := make([]string, 0, len(targets))
+	for _, target := range targets {
+		if target.ItemID == "" {
+			itemID, err := repo.UpsertKnowledgeItem(ctx, target)
+			if err != nil {
+				return nil, fmt.Errorf("persist imported story target %q: %w", target.Key, err)
+			}
+			target.ItemID = itemID
+		}
+		targetIDs = append(targetIDs, target.ItemID)
+	}
+	return targetIDs, nil
 }
 
 // ImportText persists caller-provided target-language text as a first-class,

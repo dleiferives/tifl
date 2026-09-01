@@ -1477,6 +1477,12 @@ type GenerateRequestExpressionOutput string
 // GenerateRequestSessionType defines model for GenerateRequest.SessionType.
 type GenerateRequestSessionType string
 
+// GenerateStoryTasksRequest Omit both positions to use the full story. When present they form a half-open range over StoryLoad.tokens: start_position is included and end_position is excluded.
+type GenerateStoryTasksRequest struct {
+	EndPosition   *int `json:"end_position,omitempty"`
+	StartPosition *int `json:"start_position,omitempty"`
+}
+
 // GenerationEvent One SSE progress message (the JSON in each data line). Non-terminal events report a pipeline stage status. The terminal `stage: done` event reports the final session status plus enough persisted state for the client to navigate to reader/tasks or show retry/error UI without guessing.
 type GenerationEvent struct {
 	// ContentType present on stage=done; whether the session produced a story (load via /stories/{id}) or a phrase set (load via /sessions/{id}/content)
@@ -2327,6 +2333,12 @@ type TaskReportState struct {
 // TaskReportStatus defines model for TaskReportStatus.
 type TaskReportStatus string
 
+// UpdateStoryRequest defines model for UpdateStoryRequest.
+type UpdateStoryRequest struct {
+	// Text Complete replacement target-language text.
+	Text string `json:"text"`
+}
+
 // User defines model for User.
 type User struct {
 	CreatedAt float64 `json:"created_at"`
@@ -2537,11 +2549,17 @@ type ImportStoryJSONRequestBody = ImportStoryRequest
 // ImportStoryMultipartRequestBody defines body for ImportStory for multipart/form-data ContentType.
 type ImportStoryMultipartRequestBody = ImportStoryUploadRequest
 
+// UpdateStoryJSONRequestBody defines body for UpdateStory for application/json ContentType.
+type UpdateStoryJSONRequestBody = UpdateStoryRequest
+
 // AlignStorySentencesJSONRequestBody defines body for AlignStorySentences for application/json ContentType.
 type AlignStorySentencesJSONRequestBody = ReaderAlignmentBatchRequest
 
 // PostSentenceBreakdownJSONRequestBody defines body for PostSentenceBreakdown for application/json ContentType.
 type PostSentenceBreakdownJSONRequestBody PostSentenceBreakdownJSONBody
+
+// GenerateStoryTasksJSONRequestBody defines body for GenerateStoryTasks for application/json ContentType.
+type GenerateStoryTasksJSONRequestBody = GenerateStoryTasksRequest
 
 // PostWordBreakdownJSONRequestBody defines body for PostWordBreakdown for application/json ContentType.
 type PostWordBreakdownJSONRequestBody PostWordBreakdownJSONBody

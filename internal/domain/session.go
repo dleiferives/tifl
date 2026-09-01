@@ -43,6 +43,7 @@ type Session struct {
 	Topic            string   // topic_guided topic or user_added title
 	UserExpressions  []string // expression_guided only
 	ExpressionOutput string   // "phrases" | "story"; expression_guided only
+	TaskSourceText   string   // optional user-selected excerpt for task generation
 	SelectedTargets  []string // item_ids chosen as targets
 	SelectedNew      []string // item_ids introduced this session
 	Status           SessionStatus

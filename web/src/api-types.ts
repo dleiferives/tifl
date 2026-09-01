@@ -613,7 +613,11 @@ export interface paths {
         delete: operations["deleteStory"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Edit a user-added story
+         * @description Replaces and retokenizes caller-authored story text. Only a story backed by a user_added session can be edited. Saving clears generated tasks, task checkpoints, reader-position events, glossary, and story audio derived from the previous revision, and resets the session to ready. Learner knowledge is preserved. A story currently generating returns 409.
+         */
+        patch: operations["updateStory"];
         trace?: never;
     };
     "/stories/{id}/tasks/generate": {
@@ -627,7 +631,7 @@ export interface paths {
         put?: never;
         /**
          * Generate practice tasks for a user-added story
-         * @description Starts the existing checkpointed task-generation pipeline against the caller's persisted user-added story. The source text is never regenerated or replaced. Repeated requests while generation is active are idempotent; a story that already has tasks returns 409.
+         * @description Starts the existing checkpointed task-generation pipeline against the caller's persisted user-added story. The source text is never regenerated or replaced. Repeated requests while generation is active are idempotent; a story that already has tasks returns 409. An optional half-open token range focuses generation on exactly that reader selection and uses its words as the task targets.
          */
         post: operations["generateStoryTasks"];
         delete?: never;
@@ -1273,6 +1277,15 @@ export interface components {
             session_id: string;
             language: string;
             title?: string;
+        };
+        UpdateStoryRequest: {
+            /** @description Complete replacement target-language text. */
+            text: string;
+        };
+        /** @description Omit both positions to use the full story. When present they form a half-open range over StoryLoad.tokens: start_position is included and end_position is excluded. */
+        GenerateStoryTasksRequest: {
+            start_position?: number;
+            end_position?: number;
         };
         /** @description One row in the imported-story (standalone reader content) list. */
         ImportedStory: {
@@ -3020,6 +3033,35 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    updateStory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateStoryRequest"];
+            };
+        };
+        responses: {
+            /** @description Story updated and session-derived state reset */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     generateStoryTasks: {
         parameters: {
             query?: never;
@@ -3029,7 +3071,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["GenerateStoryTasksRequest"];
+            };
+        };
         responses: {
             /** @description Task generation started */
             202: {

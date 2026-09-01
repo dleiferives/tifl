@@ -89,6 +89,7 @@ func currentAPIRoutes() []apiRoute {
 		{Method: http.MethodGet, Path: "/api/v1/stories", Handler: (*Handler).listImportedStories, RequireUser: true},
 		{Method: http.MethodPost, Path: "/api/v1/stories/import", Handler: (*Handler).importStory, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/stories/{id}", Handler: (*Handler).getStory, RequireUser: true},
+		{Method: http.MethodPatch, Path: "/api/v1/stories/{id}", Handler: (*Handler).updateStory, RequireUser: true},
 		{Method: http.MethodDelete, Path: "/api/v1/stories/{id}", Handler: (*Handler).deleteStory, RequireUser: true},
 		{Method: http.MethodPost, Path: "/api/v1/stories/{id}/tasks/generate", Handler: (*Handler).generateStoryTasks, RequireUser: true},
 		{Method: http.MethodGet, Path: "/api/v1/stories/{id}/definition", Handler: (*Handler).getDefinition, RequireUser: true},

@@ -41,6 +41,10 @@ var ErrInvalidTargetPreviewGuess = errors.New("db: invalid target preview guess"
 // that is no longer current (for example, two browser tabs responded at once).
 var ErrConversationConflict = errors.New("db: conversation advanced")
 
+// ErrUserStoryConflict is returned when a user-added story cannot be changed
+// because task generation is active or the story/session relationship changed.
+var ErrUserStoryConflict = errors.New("db: user story conflict")
+
 // errNestedTx is returned when Tx is called from inside a Tx callback.
 var errNestedTx = errors.New("db: nested Tx is not supported")
 
@@ -191,6 +195,7 @@ type Repository interface {
 	// SetSessionSelection records the selected target/new item ids and links the
 	// generated story to the session (story stage output).
 	SetSessionSelection(ctx context.Context, sessionID, storyID string, targets, new []string) error
+	SetUserStoryTaskSource(ctx context.Context, userID, sessionID, storyID, sourceText string, targets []string) error
 
 	// MarkSessionReading sets reading_started_at and transitions status ready→reading.
 	// Idempotent: if status is already reading or complete, it is a no-op (no error).
@@ -217,6 +222,7 @@ type Repository interface {
 	// and language. Used to decide onboarding-stage simplicity constraints.
 	CountUserStories(ctx context.Context, userID, language string) (int, error)
 	ReplaceStoryTokens(ctx context.Context, storyID string, tokens []domain.StoryToken) error
+	ReplaceUserStory(ctx context.Context, userID, sessionID, storyID, text string, tokens []domain.StoryToken, targets []string) error
 	ListStoryTokens(ctx context.Context, storyID string) ([]domain.StoryToken, error)
 	ReplaceStoryGlossary(ctx context.Context, storyID string, entries []domain.StoryGlossaryEntry) error
 	ListStoryGlossary(ctx context.Context, storyID string) ([]domain.StoryGlossaryEntry, error)

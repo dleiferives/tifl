@@ -579,6 +579,8 @@ export function SessionShellView(props: { sessionId: string; step: SessionStep }
                       active={props.step === "read"}
                       onReady={refreshFromGeneration}
                       onReadingStarted={noteReadingStarted}
+                      onStoryUpdated={() => void loadSession(props.sessionId)}
+                      onTasksGenerating={() => setState("detail", "status", "generating")}
                       onCompleted={() => {
                         noteCompleted();
                         window.location.hash = sessionHref(props.sessionId, "review");
@@ -689,6 +691,8 @@ function ReadPanel(props: {
   onReady: () => void;
   onReadingStarted: () => void;
   onCompleted: () => void;
+  onStoryUpdated: () => void;
+  onTasksGenerating: () => void;
 }) {
   if (props.detail.status === "pending" || props.detail.status === "generating" || props.detail.status === "failed") {
     return <GenerationView sessionId={props.detail.session_id} onReady={props.onReady} />;
@@ -722,8 +726,13 @@ function ReadPanel(props: {
               sessionId={props.detail.session_id}
               story={props.story}
               active={props.active}
+              editable={props.detail.session_type === "user_added"}
+              canGenerateTasks={props.detail.session_type === "user_added" && props.detail.tasks.total === 0 &&
+                (props.detail.status === "ready" || props.detail.status === "reading")}
               onReadingStarted={props.onReadingStarted}
               onSessionComplete={props.onCompleted}
+              onStoryUpdated={props.onStoryUpdated}
+              onTasksGenerating={props.onTasksGenerating}
             />
           </>
         )}
