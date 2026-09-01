@@ -5,7 +5,6 @@ import {
   getConversationTurnAudio,
   listConversations,
   respondToConversation,
-  respondToConversationAudio,
   startConversation,
   transcribeConversationAudio,
   type Conversation,
@@ -16,6 +15,14 @@ import { appStore } from "../store";
 
 type ConversationTurn = Conversation["turns"][number];
 
+interface PendingLearnerResponse {
+  text: string;
+  phase: "transcribing" | "waiting" | "failed";
+  error?: string;
+  audio?: Blob;
+  automatic: boolean;
+}
+
 export function ConversationView(props: { conversationId?: string }) {
   const [conversation, setConversation] = createSignal<Conversation | null>(null);
   const [conversationHistory, setConversationHistory] = createSignal<ConversationSummary[]>([]);
@@ -23,6 +30,7 @@ export function ConversationView(props: { conversationId?: string }) {
   const [topic, setTopic] = createSignal("");
   const [sourceText, setSourceText] = createSignal("");
   const [input, setInput] = createSignal("");
+  const [pendingResponse, setPendingResponse] = createSignal<PendingLearnerResponse | null>(null);
   const [loading, setLoading] = createSignal(Boolean(props.conversationId));
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal("");
@@ -78,6 +86,7 @@ export function ConversationView(props: { conversationId?: string }) {
     resetTransientMedia();
     setConversation(null);
     setInput("");
+    setPendingResponse(null);
     if (conversationID) {
       void load(conversationID);
     } else {
@@ -146,24 +155,56 @@ export function ConversationView(props: { conversationId?: string }) {
     if (!current || !text || submitting()) {
       return;
     }
-    setSubmitting(true);
+    await submitLearnerResponse(current, text, fullAuto());
+  };
+
+  const submitLearnerResponse = async (
+    current: Conversation,
+    text: string,
+    automatic: boolean,
+  ): Promise<Conversation | null> => {
+    const message = text.trim();
+    if (!message || submitting()) return null;
+    setInput("");
     setError("");
+    setPendingResponse({ text: message, phase: "waiting", automatic });
+    if (automatic) setAutoStatus("Coach is thinking…");
+    setSubmitting(true);
     const finish = appStore.beginOperation();
+    let next: Conversation;
     try {
-      const next = await respondToConversation(current.conversation_id, { text });
-      setConversation(next);
-      setInput("");
-      if (fullAuto()) {
-        void beginAutoCycle(next);
-      } else {
-        playLatestWhenEnabled(next);
-      }
+      next = await respondToConversation(current.conversation_id, { text: message });
     } catch (cause) {
-      setError(conversationError(cause, "send your response"));
+      if (!disposed) {
+        const message = conversationError(cause, "send your response");
+        setPendingResponse((pending) => pending ? { ...pending, phase: "failed", error: message } : pending);
+        if (automatic) setAutoStatus("The coach response failed. Retry when ready.");
+      }
+      return null;
     } finally {
       finish();
-      setSubmitting(false);
+      if (!disposed) setSubmitting(false);
     }
+    if (disposed) return null;
+    setConversation(next);
+    setPendingResponse(null);
+    if (automatic && fullAuto()) {
+      void beginAutoCycle(next);
+    } else {
+      playLatestWhenEnabled(next);
+    }
+    return next;
+  };
+
+  const retryPendingResponse = async () => {
+    const pending = pendingResponse();
+    const current = conversation();
+    if (!pending || !current || submitting()) return;
+    if (pending.audio) {
+      await submitRecordedAudio(pending.audio);
+      return;
+    }
+    await submitLearnerResponse(current, pending.text, pending.automatic);
   };
 
   const speak = async (turn: ConversationTurn) => {
@@ -313,20 +354,35 @@ export function ConversationView(props: { conversationId?: string }) {
       setError("No microphone audio was recorded.");
       return;
     }
+    setPendingResponse({
+      text: "Transcribing your response…",
+      phase: "transcribing",
+      audio,
+      automatic: false,
+    });
     setSubmitting(true);
     setError("");
     const finish = appStore.beginOperation();
+    let transcript: string;
     try {
-      const next = await respondToConversationAudio(current.conversation_id, audio);
-      if (disposed) return;
-      setConversation(next);
-      playLatestWhenEnabled(next);
+      transcript = (await transcribeConversationAudio(current.conversation_id, audio)).text.trim();
+      if (!transcript) throw new Error("The recording did not contain recognizable speech.");
     } catch (cause) {
-      if (!disposed) setError(conversationError(cause, "transcribe your response"));
+      if (!disposed) {
+        setPendingResponse({
+          text: "Voice response",
+          phase: "failed",
+          error: conversationError(cause, "transcribe your response"),
+          audio,
+          automatic: false,
+        });
+      }
+      return;
     } finally {
       finish();
       if (!disposed) setSubmitting(false);
     }
+    if (!disposed) await submitLearnerResponse(current, transcript, false);
   };
 
   const beginAutoCycle = async (detail: Conversation) => {
@@ -381,22 +437,11 @@ export function ConversationView(props: { conversationId?: string }) {
       }
       if (!passed) continue;
 
-      setAutoStatus("Coach is thinking…");
-      setSubmitting(true);
-      const finish = appStore.beginOperation();
-      let next: Conversation;
-      try {
-        next = await respondToConversation(detail.conversation_id, {
-          text: accumulated || "I don't know what that meant.",
-        });
-      } finally {
-        finish();
-        setSubmitting(false);
-      }
-      if (!fullAuto() || cycle !== autoCycleToken) return;
-      setConversation(next);
-      setInput("");
-      void beginAutoCycle(next);
+      await submitLearnerResponse(
+        detail,
+        accumulated || "I don't know what that meant.",
+        true,
+      );
       return;
     }
   };
@@ -618,6 +663,34 @@ export function ConversationView(props: { conversationId?: string }) {
                   </article>
                 )}
               </For>
+              <Show when={pendingResponse()}>
+                {(pending) => (
+                  <>
+                    <article class="conversation-turn pending-learner-turn" data-role="user" data-phase={pending().phase}>
+                      <p class="learner-response">{pending().text}</p>
+                      <Show when={pending().phase === "transcribing"}>
+                        <span class="pending-turn-label">Listening back…</span>
+                      </Show>
+                    </article>
+                    <Show when={pending().phase === "waiting"}>
+                      <article class="conversation-turn assistant-thinking" data-role="assistant" aria-label="Coach is thinking">
+                        <span /><span /><span />
+                      </article>
+                    </Show>
+                    <Show when={pending().phase === "failed"}>
+                      <article class="conversation-turn response-failed" data-role="assistant" role="alert">
+                        <div>
+                          <strong>That response didn’t go through.</strong>
+                          <p>{pending().error || "The coach could not respond."}</p>
+                        </div>
+                        <button class="secondary-button" type="button" disabled={submitting()} onClick={() => void retryPendingResponse()}>
+                          {submitting() ? "Retrying…" : "Retry"}
+                        </button>
+                      </article>
+                    </Show>
+                  </>
+                )}
+              </Show>
             </div>
 
             <form class="conversation-response" onSubmit={(event) => { event.preventDefault(); void respond(); }}>
