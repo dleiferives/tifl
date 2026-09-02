@@ -887,9 +887,10 @@ export function ReaderView(props: {
       level: dataLevel(entry.value), x, y, angle: Math.atan2(y, x),
     });
     const buttons: RadialButton[] = numeric.map((entry, i) => {
-      const t = -Math.PI / 2 + (Math.PI * i) / (numeric.length - 1); // -π/2 (left) … π/2 (right)
-      const bx = ampX * Math.sin(t);
-      const by = archDir * (archH * Math.cos(t) + archLift);
+      // Evenly spaced in x (2 and 4 land halfway between 1-3 and 3-5); height
+      // follows the dome for that x.
+      const bx = -ampX + (2 * ampX) * (i / (numeric.length - 1));
+      const by = archDir * (archH * Math.sqrt(Math.max(0, 1 - (bx / ampX) ** 2)) + archLift);
       return mk(entry, bx, by);
     });
     // w / i sit further out than 1 and 5, with a gap between, at the word's
