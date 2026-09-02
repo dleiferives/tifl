@@ -27,17 +27,24 @@ over Tailscale with `tailscale serve` for TLS). Override at build time:
 TIFL_MOBILE_API_BASE=https://host:port/api/v1 make mobile-web
 ```
 
-## First-time setup (macOS / dolos)
+## Setup (macOS)
 
-Prerequisites: Xcode + command-line tools, CocoaPods, Node/npm.
+Prerequisites: Xcode, CocoaPods, and a JS runtime — `npm`, or `bun` (dolos has
+no standalone `node`; use `bun install` and `bun ./build.mjs --mobile` there).
+
+`ios/` is committed, so a fresh clone only needs:
 
 ```
-cd mobile
-npm install
-npx cap add ios          # generates ios/ ; commit it
-make -C .. mobile-sync    # build web + cap sync ios
-npx cap open ios          # then build/run from Xcode
+cd mobile && npm install          # or: bun install
+make -C .. mobile-sync            # build web (--mobile) + cap sync ios
+npm run open:ios                  # then build/run from Xcode
 ```
+
+`npx cap add ios` was already run on dolos; re-run it only to regenerate the
+native project from scratch.
+
+Verified on dolos (Xcode 26.3): Debug simulator build with
+`CODE_SIGNING_ALLOWED=NO` succeeds.
 
 ## Iterating
 
@@ -47,8 +54,7 @@ From the repo root:
 make mobile-sync          # rebuild web, copy into ios/, refresh pods
 ```
 
-then Cmd-R in Xcode. Only re-run `npm install` / `cap add ios` when
-dependencies or the native project change.
+then Cmd-R in Xcode. Only re-run `npm install` when dependencies change.
 
 ## Auth across origins
 
@@ -64,8 +70,11 @@ The WebView origin is `capacitor://localhost`; the API is a different origin.
 
 ## Not done yet
 
-- `npx cap add ios` has not been run (needs macOS) — no `ios/` in the tree yet.
+- Backend: refresh cookie is still `SameSite=Strict` — cross-site refresh from
+  the shell will fail until it is `SameSite=None` (`internal/handler/auth.go`).
+- Live check: run the shell against atlas and confirm login + reading work.
 - Offline storage of stories + sentence audio (Filesystem/Preferences layer in
   `web/src/api.ts`).
 - App icon, splash art, status-bar styling, safe-area CSS in the reader.
 - Signing — builds are unsigned; sign + install with a free Apple ID.
+- Android (`cap add android`) — not set up.
