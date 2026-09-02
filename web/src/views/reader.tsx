@@ -22,6 +22,7 @@ import {
   wordBreakdown,
 } from "../api";
 import type { APISchema } from "../api";
+import { hapticTick } from "../haptics";
 import { routeHref, sessionHref } from "../router";
 import { appStore } from "../store";
 
@@ -58,6 +59,8 @@ type ReaderDisplaySettings = {
   wordHighlight: boolean;
   popupEnabled: boolean;
   flowMode: "pages" | "infinite";
+  swipeAdvance: boolean;
+  swipeThreshold: number;
 };
 type SyntaxGraph = {
   version?: string;
@@ -104,6 +107,33 @@ const LEVELS: { value: KnowledgeLevel; event: string; label: string; hint: strin
   { value: "well_known", event: "w", label: "w", hint: "known" },
   { value: "ignored", event: "i", label: "i", hint: "ignored" },
 ];
+
+const MOBILE_LAYOUT_QUERY = "(max-width: 52rem)";
+
+// Rank a word's known-ness for swipe-to-advance. A swipe stops on the first word
+// whose rank is at or below the configured threshold (or at the sentence edge).
+// Unseen words are always a stop (0); well_known / ignored never are.
+function levelRank(level: KnowledgeLevel): number {
+  switch (level) {
+    case "1":
+    case "2":
+    case "3":
+    case "4":
+    case "5":
+      return Number(level);
+    case "well_known":
+    case "ignored":
+      return 99;
+    default:
+      return 0;
+  }
+}
+
+function swipeThresholdLabel(threshold: number): string {
+  if (threshold <= 0) return "new words";
+  if (threshold >= 5) return "any studied word";
+  return `level ${threshold} or lower`;
+}
 
 export function ReaderView(props: {
   storyId: string;
@@ -168,6 +198,10 @@ export function ReaderView(props: {
   const [analysis, setAnalysis] = createSignal<Analysis>(null);
   const [sentences, setSentences] = createStore<Record<number, Loadable<unknown>>>({});
   const [words, setWords] = createStore<Record<string, Loadable<unknown>>>({});
+  // Narrow viewports get the bottom-sheet treatment: the popup, study dock, and
+  // display panel dock to the bottom edge, and reading is driven by swipes.
+  const mobileLayoutMedia = window.matchMedia(MOBILE_LAYOUT_QUERY);
+  const [mobileLayout, setMobileLayout] = createSignal(mobileLayoutMedia.matches);
 
   // One element ref per word token, indexed by token position. Used to move the
   // cursor highlight surgically (two DOM writes) and to anchor the popup.
@@ -175,6 +209,11 @@ export function ReaderView(props: {
   const tokenEls: (HTMLElement | undefined)[] = [];
   let readerTextEl: HTMLDivElement | undefined;
   let popupEl: HTMLElement | undefined;
+  // Touch gesture state for the reading column: swipe left/right to advance,
+  // long-press to inspect a word. Coordinates are viewport-relative.
+  let touchOrigin: { x: number; y: number; time: number; position: number | undefined } | null = null;
+  let longPressTimer: number | undefined;
+  let gestureConsumedTap = false;
   let selectableCursorIndices: number[] = [];
   let loadedStoryPages = new Map<number, StoryLoad>();
   let scrollCursorFrame: number | undefined;
@@ -212,6 +251,9 @@ export function ReaderView(props: {
     window.addEventListener("scroll", scheduleMidpointCursorCapture, { passive: true });
     window.addEventListener("scroll", scheduleInfinitePageLoad, { passive: true });
     document.addEventListener("selectionchange", captureTaskSelection);
+    mobileLayoutMedia.addEventListener("change", onMobileLayoutChange);
+    // Reader mode hides the global app chrome on small screens (CSS keys off this).
+    document.body.dataset.readerActive = "";
     void load();
   });
 
@@ -226,6 +268,10 @@ export function ReaderView(props: {
     window.removeEventListener("scroll", scheduleMidpointCursorCapture);
     window.removeEventListener("scroll", scheduleInfinitePageLoad);
     document.removeEventListener("selectionchange", captureTaskSelection);
+    mobileLayoutMedia.removeEventListener("change", onMobileLayoutChange);
+    delete document.body.dataset.readerActive;
+    detachReaderTextGestures();
+    if (longPressTimer !== undefined) clearTimeout(longPressTimer);
     sentencePlaybackToken++;
     sentenceAudio?.pause();
     if (sentenceAnimationFrame !== undefined) cancelAnimationFrame(sentenceAnimationFrame);
@@ -508,6 +554,130 @@ export function ReaderView(props: {
     setCursor(resolveCursorIndex(tokens(), position));
   }
 
+  function onMobileLayoutChange(event: MediaQueryListEvent) {
+    setMobileLayout(event.matches);
+    if (event.matches) {
+      setPopupPos(null); // the JS anchor is desktop-only; the sheet is CSS-driven
+    } else {
+      repositionPopup();
+    }
+  }
+
+  // Swipe-to-advance: move the cursor forward/back to the next word worth a pause
+  // — the first one at or below the knowledge threshold — but never past the end
+  // (or start) of the current sentence. When already at the sentence edge, fall
+  // through to the ordinary word step so page turns still work.
+  function swipeAdvance(direction: 1 | -1) {
+    if (editing() || storyEditorOpen() || status() !== "ready") return;
+    const list = tokens();
+    const start = cursor();
+    const span = currentSentenceSpan();
+    let target = start;
+    for (let i = start + direction; i >= 0 && i < list.length; i += direction) {
+      const token = list[i];
+      if (span) {
+        if (direction === 1 && token.position >= span.end_position) break;
+        if (direction === -1 && token.position < span.start_position) break;
+      }
+      if (!token.is_word || !token.key) continue;
+      target = i;
+      if (levelRank(displayLevel(token)) <= displaySettings.swipeThreshold) break;
+    }
+    if (target !== start) {
+      suppressMidpointCursorCapture();
+      setCursor(target);
+      hapticTick();
+      return;
+    }
+    moveCursor(direction);
+  }
+
+  function wordPositionAtPoint(x: number, y: number): number | undefined {
+    const el = document.elementFromPoint(x, y)?.closest<HTMLElement>(".reader-word");
+    const raw = el?.dataset.pos;
+    return raw === undefined ? undefined : Number(raw);
+  }
+
+  function clearLongPress() {
+    if (longPressTimer !== undefined) {
+      clearTimeout(longPressTimer);
+      longPressTimer = undefined;
+    }
+  }
+
+  function onReaderTouchStart(event: TouchEvent) {
+    if (event.touches.length !== 1 || editing() || storyEditorOpen() || status() !== "ready") {
+      touchOrigin = null;
+      return;
+    }
+    const touch = event.touches[0];
+    const position = wordPositionAtPoint(touch.clientX, touch.clientY);
+    touchOrigin = { x: touch.clientX, y: touch.clientY, time: performance.now(), position };
+    gestureConsumedTap = false;
+    clearLongPress();
+    if (position !== undefined) {
+      longPressTimer = window.setTimeout(() => {
+        longPressTimer = undefined;
+        if (!touchOrigin) return;
+        gestureConsumedTap = true;
+        setReaderCursorPosition(position);
+        if (displaySettings.popupEnabled) setPopupVisible(true);
+        else inspectCurrentWord();
+        hapticTick();
+      }, 450);
+    }
+  }
+
+  function onReaderTouchMove(event: TouchEvent) {
+    if (!touchOrigin) return;
+    const touch = event.touches[0];
+    const dx = touch.clientX - touchOrigin.x;
+    const dy = touch.clientY - touchOrigin.y;
+    if (Math.abs(dx) > 8 || Math.abs(dy) > 8) clearLongPress();
+    if (!gestureConsumedTap && displaySettings.swipeAdvance &&
+      Math.abs(dx) > 44 && Math.abs(dx) > Math.abs(dy) * 1.6) {
+      gestureConsumedTap = true;
+      event.preventDefault(); // claim the gesture from native scroll/selection
+      swipeAdvance(dx > 0 ? 1 : -1);
+    }
+  }
+
+  function onReaderTouchEnd() {
+    clearLongPress();
+    const consumed = gestureConsumedTap;
+    touchOrigin = null;
+    if (!consumed) return;
+    // Swallow the click the browser synthesizes after a long-press or swipe so it
+    // does not also move the cursor to wherever the finger lifted.
+    const swallow = (click: Event) => {
+      click.stopPropagation();
+      click.preventDefault();
+    };
+    readerTextEl?.addEventListener("click", swallow, { capture: true, once: true });
+    window.setTimeout(() => readerTextEl?.removeEventListener("click", swallow, true), 350);
+  }
+
+  function attachReaderTextGestures(element: HTMLElement) {
+    element.addEventListener("touchstart", onReaderTouchStart, { passive: true });
+    element.addEventListener("touchmove", onReaderTouchMove, { passive: false });
+    element.addEventListener("touchend", onReaderTouchEnd, { passive: true });
+    element.addEventListener("touchcancel", onReaderTouchEnd, { passive: true });
+  }
+
+  function detachReaderTextGestures() {
+    if (!readerTextEl) return;
+    readerTextEl.removeEventListener("touchstart", onReaderTouchStart);
+    readerTextEl.removeEventListener("touchmove", onReaderTouchMove);
+    readerTextEl.removeEventListener("touchend", onReaderTouchEnd);
+    readerTextEl.removeEventListener("touchcancel", onReaderTouchEnd);
+  }
+
+  function closeMobileSheets() {
+    setPopupVisible(false);
+    setAnalysis(null);
+    setDisplayPanelOpen(false);
+  }
+
   function scheduleMidpointCursorCapture() {
     if (scrollCursorFrame !== undefined || performance.now() < scrollCursorSuppressedUntil ||
       status() !== "ready" || storyEditorOpen()) return;
@@ -768,6 +938,7 @@ export function ReaderView(props: {
 
   function repositionPopup() {
     if (!popupVisible()) return;
+    if (mobileLayout()) return; // the popup is a bottom sheet here; CSS positions it
     const el = wordElementForCursor(cursor());
     if (!el) {
       setPopupPos(null);
@@ -786,6 +957,7 @@ export function ReaderView(props: {
   }
 
   const popupStyle = (): JSX.CSSProperties => {
+    if (mobileLayout()) return {};
     const pos = popupPos();
     return pos ? { top: `${pos.top}px`, left: `${pos.left}px` } : { visibility: "hidden" };
   };
@@ -2006,6 +2178,20 @@ export function ReaderView(props: {
                 setDisplaySettings("popupEnabled", event.currentTarget.checked);
                 if (!event.currentTarget.checked) setPopupVisible(false);
               }} /> Definition popup on Space</label>
+              <label><input type="checkbox" checked={displaySettings.swipeAdvance} onChange={(event) => setDisplaySettings("swipeAdvance", event.currentTarget.checked)} /> Swipe to advance (touch)</label>
+              <label class="reader-range-setting" data-disabled={displaySettings.swipeAdvance ? undefined : ""}>
+                <span>Swipe stops at: <strong>{swipeThresholdLabel(displaySettings.swipeThreshold)}</strong></span>
+                <input
+                  type="range"
+                  min="0"
+                  max="5"
+                  step="1"
+                  value={displaySettings.swipeThreshold}
+                  disabled={!displaySettings.swipeAdvance}
+                  aria-label="Swipe knowledge threshold"
+                  onInput={(event) => setDisplaySettings("swipeThreshold", Number(event.currentTarget.value))}
+                />
+              </label>
             </aside>
           </Show>
 
@@ -2076,7 +2262,9 @@ export function ReaderView(props: {
                     class="reader-text"
                     lang={language()}
                     ref={(element) => {
+                      detachReaderTextGestures();
                       readerTextEl = element;
+                      attachReaderTextGestures(element);
                       // Word refs are populated during the same render pass.
                       // Re-run cursor placement once that pass has settled.
                       queueMicrotask(() => {
@@ -2100,6 +2288,7 @@ export function ReaderView(props: {
                           <span
                             class="reader-word"
                             data-level={dataLevel(displayLevel(token))}
+                            data-pos={token.position}
                             data-current-line={tokenInCurrentSentence(token.position) ? "" : undefined}
                             data-task-selected={taskTokenSelected(token.position) ? "" : undefined}
                             ref={(el) => { wordEls[token.position] = el; tokenEls[token.position] = el; }}
@@ -2228,6 +2417,10 @@ export function ReaderView(props: {
           <button type="button" data-active={analysis()?.mode === "sentence" ? "" : undefined} onClick={openSentenceBreakdown}><span>S</span><b>Sentence</b></button>
         </nav>
       </div>
+
+      <Show when={mobileLayout() && (popupVisible() || analysis() !== null || displayPanelOpen())}>
+        <div class="reader-sheet-backdrop" onClick={closeMobileSheets} aria-hidden="true" />
+      </Show>
 
       <Show when={popupVisible() && displaySettings.popupEnabled ? currentToken() : undefined}>
         {(token) => (
@@ -2365,16 +2558,21 @@ function readReaderDisplaySettings(): ReaderDisplaySettings {
     wordHighlight: true,
     popupEnabled: true,
     flowMode: "pages",
+    swipeAdvance: true,
+    swipeThreshold: 3,
   };
   try {
     const stored = JSON.parse(localStorage.getItem(READER_DISPLAY_SETTINGS_KEY) ?? "null") as Partial<ReaderDisplaySettings> | null;
     if (!stored) return defaults;
+    const threshold = Number(stored.swipeThreshold);
     return {
       colorKnowledge: typeof stored.colorKnowledge === "boolean" ? stored.colorKnowledge : defaults.colorKnowledge,
       lineHighlight: typeof stored.lineHighlight === "boolean" ? stored.lineHighlight : defaults.lineHighlight,
       wordHighlight: typeof stored.wordHighlight === "boolean" ? stored.wordHighlight : defaults.wordHighlight,
       popupEnabled: typeof stored.popupEnabled === "boolean" ? stored.popupEnabled : defaults.popupEnabled,
       flowMode: stored.flowMode === "infinite" || stored.flowMode === "pages" ? stored.flowMode : defaults.flowMode,
+      swipeAdvance: typeof stored.swipeAdvance === "boolean" ? stored.swipeAdvance : defaults.swipeAdvance,
+      swipeThreshold: Number.isFinite(threshold) ? Math.min(5, Math.max(0, Math.round(threshold))) : defaults.swipeThreshold,
     };
   } catch {
     return defaults;
