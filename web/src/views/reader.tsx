@@ -500,6 +500,33 @@ export function ReaderView(props: {
     }
   });
 
+  // On mobile a bottom sheet covers the lower half, so keep the studied word in
+  // the strip of text left visible between the top bar and the sheet.
+  function scrollCursorIntoReadableBand() {
+    if (!mobileLayout() || status() !== "ready") return;
+    const el = wordElementForCursor(cursor());
+    if (!el) return;
+    const sheet = document.querySelector<HTMLElement>(".reader-study-dock, .reader-popup");
+    const topBar = document.querySelector<HTMLElement>(".reader-topbar");
+    const bandTop = (topBar?.getBoundingClientRect().bottom ?? 0) + 12;
+    const bandBottom = (sheet?.getBoundingClientRect().top ?? window.innerHeight * 0.55) - 12;
+    if (bandBottom - bandTop < 48) return;
+    const rect = el.getBoundingClientRect();
+    const wordCenter = rect.top + rect.height / 2;
+    if (wordCenter < bandTop + 8 || wordCenter > bandBottom - 8) {
+      suppressMidpointCursorCapture();
+      preserveScrollForCursorUpdate = true;
+      window.scrollBy(0, wordCenter - (bandTop + bandBottom) / 2);
+    }
+  }
+
+  createEffect(() => {
+    const sheetOpen = analysis() !== null || (popupVisible() && displaySettings.popupEnabled);
+    cursor();
+    if (!sheetOpen || !mobileLayout() || status() !== "ready") return;
+    requestAnimationFrame(() => requestAnimationFrame(scrollCursorIntoReadableBand));
+  });
+
   // The lightweight popup follows the cursor. A Word dock that is already open
   // follows it too; once the popup closes, the dock stays pinned to the last
   // inspected word while reading continues.
@@ -680,7 +707,9 @@ export function ReaderView(props: {
 
   function scheduleMidpointCursorCapture() {
     if (scrollCursorFrame !== undefined || performance.now() < scrollCursorSuppressedUntil ||
-      status() !== "ready" || storyEditorOpen()) return;
+      status() !== "ready" || storyEditorOpen() ||
+      // A sheet pins the cursor to the studied word; scroll must not steal it.
+      analysis() !== null || popupVisible()) return;
     scrollCursorFrame = requestAnimationFrame(() => {
       scrollCursorFrame = undefined;
       const next = viewportMidpointCursorIndex();

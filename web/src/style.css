@@ -3318,8 +3318,9 @@ select {
     inset: auto 0 calc(4rem + env(safe-area-inset-bottom)) 0;
     z-index: 30;
     width: 100%;
-    height: min(68vh, 38rem);
-    padding: 0 1rem calc(1.5rem + env(safe-area-inset-bottom));
+    height: auto;
+    max-height: 52vh;
+    padding: 0 1rem calc(1.25rem + env(safe-area-inset-bottom));
     border-top: 1px solid var(--border);
     border-left: 0;
     border-radius: 0.9rem 0.9rem 0 0;
@@ -3336,6 +3337,56 @@ select {
     margin: 0 auto 0.7rem;
     border-radius: 999px;
     background: var(--border);
+  }
+
+  /* Dense word sheet: no all-caps label rows, smaller headword, tighter
+     level buttons and section headings. */
+  .reader-study-head {
+    min-height: 2.4rem;
+    font-size: 0;
+    border-bottom: 0;
+  }
+  .reader-study-head button {
+    width: 1.9rem;
+    height: 1.9rem;
+    font-size: 1.15rem;
+  }
+  .reader-word-study,
+  .reader-sentence-study {
+    padding-top: 0.25rem;
+  }
+  .reader-study-word-title h2 {
+    font-size: 1.4rem;
+  }
+  .reader-study-word-title button {
+    width: 1.9rem;
+    height: 1.9rem;
+  }
+  .reader-study-levels {
+    gap: 0.28rem;
+  }
+  .reader-study-levels .reader-level {
+    min-width: 2rem;
+    padding: 0.3rem 0;
+    font-size: 0.82rem;
+  }
+  .reader-study-dock .reader-study-section,
+  .reader-study-dock .reader-canonical-actions,
+  .reader-study-disclosure {
+    padding-top: 0.55rem;
+    margin-top: 0.55rem;
+  }
+  .reader-study-dock .reader-study-section h3 {
+    display: none;
+  }
+  .reader-study-dock .reader-canonical-actions {
+    grid-auto-flow: column;
+    gap: 0.4rem;
+  }
+  .reader-study-dock .reader-canonical-actions .reader-deep {
+    width: auto;
+    padding: 0.4rem 0.5rem;
+    font-size: 0.78rem;
   }
 }
 
