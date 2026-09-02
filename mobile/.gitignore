@@ -3,3 +3,4 @@ node_modules/
 *.log
 
 # `cap add ios` writes ios/.gitignore for Pods/, App/public/, DerivedData/, build/.
+bun.lock
