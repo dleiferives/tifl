@@ -1,4 +1,4 @@
-.PHONY: help build server gateway audio kaikki-import kaikki-translate run run-gateway run-audio seed-demo import-kaikki web web-install web-api-types web-typecheck test test-live vet fmt tidy clean
+.PHONY: help build server gateway audio kaikki-import kaikki-translate run run-gateway run-audio stop seed-demo import-kaikki web web-install web-api-types web-typecheck test test-live vet fmt tidy clean
 
 # Live gateway test (opt-in): a real OpenCode server to verify the gateway
 # end-to-end. Override the model with TIFL_LIVE_MODEL.
@@ -34,6 +34,24 @@ run-gateway: ## run the LLM gateway (http://127.0.0.1:8001)
 
 run-audio: ## run the audio manager (http://127.0.0.1:8010)
 	go run ./audio/cmd/audio
+
+SERVER_PORT ?= 8000
+
+stop: ## stop any running API server (frees http://127.0.0.1:$(SERVER_PORT))
+	@pids=$$(lsof -ti tcp:$(SERVER_PORT) -sTCP:LISTEN 2>/dev/null); \
+	if [ -z "$$pids" ]; then \
+		echo "no server listening on port $(SERVER_PORT)"; \
+		exit 0; \
+	fi; \
+	targets=""; \
+	for pid in $$pids; do \
+		targets="$$targets $$pid $$(ps -o ppid= -p $$pid 2>/dev/null | tr -d ' ')"; \
+	done; \
+	echo "stopping server on port $(SERVER_PORT):$$targets"; \
+	kill $$targets 2>/dev/null || true; \
+	sleep 1; \
+	left=$$(lsof -ti tcp:$(SERVER_PORT) -sTCP:LISTEN 2>/dev/null); \
+	if [ -n "$$left" ]; then echo "force killing:$$left"; kill -9 $$left 2>/dev/null || true; fi
 
 seed-demo: ## seed deterministic local demo data for UI/API development
 	go run ./cmd/devseed
