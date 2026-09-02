@@ -74,7 +74,8 @@ type RadialGeom = {
   cy: number;
   wordHalfW: number;
   wordHalfH: number;
-  side: "above" | "below";
+  archSide: "above" | "below";
+  bubbleSide: "above" | "below";
   buttons: RadialButton[];
   bubbleX: number;
   bubbleY: number;
@@ -746,7 +747,7 @@ export function ReaderView(props: {
       setRadialHot(null);
       return;
     }
-    const dir = menu.side === "above" ? -1 : 1;
+    const dir = menu.archSide === "above" ? -1 : 1;
     if (Math.sign(ry) === -dir && Math.abs(ry) > menu.wordHalfH + 6) {
       setRadialHot(null);
       return;
@@ -863,13 +864,19 @@ export function ReaderView(props: {
     const wordHalfH = Math.max(rect.height, 16) / 2;
     const cx0 = rect.left + rect.width / 2;
     const cy0 = rect.top + rect.height / 2;
-    const ampX = wordHalfW + BTN * 1.9;
-    const archH = BTN * 1.35;
+    // 1 and 5 sit close to the word; the dome is tall enough to space 1–5 out.
+    const ampX = wordHalfW + BTN * 1.1;
+    const archH = BTN * 2.1;
     const bubbleReserve = 96;
-    // The bubble + arch stack above the word by default; flip below only if
-    // that stack would run off the top.
-    const side: "above" | "below" = cy0 - (archH + BTN + bubbleReserve) < 52 ? "below" : "above";
-    const dir = side === "above" ? -1 : 1;
+    // The arch faces away from the definition bubble: by default the bubble
+    // hangs below the word and the arch domes up. Flip when the preferred side
+    // has no room.
+    let archSide: "above" | "below" = "above";
+    if (cy0 - archH - BTN - 8 < 52) archSide = "below"; // no room above for the arch
+    else if (cy0 + wordHalfH + bubbleReserve > vh - 74) archSide = "below"; // no room below for the bubble
+    const bubbleSide: "above" | "below" = archSide === "above" ? "below" : "above";
+    const archDir = archSide === "above" ? -1 : 1;
+    const bubbleDir = -archDir;
     // 1–5 ride a flat dome that hugs the word; w / i flank the dome ends at the
     // word's own level.
     const numeric = LEVELS.filter((entry) => /^[1-5]$/.test(entry.label));
@@ -880,21 +887,26 @@ export function ReaderView(props: {
     });
     const buttons: RadialButton[] = numeric.map((entry, i) => {
       const bx = -ampX + (2 * ampX) * (i / (numeric.length - 1));
-      const by = dir * archH * Math.sqrt(Math.max(0, 1 - (bx / ampX) ** 2));
+      const by = archDir * archH * Math.sqrt(Math.max(0, 1 - (bx / ampX) ** 2));
       return mk(entry, bx, by);
     });
-    // w / i hug the word's own sides, just off the edge, at its baseline.
-    const sideX = wordHalfW + BTN * 0.8;
-    specials.forEach((entry, i) => buttons.push(mk(entry, i === 0 ? -sideX : sideX, dir * BTN * 0.1)));
+    // w / i sit further out than 1 and 5, with a gap between, at the word's
+    // baseline.
+    const sideX = ampX + BTN * 1.25;
+    specials.forEach((entry, i) => buttons.push(mk(entry, i === 0 ? -sideX : sideX, archDir * BTN * 0.1)));
 
-    // Minimal nudge so the cluster + bubble stay on screen.
-    const farY = dir * (archH + BTN + bubbleReserve);
+    // Minimal nudge so the whole cluster (arch one side, bubble the other)
+    // stays on screen.
+    const archEdge = archDir * (archH + BTN / 2);
+    const bubbleEdge = bubbleDir * (wordHalfH + bubbleReserve);
+    const spanTop = Math.min(archEdge, bubbleEdge, -wordHalfH);
+    const spanBottom = Math.max(archEdge, bubbleEdge, wordHalfH);
     let offY = 0;
-    if (cy0 + Math.min(0, farY) - BTN / 2 < 52) offY = 52 - (cy0 + Math.min(0, farY) - BTN / 2);
-    else if (cy0 + Math.max(0, farY) + BTN / 2 > vh - 74) offY = (vh - 74) - (cy0 + Math.max(0, farY) + BTN / 2);
+    if (cy0 + spanTop < 52) offY = 52 - (cy0 + spanTop);
+    else if (cy0 + spanBottom > vh - 74) offY = (vh - 74) - (cy0 + spanBottom);
     let offX = 0;
-    if (cx0 - ampX - BTN / 2 < 10) offX = 10 - (cx0 - ampX - BTN / 2);
-    else if (cx0 + ampX + BTN / 2 > vw - 10) offX = (vw - 10) - (cx0 + ampX + BTN / 2);
+    if (cx0 - sideX - BTN / 2 < 10) offX = 10 - (cx0 - sideX - BTN / 2);
+    else if (cx0 + sideX + BTN / 2 > vw - 10) offX = (vw - 10) - (cx0 + sideX + BTN / 2);
     const cx = cx0 + offX;
     const cy = cy0 + offY;
     const bubbleW = Math.min(272, vw - 16);
@@ -910,11 +922,12 @@ export function ReaderView(props: {
       cy,
       wordHalfW,
       wordHalfH,
-      side,
+      archSide,
+      bubbleSide,
       buttons,
       bubbleX: Math.min(Math.max(cx, bubbleW / 2 + 8), vw - bubbleW / 2 - 8),
-      bubbleY: cy + dir * (archH + BTN),
-      maxReach: ampX + BTN * 1.3,
+      bubbleY: cy + bubbleDir * (wordHalfH + BTN * 0.55),
+      maxReach: sideX + BTN,
     });
   }
 
@@ -2782,7 +2795,7 @@ export function ReaderView(props: {
             </div>
             <div
               class="reader-radial-bubble"
-              data-side={menu().side}
+              data-side={menu().bubbleSide}
               style={{ left: `${menu().bubbleX}px`, top: `${menu().bubbleY}px` }}
             >
               <div class="reader-radial-bubble-head">
