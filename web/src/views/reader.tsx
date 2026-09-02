@@ -28,6 +28,7 @@ import { appStore } from "../store";
 type StoryToken = APISchema<"StoryToken">;
 type StoryLoad = APISchema<"StoryLoad">;
 type StoryPageWindow = NonNullable<StoryLoad["window"]>;
+type PagedStoryLoad = StoryLoad & { window: StoryPageWindow };
 type ReaderKnowledge = APISchema<"ReaderKnowledge">;
 type ReaderSurfaceKnowledge = APISchema<"ReaderSurfaceKnowledge">;
 type KnowledgeLevel = ReaderKnowledge["level"];
@@ -56,6 +57,7 @@ type ReaderDisplaySettings = {
   lineHighlight: boolean;
   wordHighlight: boolean;
   popupEnabled: boolean;
+  flowMode: "pages" | "infinite";
 };
 type SyntaxGraph = {
   version?: string;
@@ -129,6 +131,8 @@ export function ReaderView(props: {
   const [readerDOMVersion, setReaderDOMVersion] = createSignal(0);
   const [pageWindow, setPageWindow] = createSignal<StoryPageWindow | undefined>();
   const [pageLoading, setPageLoading] = createSignal(false);
+  const [infinitePageLoading, setInfinitePageLoading] = createSignal<"previous" | "next" | null>(null);
+  const [loadedPagesVersion, setLoadedPagesVersion] = createSignal(0);
   const [knowledge, setKnowledge] = createStore<Record<string, ReaderKnowledge>>({});
   const [surfaceKnowledge, setSurfaceKnowledge] = createStore<Record<string, ReaderSurfaceKnowledge>>({});
   const [cursor, setCursor] = createSignal(0);
@@ -172,7 +176,9 @@ export function ReaderView(props: {
   let readerTextEl: HTMLDivElement | undefined;
   let popupEl: HTMLElement | undefined;
   let selectableCursorIndices: number[] = [];
+  let loadedStoryPages = new Map<number, StoryLoad>();
   let scrollCursorFrame: number | undefined;
+  let infiniteScrollFrame: number | undefined;
   let scrollCursorSuppressedUntil = 0;
   let preserveScrollForCursorUpdate = false;
   let pending: ReaderEvent[] = [];
@@ -204,6 +210,7 @@ export function ReaderView(props: {
     window.addEventListener("resize", repositionPopup);
     window.addEventListener("scroll", repositionPopup, true);
     window.addEventListener("scroll", scheduleMidpointCursorCapture, { passive: true });
+    window.addEventListener("scroll", scheduleInfinitePageLoad, { passive: true });
     document.addEventListener("selectionchange", captureTaskSelection);
     void load();
   });
@@ -217,11 +224,13 @@ export function ReaderView(props: {
     window.removeEventListener("resize", repositionPopup);
     window.removeEventListener("scroll", repositionPopup, true);
     window.removeEventListener("scroll", scheduleMidpointCursorCapture);
+    window.removeEventListener("scroll", scheduleInfinitePageLoad);
     document.removeEventListener("selectionchange", captureTaskSelection);
     sentencePlaybackToken++;
     sentenceAudio?.pause();
     if (sentenceAnimationFrame !== undefined) cancelAnimationFrame(sentenceAnimationFrame);
     if (scrollCursorFrame !== undefined) cancelAnimationFrame(scrollCursorFrame);
+    if (infiniteScrollFrame !== undefined) cancelAnimationFrame(infiniteScrollFrame);
     clearSpeakingWord();
     for (const objectURL of sentenceAudioURLs.values()) URL.revokeObjectURL(objectURL);
     sentenceAudioURLs.clear();
@@ -272,6 +281,9 @@ export function ReaderView(props: {
     setSentenceSpans(story.sentences);
     setLanguage(story.language);
     setPageWindow(story.window);
+    loadedStoryPages = new Map();
+    if (story.window) loadedStoryPages.set(story.window.page_index, story);
+    setLoadedPagesVersion((version) => version + 1);
     const localProgress = readSavedCursor(props.storyId);
     const serverProgress = story.reading_progress;
     const resumePosition = preferredPosition ?? (localProgress && localProgress.savedAt > serverProgress.updated_at
@@ -281,7 +293,10 @@ export function ReaderView(props: {
     setFinishStatus(serverProgress.finished_at ? "done" : "idle");
     setCursor(resolveCursorIndex(story.tokens, resumePosition));
     queueMicrotask(() => {
-      if (!disposed) setReaderDOMVersion((version) => version + 1);
+      if (!disposed) {
+        setReaderDOMVersion((version) => version + 1);
+        scheduleInfinitePageLoad();
+      }
     });
   }
 
@@ -424,6 +439,12 @@ export function ReaderView(props: {
     writeReaderDisplaySettings({ ...displaySettings });
   });
 
+  createEffect(() => {
+    if (displaySettings.flowMode === "infinite" && status() === "ready") {
+      queueMicrotask(scheduleInfinitePageLoad);
+    }
+  });
+
   // Session panels stay mounted while the learner moves to tasks. Persist the
   // bookmark at that boundary even though the reader component is not cleaned
   // up and the ordinary debounce would probably save it shortly afterward.
@@ -469,8 +490,12 @@ export function ReaderView(props: {
         return;
       }
     }
-    const window = pageWindow();
-    if ((direction === 1 && window?.has_next) || (direction === -1 && window?.has_previous)) {
+    if (displaySettings.flowMode === "infinite") {
+      void loadInfiniteStoryPage(direction, true);
+      return;
+    }
+    const currentWindow = pageWindow();
+    if ((direction === 1 && currentWindow?.has_next) || (direction === -1 && currentWindow?.has_previous)) {
       void navigatePage(direction);
     }
   }
@@ -529,6 +554,135 @@ export function ReaderView(props: {
     } finally {
       setPageLoading(false);
     }
+  }
+
+  function scheduleInfinitePageLoad() {
+    if (infiniteScrollFrame !== undefined || displaySettings.flowMode !== "infinite" ||
+      status() !== "ready" || storyEditorOpen() || !readerTextEl) return;
+    infiniteScrollFrame = requestAnimationFrame(() => {
+      infiniteScrollFrame = undefined;
+      if (displaySettings.flowMode !== "infinite" || !readerTextEl || infinitePageLoading()) return;
+      const pages = sortedLoadedStoryPages();
+      const first = pages[0]?.window;
+      const last = pages.at(-1)?.window;
+      if (!first || !last) return;
+      const rect = readerTextEl.getBoundingClientRect();
+      const threshold = Math.min(1_200, window.innerHeight * 1.25);
+      if (last.has_next && rect.bottom-window.innerHeight < threshold) {
+        void loadInfiniteStoryPage(1);
+      } else if (first.has_previous && rect.top > -threshold) {
+        void loadInfiniteStoryPage(-1);
+      }
+    });
+  }
+
+  async function loadInfiniteStoryPage(direction: 1 | -1, moveIntoPage = false) {
+    if (displaySettings.flowMode !== "infinite" || infinitePageLoading()) return;
+    const pages = sortedLoadedStoryPages();
+    const edge = direction === 1 ? pages.at(-1)?.window : pages[0]?.window;
+    if (!edge || (direction === 1 ? !edge.has_next : !edge.has_previous)) return;
+    setInfinitePageLoading(direction === 1 ? "next" : "previous");
+    setStoryActionError("");
+    try {
+      const position = direction === 1 ? edge.end_position : Math.max(0, edge.start_position - 1);
+      const story = await getStory(props.storyId, { paged: true, position });
+      if (disposed || displaySettings.flowMode !== "infinite") return;
+      if (!story.window) throw new Error("The server returned an unpaged story response.");
+      loadedStoryPages.set(story.window.page_index, story);
+      while (loadedStoryPages.size > 3) {
+        const loaded = sortedLoadedStoryPages();
+        const discard = direction === 1 ? loaded[0] : loaded.at(-1);
+        if (!discard?.window) break;
+        loadedStoryPages.delete(discard.window.page_index);
+      }
+      setLoadedPagesVersion((version) => version + 1);
+      const preferred = moveIntoPage
+        ? direction === 1 ? firstSelectablePosition(story.tokens) : lastSelectablePosition(story.tokens)
+        : undefined;
+      mergeLoadedStoryPages(preferred);
+    } catch (error) {
+      setStoryActionError(readerStoryActionMessage(error, "The next part of this story could not be loaded."));
+    } finally {
+      setInfinitePageLoading(null);
+      queueMicrotask(scheduleInfinitePageLoad);
+    }
+  }
+
+  function sortedLoadedStoryPages(): PagedStoryLoad[] {
+    loadedPagesVersion();
+    return [...loadedStoryPages.values()]
+      .filter((story): story is PagedStoryLoad => Boolean(story.window))
+      .sort((left, right) => left.window.page_index - right.window.page_index);
+  }
+
+  function mergeLoadedStoryPages(preferredPosition?: number) {
+    const pages = sortedLoadedStoryPages();
+    if (pages.length === 0) return;
+    const anchorPosition = currentToken()?.position;
+    const anchorTop = anchorPosition === undefined ? undefined : wordEls[anchorPosition]?.getBoundingClientRect().top;
+    readerTextEl?.querySelector("[data-cursor]")?.removeAttribute("data-cursor");
+
+    const mergedTokens = pages.flatMap((story) => story.tokens);
+    const sentenceByStart = new Map<number, SentenceSpan>();
+    const mergedKnowledge: Record<string, ReaderKnowledge> = {};
+    const mergedSurfaceKnowledge: Record<string, ReaderSurfaceKnowledge> = {};
+    for (const story of pages) {
+      for (const span of story.sentences) sentenceByStart.set(span.start_position, span);
+      Object.assign(mergedKnowledge, story.knowledge);
+      Object.assign(mergedSurfaceKnowledge, story.surface_knowledge);
+    }
+    const mergedSentences = [...sentenceByStart.values()].sort((left, right) => left.start_position - right.start_position);
+    const nextPosition = preferredPosition ?? anchorPosition ?? firstSelectablePosition(mergedTokens);
+
+    setKnowledge(mergedKnowledge);
+    setSurfaceKnowledge(mergedSurfaceKnowledge);
+    setTokens(mergedTokens);
+    selectableCursorIndices = mergedTokens.flatMap((token, index) => isSelectableToken(token) ? [index] : []);
+    setSentenceSpans(mergedSentences);
+    setPageWindow(pages.find((story) => story.window && nextPosition >= story.window.start_position &&
+      nextPosition < story.window.end_position)?.window ?? pages[0].window);
+    preserveScrollForCursorUpdate = preferredPosition === undefined;
+    setCursor(resolveCursorIndex(mergedTokens, nextPosition));
+    setTaskSelection(null);
+    window.getSelection()?.removeAllRanges();
+
+    queueMicrotask(() => {
+      if (disposed) return;
+      if (preferredPosition === undefined && anchorPosition !== undefined && anchorTop !== undefined) {
+        const nextTop = wordEls[anchorPosition]?.getBoundingClientRect().top;
+        if (nextTop !== undefined) window.scrollBy(0, nextTop - anchorTop);
+        preserveScrollForCursorUpdate = true;
+      }
+      setReaderDOMVersion((version) => version + 1);
+      scheduleInfinitePageLoad();
+    });
+  }
+
+  async function changeReaderFlowMode(mode: ReaderDisplaySettings["flowMode"]) {
+    if (mode === displaySettings.flowMode || pageLoading()) return;
+    if (mode === "infinite") {
+      setDisplaySettings("flowMode", mode);
+      queueMicrotask(scheduleInfinitePageLoad);
+      return;
+    }
+    setDisplaySettings("flowMode", mode);
+    setPageLoading(true);
+    setStoryActionError("");
+    try {
+      const position = leavingProgressPosition();
+      const story = await getStory(props.storyId, { paged: true, position });
+      suppressMidpointCursorCapture();
+      applyStory(story, position);
+    } catch (error) {
+      setDisplaySettings("flowMode", "infinite");
+      setStoryActionError(readerStoryActionMessage(error, "Page mode could not be restored."));
+    } finally {
+      setPageLoading(false);
+    }
+  }
+
+  function infiniteStoryHasNext(): boolean {
+    return sortedLoadedStoryPages().at(-1)?.window?.has_next ?? false;
   }
 
   function viewportMidpointCursorIndex(): number | undefined {
@@ -1826,6 +1980,25 @@ export function ReaderView(props: {
           <Show when={displayPanelOpen()}>
             <aside class="reader-display-panel" aria-label="Reader display settings">
               <header><strong>Reading display</strong><button type="button" aria-label="Close display settings" onClick={() => setDisplayPanelOpen(false)}>×</button></header>
+              <fieldset class="reader-flow-setting">
+                <legend>Reading flow</legend>
+                <label>
+                  <input
+                    type="radio"
+                    name="reader-flow"
+                    checked={displaySettings.flowMode === "pages"}
+                    onChange={() => void changeReaderFlowMode("pages")}
+                  /> Pages
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="reader-flow"
+                    checked={displaySettings.flowMode === "infinite"}
+                    onChange={() => void changeReaderFlowMode("infinite")}
+                  /> Infinite scroll
+                </label>
+              </fieldset>
               <label><input type="checkbox" checked={displaySettings.colorKnowledge} onChange={(event) => setDisplaySettings("colorKnowledge", event.currentTarget.checked)} /> Color words by knowledge</label>
               <label><input type="checkbox" checked={displaySettings.lineHighlight} onChange={(event) => setDisplaySettings("lineHighlight", event.currentTarget.checked)} /> Highlight current line</label>
               <label><input type="checkbox" checked={displaySettings.wordHighlight} onChange={(event) => setDisplaySettings("wordHighlight", event.currentTarget.checked)} /> Highlight current word</label>
@@ -1877,7 +2050,9 @@ export function ReaderView(props: {
                 <div class="reader-status reader-status-error" role="alert"><p>This story could not be loaded.</p><p><a href={routeHref("/")}>Back home</a></p></div>
               </Match>
               <Match when={status() === "ready"}>
-                <Show when={pageWindow() && pageWindow()!.page_count > 1 ? pageWindow() : undefined}>
+                <Show when={displaySettings.flowMode === "pages" && pageWindow() && pageWindow()!.page_count > 1
+                  ? pageWindow()
+                  : undefined}>
                   {(window) => (
                     <nav class="reader-page-nav" aria-label="Story pages">
                       <button
@@ -1934,7 +2109,7 @@ export function ReaderView(props: {
                       )}
                     </For>
                   </div>
-                  <Show when={pageWindow()?.has_next} fallback={
+                  <Show when={displaySettings.flowMode === "infinite" ? infiniteStoryHasNext() : pageWindow()?.has_next} fallback={
                     <div class="reader-finish-panel">
                       <Show when={finishedAt()} fallback={
                         <button class="primary-button reader-finish-button" type="button" disabled={finishStatus() === "saving"} onClick={() => void finishReading()}>
@@ -1949,11 +2124,17 @@ export function ReaderView(props: {
                       </Show>
                     </div>
                   }>
-                    <div class="reader-page-continue">
-                      <button class="primary-button" type="button" disabled={pageLoading()} onClick={() => void navigatePage(1)}>
-                        {pageLoading() ? "Loading page…" : "Continue to next page"}
-                      </button>
-                    </div>
+                    <Show when={displaySettings.flowMode === "pages"} fallback={
+                      <div class="reader-infinite-sentinel" role="status" aria-live="polite">
+                        {infinitePageLoading() === "next" ? "Loading more…" : "Scroll to continue"}
+                      </div>
+                    }>
+                      <div class="reader-page-continue">
+                        <button class="primary-button" type="button" disabled={pageLoading()} onClick={() => void navigatePage(1)}>
+                          {pageLoading() ? "Loading page…" : "Continue to next page"}
+                        </button>
+                      </div>
+                    </Show>
                   </Show>
                 </article>
               </Match>
@@ -2183,6 +2364,7 @@ function readReaderDisplaySettings(): ReaderDisplaySettings {
     lineHighlight: false,
     wordHighlight: true,
     popupEnabled: true,
+    flowMode: "pages",
   };
   try {
     const stored = JSON.parse(localStorage.getItem(READER_DISPLAY_SETTINGS_KEY) ?? "null") as Partial<ReaderDisplaySettings> | null;
@@ -2192,6 +2374,7 @@ function readReaderDisplaySettings(): ReaderDisplaySettings {
       lineHighlight: typeof stored.lineHighlight === "boolean" ? stored.lineHighlight : defaults.lineHighlight,
       wordHighlight: typeof stored.wordHighlight === "boolean" ? stored.wordHighlight : defaults.wordHighlight,
       popupEnabled: typeof stored.popupEnabled === "boolean" ? stored.popupEnabled : defaults.popupEnabled,
+      flowMode: stored.flowMode === "infinite" || stored.flowMode === "pages" ? stored.flowMode : defaults.flowMode,
     };
   } catch {
     return defaults;

@@ -2673,6 +2673,15 @@ select {
   border-top: 1px solid var(--border);
 }
 
+.reader-infinite-sentinel {
+  margin-top: 3rem;
+  padding: 1.25rem 0;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  text-align: center;
+}
+
 .reader-paper {
   width: min(100%, 48rem);
   margin: 0 auto;
@@ -2768,6 +2777,32 @@ select {
   align-items: center;
   gap: 0.55rem;
   font-size: 0.86rem;
+}
+
+.reader-flow-setting {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+}
+
+.reader-flow-setting legend {
+  padding: 0 0.25rem;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.reader-display-panel .reader-flow-setting label {
+  justify-content: center;
+  padding: 0.45rem;
+  border-radius: 0.3rem;
+  background: var(--surface-subtle);
 }
 
 .reader-display-panel input {
