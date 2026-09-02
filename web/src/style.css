@@ -3222,6 +3222,11 @@ select {
   .reader-text {
     font-size: 1.125rem;
     line-height: 1.62;
+    /* Long-press is the rating gesture on touch; don't let it start a native
+       text selection / callout across the page. */
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
   }
 
   /* Knowledge shows as a thin underline, not a filled block, so the page
@@ -3387,6 +3392,162 @@ select {
     width: auto;
     padding: 0.4rem 0.5rem;
     font-size: 0.78rem;
+  }
+
+  /* --- radial rate menu (long-press) -------------------------------------- */
+  .reader-radial-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    background: color-mix(in srgb, var(--shadow) 44%, transparent);
+    backdrop-filter: blur(1.5px);
+    touch-action: none;
+  }
+
+  .reader-radial-ring {
+    position: fixed;
+    z-index: 70;
+    width: 0;
+    height: 0;
+  }
+
+  .reader-radial-word {
+    position: fixed;
+    z-index: 66;
+    transform: translate(-50%, -50%);
+    padding: 0.05em 0.14em;
+    border-radius: 0.25rem;
+    background: color-mix(in srgb, #f0b64a 42%, var(--surface));
+    box-shadow: 0 0 0 3px color-mix(in srgb, #f0b64a 42%, var(--surface));
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 1.2rem;
+    color: var(--text);
+    white-space: nowrap;
+    pointer-events: none;
+  }
+
+  /* Big invisible hit target; a small visible dot inside. Dragging near a
+     button snaps to it. */
+  .reader-radial-btn {
+    position: absolute;
+    left: 0;
+    top: 0;
+    display: grid;
+    place-items: center;
+    width: 3.3rem;
+    height: 3.3rem;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .reader-radial-dot {
+    display: grid;
+    place-items: center;
+    width: 1.95rem;
+    height: 1.95rem;
+    border: 1.5px solid var(--border);
+    border-radius: 50%;
+    background: var(--surface);
+    color: var(--text);
+    font-size: 0.82rem;
+    font-weight: 650;
+    box-shadow: 0 0.3rem 0.85rem var(--shadow);
+    transition: width 90ms ease, height 90ms ease;
+  }
+  .reader-radial-btn[data-level="1"] .reader-radial-dot { border-color: var(--level-1); }
+  .reader-radial-btn[data-level="2"] .reader-radial-dot { border-color: var(--level-2); }
+  .reader-radial-btn[data-level="3"] .reader-radial-dot { border-color: var(--level-3); }
+  .reader-radial-btn[data-level="4"] .reader-radial-dot { border-color: var(--level-4); }
+  .reader-radial-btn[data-level="5"] .reader-radial-dot { border-color: var(--level-5); }
+
+  /* The word's current level reads larger than the rest. */
+  .reader-radial-btn[data-active] .reader-radial-dot {
+    width: 2.55rem;
+    height: 2.55rem;
+    font-size: 0.98rem;
+    border-color: var(--text);
+    background: color-mix(in srgb, var(--text) 10%, var(--surface));
+  }
+
+  /* Finger is over this one: goes black. Release to pick it. */
+  .reader-radial-btn[data-hot] {
+    z-index: 1;
+  }
+  .reader-radial-btn[data-hot] .reader-radial-dot {
+    width: 2.7rem;
+    height: 2.7rem;
+    background: var(--text);
+    border-color: var(--text);
+    color: var(--surface);
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--text) 22%, transparent), 0 0.35rem 1rem var(--shadow);
+  }
+
+  /* While dragging, the bubble is just a target region, not tappable. */
+  .reader-radial:not([data-latched]) .reader-radial-bubble {
+    pointer-events: none;
+  }
+
+  .reader-radial-bubble {
+    position: fixed;
+    z-index: 70;
+    transform: translateX(-50%);
+    width: min(17rem, calc(100vw - 2rem));
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 0.7rem;
+    background: var(--surface);
+    box-shadow: 0 0.5rem 1.6rem var(--shadow);
+  }
+  .reader-radial-bubble[data-side="above"] {
+    transform: translate(-50%, -100%);
+  }
+  .reader-radial-bubble-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .reader-radial-bubble-head b {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 1.05rem;
+    font-weight: 600;
+  }
+  .reader-radial-bubble-head button {
+    margin-left: auto;
+    width: 1.7rem;
+    height: 1.7rem;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.58rem;
+    cursor: pointer;
+  }
+  .reader-radial-gloss {
+    margin: 0.35rem 0 0;
+    font-size: 0.85rem;
+    line-height: 1.4;
+    color: var(--text);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .reader-radial-more {
+    margin-top: 0.4rem;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--accent);
+    font-size: 0.8rem;
+    font-weight: 650;
+    cursor: pointer;
+  }
+
+  /* The real word is hidden (its box kept) while a clone shows above the
+     scrim at the possibly-nudged cluster position. */
+  .reader-view .reader-word[data-radial] {
+    visibility: hidden;
   }
 }
 

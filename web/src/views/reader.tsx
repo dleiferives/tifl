@@ -196,6 +196,14 @@ export function ReaderView(props: {
   const [actionError, setActionError] = createStore<Record<string, string | undefined>>({});
   const [removalNotice, setRemovalNotice] = createStore<Record<string, RemovalNotice | undefined>>({});
   const [analysis, setAnalysis] = createSignal<Analysis>(null);
+  // Radial rate menu (mobile long-press): a scrim + a ring of level buttons
+  // fanned around the word where it sits, plus a compact gloss bubble.
+  const [radialMenu, setRadialMenu] = createSignal<{ position: number; key: string; surface: string; x: number; y: number } | null>(null);
+  // `radialHot` is the ring button (or "bubble") the finger is currently over
+  // during a press-drag. `radialLatched` means the finger was released into the
+  // bubble, so the menu stays open for tapping instead of dismissing.
+  const [radialHot, setRadialHot] = createSignal<string | null>(null);
+  const [radialLatched, setRadialLatched] = createSignal(false);
   const [sentences, setSentences] = createStore<Record<number, Loadable<unknown>>>({});
   const [words, setWords] = createStore<Record<string, Loadable<unknown>>>({});
   // Narrow viewports get the bottom-sheet treatment: the popup, study dock, and
@@ -247,7 +255,9 @@ export function ReaderView(props: {
     document.addEventListener("visibilitychange", onVisibilityChange);
     window.addEventListener("beforeunload", onBeforeUnload);
     window.addEventListener("resize", repositionPopup);
+    window.addEventListener("resize", closeRadialMenu);
     window.addEventListener("scroll", repositionPopup, true);
+    window.addEventListener("scroll", closeRadialMenu, true);
     window.addEventListener("scroll", scheduleMidpointCursorCapture, { passive: true });
     window.addEventListener("scroll", scheduleInfinitePageLoad, { passive: true });
     document.addEventListener("selectionchange", captureTaskSelection);
@@ -264,7 +274,9 @@ export function ReaderView(props: {
     document.removeEventListener("visibilitychange", onVisibilityChange);
     window.removeEventListener("beforeunload", onBeforeUnload);
     window.removeEventListener("resize", repositionPopup);
+    window.removeEventListener("resize", closeRadialMenu);
     window.removeEventListener("scroll", repositionPopup, true);
+    window.removeEventListener("scroll", closeRadialMenu, true);
     window.removeEventListener("scroll", scheduleMidpointCursorCapture);
     window.removeEventListener("scroll", scheduleInfinitePageLoad);
     document.removeEventListener("selectionchange", captureTaskSelection);
@@ -648,7 +660,8 @@ export function ReaderView(props: {
         if (!touchOrigin) return;
         gestureConsumedTap = true;
         setReaderCursorPosition(position);
-        if (displaySettings.popupEnabled) setPopupVisible(true);
+        if (mobileLayout()) openRadialMenu(position);
+        else if (displaySettings.popupEnabled) setPopupVisible(true);
         else inspectCurrentWord();
         hapticTick();
       }, 450);
@@ -658,6 +671,13 @@ export function ReaderView(props: {
   function onReaderTouchMove(event: TouchEvent) {
     if (!touchOrigin) return;
     const touch = event.touches[0];
+    // Once the radial menu is up, the same finger drags across it to pick a
+    // rating; moves no longer scroll or cancel anything.
+    if (radialMenu() && !radialLatched()) {
+      event.preventDefault();
+      updateRadialHot(touch.clientX, touch.clientY);
+      return;
+    }
     const dx = touch.clientX - touchOrigin.x;
     const dy = touch.clientY - touchOrigin.y;
     if (Math.abs(dx) > 8 || Math.abs(dy) > 8) clearLongPress();
@@ -669,13 +689,42 @@ export function ReaderView(props: {
     }
   }
 
+  function updateRadialHot(x: number, y: number) {
+    const target = document.elementFromPoint(x, y);
+    const button = target?.closest<HTMLElement>("[data-rk]");
+    if (button) {
+      setRadialHot(button.dataset.rk ?? null);
+    } else if (target?.closest(".reader-radial-bubble")) {
+      setRadialHot("bubble");
+    } else {
+      setRadialHot(null);
+    }
+  }
+
   function onReaderTouchEnd() {
     clearLongPress();
+    // Press-and-hold radial: release over a rating selects it; release into the
+    // bubble latches the menu open; release anywhere else dismisses it.
+    if (radialMenu() && !radialLatched()) {
+      const hot = radialHot();
+      const level = hot ? LEVELS.find((entry) => entry.event === hot) : undefined;
+      touchOrigin = null;
+      gestureConsumedTap = false;
+      if (level) rateFromRadial(level.value, level.event);
+      else if (hot === "bubble") setRadialLatched(true);
+      else closeRadialMenu();
+      swallowNextReaderClick();
+      return;
+    }
     const consumed = gestureConsumedTap;
     touchOrigin = null;
     if (!consumed) return;
-    // Swallow the click the browser synthesizes after a long-press or swipe so it
-    // does not also move the cursor to wherever the finger lifted.
+    swallowNextReaderClick();
+  }
+
+  // Swallow the click the browser synthesizes after a long-press / swipe so it
+  // does not also move the cursor to wherever the finger lifted.
+  function swallowNextReaderClick() {
     const swallow = (click: Event) => {
       click.stopPropagation();
       click.preventDefault();
@@ -703,6 +752,67 @@ export function ReaderView(props: {
     setPopupVisible(false);
     setAnalysis(null);
     setDisplayPanelOpen(false);
+  }
+
+  function openRadialMenu(position: number) {
+    const token = tokens().find((candidate) => candidate.position === position);
+    if (!token?.key) return;
+    const el = wordEls[position] ?? tokenEls[position];
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    preserveScrollForCursorUpdate = true; // the word is under the finger; don't scroll it
+    suppressMidpointCursorCapture();
+    setReaderCursorPosition(position);
+    setLastInspectedPosition(position);
+    logLookup(position, token.key);
+    void ensureDefinition(token.key);
+    setRadialHot(null);
+    setRadialLatched(false);
+    setRadialMenu({
+      position,
+      key: token.key,
+      surface: token.surface,
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+    });
+  }
+
+  function closeRadialMenu() {
+    setRadialMenu(null);
+    setRadialHot(null);
+    setRadialLatched(false);
+  }
+
+  function rateFromRadial(level: KnowledgeLevel, eventValue: string) {
+    const menu = radialMenu();
+    if (!menu) return;
+    const token = tokens().find((candidate) => candidate.position === menu.position);
+    if (token) rate(level, eventValue, token);
+    hapticTick();
+    closeRadialMenu();
+  }
+
+  function radialGloss(): string {
+    const menu = radialMenu();
+    if (!menu) return "";
+    const entry = definitions[menu.key];
+    if (entry === "loading" || !entry) return "Looking up…";
+    if (entry === "error") return "No definition available.";
+    return entry.gloss;
+  }
+
+  function surfaceLevelAt(position: number): KnowledgeLevel {
+    const token = tokens().find((candidate) => candidate.position === position);
+    return token ? surfaceLevel(token) : "";
+  }
+
+  function openWordStudyFromRadial() {
+    const menu = radialMenu();
+    if (!menu) return;
+    closeRadialMenu();
+    setAnalysis({ mode: "word", key: menu.key });
+    void ensureDefinition(menu.key);
+    void ensureWord(menu.key);
   }
 
   function scheduleMidpointCursorCapture() {
@@ -1858,7 +1968,9 @@ export function ReaderView(props: {
   }
 
   function closeOverlays() {
-    if (analysis()) {
+    if (radialMenu()) {
+      setRadialMenu(null);
+    } else if (analysis()) {
       setAnalysis(null);
     } else if (popupVisible()) {
       setPopupVisible(false);
@@ -2368,6 +2480,7 @@ export function ReaderView(props: {
                             class="reader-word"
                             data-level={dataLevel(displayLevel(token))}
                             data-pos={token.position}
+                            data-radial={radialMenu()?.position === token.position ? "" : undefined}
                             data-current-line={tokenInCurrentSentence(token.position) ? "" : undefined}
                             data-task-selected={taskTokenSelected(token.position) ? "" : undefined}
                             ref={(el) => { wordEls[token.position] = el; tokenEls[token.position] = el; }}
@@ -2499,6 +2612,78 @@ export function ReaderView(props: {
 
       <Show when={mobileLayout() && (popupVisible() || analysis() !== null || displayPanelOpen())}>
         <div class="reader-sheet-backdrop" onClick={closeMobileSheets} aria-hidden="true" />
+      </Show>
+
+      <Show when={radialMenu()}>
+        {(menu) => {
+          // Ring hugs the word where it sits. Only if the ring would clip a
+          // screen edge do we shift the whole cluster (word clone + ring +
+          // bubble) by the minimum offset — never snap it to a fixed point.
+          const RING = 88;
+          const REACH = RING + 22;
+          const vw = window.innerWidth;
+          const vh = window.innerHeight;
+          const safeTop = 54;
+          const safeBottom = vh - 76;
+          const bubbleW = Math.min(272, vw - 16);
+          // Bubble docks straight above or below the word; the rating buttons
+          // arch across the opposite side.
+          const bubbleAbove = menu().y > vh * 0.5;
+          const archStart = bubbleAbove ? 6 : 186; // lower arch (right→down→left) or upper
+          const archSpan = 168;
+          const offX = menu().x - REACH < 12 ? 12 - (menu().x - REACH)
+            : menu().x + REACH > vw - 12 ? (vw - 12) - (menu().x + REACH)
+            : 0;
+          const offY = menu().y - REACH < safeTop ? safeTop - (menu().y - REACH)
+            : menu().y + REACH > safeBottom ? safeBottom - (menu().y + REACH)
+            : 0;
+          const cx = menu().x + offX;
+          const cy = menu().y + offY;
+          const bubbleX = Math.min(Math.max(cx, bubbleW / 2 + 8), vw - bubbleW / 2 - 8);
+          const bubbleY = bubbleAbove ? cy - RING - 22 : cy + RING + 22;
+          return (
+            <div class="reader-radial" data-latched={radialLatched() ? "" : undefined} role="dialog" aria-label={`Rate "${menu().surface}"`}>
+              <div class="reader-radial-scrim" onClick={closeRadialMenu} aria-hidden="true" />
+              <span class="reader-radial-word" lang={language()} style={{ left: `${cx}px`, top: `${cy}px` }}>{menu().surface}</span>
+              <div class="reader-radial-ring" style={{ left: `${cx}px`, top: `${cy}px` }}>
+                <For each={LEVELS}>
+                  {(level, index) => {
+                    const rad = ((archStart + archSpan * (index() / (LEVELS.length - 1))) * Math.PI) / 180;
+                    return (
+                      <button
+                        type="button"
+                        class="reader-radial-btn"
+                        data-rk={level.event}
+                        data-level={dataLevel(level.value)}
+                        data-active={surfaceLevelAt(menu().position) === level.value ? "" : undefined}
+                        data-hot={radialHot() === level.event ? "" : undefined}
+                        style={{ transform: `translate(-50%, -50%) translate(${Math.cos(rad) * RING}px, ${Math.sin(rad) * RING}px)` }}
+                        aria-label={`${level.label} — ${level.hint}`}
+                        onClick={() => rateFromRadial(level.value, level.event)}
+                      ><span class="reader-radial-dot">{level.label.toUpperCase()}</span></button>
+                    );
+                  }}
+                </For>
+              </div>
+              <div
+                class="reader-radial-bubble"
+                data-side={bubbleAbove ? "above" : "below"}
+                style={{ left: `${bubbleX}px`, top: `${bubbleY}px` }}
+              >
+                <div class="reader-radial-bubble-head">
+                  <b lang={language()}>{menu().surface}</b>
+                  <button
+                    type="button"
+                    aria-label="Play word"
+                    onClick={() => void playCurrentWord(tokens().find((candidate) => candidate.position === menu().position))}
+                  >▶</button>
+                </div>
+                <p class="reader-radial-gloss">{radialGloss()}</p>
+                <button type="button" class="reader-radial-more" onClick={openWordStudyFromRadial}>Breakdown ▸</button>
+              </div>
+            </div>
+          );
+        }}
       </Show>
 
       <Show when={popupVisible() && displaySettings.popupEnabled ? currentToken() : undefined}>
