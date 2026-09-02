@@ -1,4 +1,4 @@
-.PHONY: help build server gateway audio kaikki-import kaikki-translate run run-gateway run-audio seed-demo import-kaikki web web-install web-api-types web-typecheck test test-live vet fmt tidy clean
+.PHONY: help build server gateway audio kaikki-import kaikki-translate run run-gateway run-audio seed-demo import-kaikki web web-install web-api-types web-typecheck mobile-install mobile-web mobile-sync mobile-ios test test-live vet fmt tidy clean
 
 # Live gateway test (opt-in): a real OpenCode server to verify the gateway
 # end-to-end. Override the model with TIFL_LIVE_MODEL.
@@ -54,6 +54,20 @@ web-api-types: ## regenerate TypeScript API types from spec/openapi.yaml
 
 web-typecheck: ## typecheck the web client
 	cd web && npm run typecheck
+
+## --- Mobile: Capacitor iOS shell (build on macOS / dolos) ---
+
+mobile-install: ## install the Capacitor shell's dependencies
+	cd mobile && npm install
+
+mobile-web: ## build the web client for the shell (injects the atlas API base)
+	cd web && npm run build -- --mobile
+
+mobile-sync: mobile-web ## build web + copy it into the native iOS project (macOS)
+	cd mobile && npx cap sync ios
+
+mobile-ios: mobile-sync ## open the iOS project in Xcode (macOS)
+	cd mobile && npx cap open ios
 
 ## --- Quality ---
 

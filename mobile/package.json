@@ -1,0 +1,23 @@
+{
+  "name": "tifl-mobile",
+  "private": true,
+  "version": "0.0.1",
+  "description": "tifl Capacitor shell — wraps web/dist for iOS, points at the atlas API over Tailscale.",
+  "scripts": {
+    "sync": "cap sync ios",
+    "add:ios": "cap add ios",
+    "open:ios": "cap open ios"
+  },
+  "dependencies": {
+    "@capacitor/core": "^7.0.0",
+    "@capacitor/filesystem": "^7.0.0",
+    "@capacitor/haptics": "^7.0.0",
+    "@capacitor/ios": "^7.0.0",
+    "@capacitor/preferences": "^7.0.0",
+    "@capacitor/splash-screen": "^7.0.0",
+    "@capacitor/status-bar": "^7.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.0.0"
+  }
+}

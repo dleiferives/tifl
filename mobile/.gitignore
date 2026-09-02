@@ -1,0 +1,5 @@
+node_modules/
+.DS_Store
+*.log
+
+# `cap add ios` writes ios/.gitignore for Pods/, App/public/, DerivedData/, build/.

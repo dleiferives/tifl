@@ -1,0 +1,9 @@
+{
+  "appId": "com.tifl.app",
+  "appName": "tifl",
+  "webDir": "../web/dist",
+  "plugins": {
+    "CapacitorHttp": { "enabled": true },
+    "SplashScreen": { "launchShowDuration": 0 }
+  }
+}
