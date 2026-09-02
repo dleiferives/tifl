@@ -2120,6 +2120,56 @@ export function ReaderView(props: {
         </details>
       </header>
 
+      <header class="reader-topbar" aria-label="Reader">
+        <button
+          type="button"
+          class="reader-topbar-back"
+          aria-label={exitStatus() === "saving" ? "Saving" : "Exit reader"}
+          disabled={exitStatus() === "saving"}
+          onClick={() => void exitReader()}
+        >‹</button>
+        <span class="reader-topbar-title">{props.title || "Reader"}</span>
+        <button
+          type="button"
+          class="reader-topbar-play"
+          aria-label={audioPlaying() ? "Pause" : "Play sentence"}
+          onClick={toggleSentencePlayback}
+        >{audioPlaying() ? "Ⅱ" : "▶"}</button>
+        <button
+          type="button"
+          class="reader-topbar-aa"
+          aria-label="Display settings"
+          aria-expanded={displayPanelOpen()}
+          data-active={displayPanelOpen() ? "" : undefined}
+          onClick={() => setDisplayPanelOpen((open) => !open)}
+        >Aa</button>
+        <details class="reader-topbar-more">
+          <summary aria-label="More actions">•••</summary>
+          <div>
+            <button type="button" onClick={() => readerTextEl?.scrollIntoView({ behavior: "smooth", block: "start" })}>Back to top</button>
+            <button type="button" onClick={bookmarkPosition}>Bookmark position</button>
+            <Show when={props.sessionId}>
+              <button type="button" onClick={openTasks}>
+                Tasks{(props.pendingTasks ?? 0) > 0 ? ` (${props.pendingTasks})` : ""}
+              </button>
+            </Show>
+            <Show when={props.editable}>
+              <button
+                type="button"
+                disabled={status() !== "ready" || storySaving() || storyEditLoading()}
+                onClick={() => void beginStoryEdit()}
+              >{storyEditLoading() ? "Loading story…" : "Edit story"}</button>
+            </Show>
+            <button
+              type="button"
+              disabled={status() !== "ready" || audioGeneration().status === "generating" || missingSentenceAudio().length === 0}
+              onClick={() => void generateMissingSentenceAudio()}
+            >{status() === "ready" ? audioGenerationLabel() : "Generate audio"}</button>
+          </div>
+        </details>
+        <span class="reader-topbar-progress" style={{ width: `${readingProgressPercent()}%` }} />
+      </header>
+
       <div class="reader-shell-body">
         <nav class="reader-left-rail" aria-label="Reader navigation">
           <button type="button" onClick={() => void exitReader()} disabled={exitStatus() === "saving"}>

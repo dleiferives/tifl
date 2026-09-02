@@ -2377,6 +2377,11 @@ select {
   background: color-mix(in srgb, var(--surface-subtle) 72%, var(--surface));
 }
 
+/* Compact single top bar — mobile only (see the max-width: 52rem block). */
+.reader-topbar {
+  display: none;
+}
+
 .reader-player {
   position: sticky;
   top: 0;
@@ -3076,21 +3081,120 @@ select {
 
 @media (max-width: 52rem) {
   .reader-view {
-    --reader-player-height: 4.1rem;
+    --reader-player-height: calc(3rem + env(safe-area-inset-top));
   }
 
-  .reader-player {
-    grid-template-columns: minmax(0, 1fr) auto;
-    padding: 0.55rem 0.75rem;
-  }
-
-  .reader-player-title,
-  .reader-player-progress {
+  /* The two desktop bars (player + icon rail) collapse into one compact bar. */
+  .reader-player,
+  .reader-left-rail {
     display: none;
   }
 
-  .reader-player-transport {
-    grid-template-columns: 1.8rem 2.2rem 1.8rem 2.4rem minmax(4rem, 1fr) 2.4rem;
+  .reader-topbar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 0.15rem;
+    height: var(--reader-player-height);
+    padding: env(safe-area-inset-top) 0.4rem 0;
+    background: color-mix(in srgb, var(--surface) 97%, transparent);
+    border-bottom: 1px solid var(--border);
+    backdrop-filter: blur(8px);
+  }
+
+  .reader-topbar > button,
+  .reader-topbar-more > summary {
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 2.2rem;
+    height: 2.2rem;
+    border: 0;
+    border-radius: 0.5rem;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 1.1rem;
+    list-style: none;
+    cursor: pointer;
+  }
+
+  .reader-topbar-more > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .reader-topbar-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 0 0.25rem;
+    font-size: 0.8rem;
+    font-weight: 650;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .reader-topbar-play {
+    color: var(--text);
+    font-size: 0.85rem;
+  }
+
+  .reader-topbar-aa {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 0.95rem;
+  }
+
+  .reader-topbar-aa[data-active] {
+    background: var(--surface-subtle);
+    color: var(--text);
+  }
+
+  .reader-topbar-more {
+    position: relative;
+    flex: 0 0 auto;
+  }
+
+  .reader-topbar-more[open] > summary {
+    background: var(--surface-subtle);
+  }
+
+  .reader-topbar-more > div {
+    position: absolute;
+    top: calc(100% + 0.35rem);
+    right: 0;
+    z-index: 40;
+    display: grid;
+    width: 13rem;
+    padding: 0.3rem;
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    background: var(--surface);
+    box-shadow: 0 0.6rem 1.8rem var(--shadow);
+  }
+
+  .reader-topbar-more > div button {
+    padding: 0.55rem 0.6rem;
+    border: 0;
+    border-radius: 0.35rem;
+    background: transparent;
+    text-align: left;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+
+  .reader-topbar-more > div button:disabled {
+    opacity: 0.45;
+  }
+
+  .reader-topbar-progress {
+    position: absolute;
+    left: 0;
+    bottom: -1px;
+    height: 2px;
+    background: var(--text);
+    transition: width 240ms ease;
   }
 
   .reader-shell-body,
@@ -3100,36 +3204,50 @@ select {
     padding-top: 0;
   }
 
-  .reader-left-rail {
-    position: sticky;
-    top: var(--reader-player-height);
-    grid-column: 1;
-    grid-row: 1;
-    z-index: 12;
-    display: grid;
-    grid-template-columns: repeat(6, 1fr);
-    height: 3.5rem;
-    padding: 0.2rem 0.35rem;
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .reader-left-rail button {
-    min-height: 0;
-  }
-
-  .reader-left-rail button > span:nth-child(2) {
-    display: none;
-  }
-
   .reader-reading-column {
     grid-column: 1;
-    grid-row: 2;
-    padding: 1rem 0.75rem 7rem;
+    grid-row: auto;
+    padding: 0.75rem 0.9rem 7rem;
   }
 
+  /* No paper card on mobile — text sits on the page. */
   .reader-paper {
-    padding: clamp(1.25rem, 6vw, 2rem);
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .reader-text {
+    font-size: 1.125rem;
+    line-height: 1.62;
+  }
+
+  /* Knowledge shows as a thin underline, not a filled block, so the page
+     reads as prose. */
+  .reader-view[data-color-knowledge] .reader-word[data-level] {
+    background: transparent;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    padding: 0 0.03em 1px;
+  }
+  .reader-view[data-color-knowledge] .reader-word[data-level="unseen"] {
+    border-bottom-width: 1px;
+    border-color: color-mix(in srgb, var(--level-unseen) 55%, transparent);
+  }
+  .reader-view[data-color-knowledge] .reader-word[data-level="1"] { border-color: var(--level-1); }
+  .reader-view[data-color-knowledge] .reader-word[data-level="2"] { border-color: var(--level-2); }
+  .reader-view[data-color-knowledge] .reader-word[data-level="3"] { border-color: var(--level-3); }
+  .reader-view[data-color-knowledge] .reader-word[data-level="4"] { border-color: var(--level-4); }
+  .reader-view[data-color-knowledge] .reader-word[data-level="5"] { border-color: var(--level-5); }
+  .reader-view[data-color-knowledge] .reader-word[data-level="well-known"],
+  .reader-view[data-color-knowledge] .reader-word[data-level="ignored"] { border-color: transparent; }
+
+  .reader-view[data-word-highlight] .reader-word[data-cursor] {
+    outline: 0;
+    background: color-mix(in srgb, var(--text) 9%, transparent);
+    border-radius: 0.25rem;
   }
 
   .reader-right-rail {
@@ -3223,8 +3341,9 @@ select {
 
 @media (max-width: 36rem) {
   .reader-text {
-    padding: 1rem;
-    font-size: 1.2rem;
+    padding: 0;
+    font-size: 1.125rem;
+    line-height: 1.6;
   }
 
   .reader-breakdown {
