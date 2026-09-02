@@ -864,21 +864,22 @@ export function ReaderView(props: {
     const wordHalfH = Math.max(rect.height, 16) / 2;
     const cx0 = rect.left + rect.width / 2;
     const cy0 = rect.top + rect.height / 2;
-    // 1 and 5 sit close to the word; the dome is tall enough to space 1–5 out.
+    // 1 and 5 sit close to the word; a low dome keeps 2–4 near it too.
     const ampX = wordHalfW + BTN * 1.1;
-    const archH = BTN * 2.1;
+    const archH = BTN * 1.15;
+    const archLift = BTN * 0.4; // 1 and 5 ride a touch above the word's baseline
     const bubbleReserve = 96;
     // The arch faces away from the definition bubble: by default the bubble
     // hangs below the word and the arch domes up. Flip when the preferred side
     // has no room.
     let archSide: "above" | "below" = "above";
-    if (cy0 - archH - BTN - 8 < 52) archSide = "below"; // no room above for the arch
+    if (cy0 - archH - archLift - BTN - 8 < 52) archSide = "below"; // no room above for the arch
     else if (cy0 + wordHalfH + bubbleReserve > vh - 74) archSide = "below"; // no room below for the bubble
     const bubbleSide: "above" | "below" = archSide === "above" ? "below" : "above";
     const archDir = archSide === "above" ? -1 : 1;
     const bubbleDir = -archDir;
-    // 1–5 ride a flat dome that hugs the word; w / i flank the dome ends at the
-    // word's own level.
+    // 1–5 ride the dome, spaced by even angle (so they spread out toward the
+    // middle) rather than even x; w / i flank the ends.
     const numeric = LEVELS.filter((entry) => /^[1-5]$/.test(entry.label));
     const specials = LEVELS.filter((entry) => !/^[1-5]$/.test(entry.label));
     const mk = (entry: (typeof LEVELS)[number], x: number, y: number): RadialButton => ({
@@ -886,8 +887,9 @@ export function ReaderView(props: {
       level: dataLevel(entry.value), x, y, angle: Math.atan2(y, x),
     });
     const buttons: RadialButton[] = numeric.map((entry, i) => {
-      const bx = -ampX + (2 * ampX) * (i / (numeric.length - 1));
-      const by = archDir * archH * Math.sqrt(Math.max(0, 1 - (bx / ampX) ** 2));
+      const t = Math.PI - (Math.PI * i) / (numeric.length - 1); // π (left) … 0 (right)
+      const bx = ampX * Math.cos(t);
+      const by = archDir * (archH * Math.sin(t) + archLift);
       return mk(entry, bx, by);
     });
     // w / i sit further out than 1 and 5, with a gap between, at the word's
@@ -897,7 +899,7 @@ export function ReaderView(props: {
 
     // Minimal nudge so the whole cluster (arch one side, bubble the other)
     // stays on screen.
-    const archEdge = archDir * (archH + BTN / 2);
+    const archEdge = archDir * (archH + archLift + BTN / 2);
     const bubbleEdge = bubbleDir * (wordHalfH + bubbleReserve);
     const spanTop = Math.min(archEdge, bubbleEdge, -wordHalfH);
     const spanBottom = Math.max(archEdge, bubbleEdge, wordHalfH);
