@@ -53,6 +53,33 @@ type TaskSelection = {
   wordCount: number;
 };
 type Analysis = { mode: "sentence"; position: number } | { mode: "word"; key: string } | null;
+type RadialButton = {
+  event: string;
+  value: KnowledgeLevel;
+  label: string;
+  hint: string;
+  level: string;
+  x: number;
+  y: number;
+  angle: number;
+};
+type RadialGeom = {
+  position: number;
+  key: string;
+  surface: string;
+  level: string;
+  pressX: number;
+  pressY: number;
+  cx: number;
+  cy: number;
+  wordHalfW: number;
+  wordHalfH: number;
+  side: "above" | "below";
+  buttons: RadialButton[];
+  bubbleX: number;
+  bubbleY: number;
+  maxReach: number;
+};
 type ReaderDisplaySettings = {
   colorKnowledge: boolean;
   lineHighlight: boolean;
@@ -198,7 +225,7 @@ export function ReaderView(props: {
   const [analysis, setAnalysis] = createSignal<Analysis>(null);
   // Radial rate menu (mobile long-press): a scrim + a ring of level buttons
   // fanned around the word where it sits, plus a compact gloss bubble.
-  const [radialMenu, setRadialMenu] = createSignal<{ position: number; key: string; surface: string; x: number; y: number } | null>(null);
+  const [radialMenu, setRadialMenu] = createSignal<RadialGeom | null>(null);
   // `radialHot` is the ring button (or "bubble") the finger is currently over
   // during the press-drag.
   const [radialHot, setRadialHot] = createSignal<string | null>(null);
@@ -697,16 +724,46 @@ export function ReaderView(props: {
     }
   }
 
+  // Pie-slice hit test: once the drag point leaves the word box, each button
+  // owns an angular wedge back to the word centre. Nothing is hot while the
+  // point is still over the word, or once it goes past the arch.
   function updateRadialHot(x: number, y: number) {
-    const target = document.elementFromPoint(x, y);
-    const button = target?.closest<HTMLElement>("[data-rk]");
-    if (button) {
-      setRadialHot(button.dataset.rk ?? null);
-    } else if (target?.closest(".reader-radial-bubble")) {
+    const menu = radialMenu();
+    if (!menu) return;
+    if (document.elementFromPoint(x, y)?.closest(".reader-radial-bubble")) {
       setRadialHot("bubble");
-    } else {
-      setRadialHot(null);
+      return;
     }
+    // "In the word" is measured from where the finger actually pressed (the
+    // clone stays there); the arch geometry is measured from the cluster centre.
+    if (Math.abs(x - menu.pressX) <= menu.wordHalfW + 8 && Math.abs(y - menu.pressY) <= menu.wordHalfH + 8) {
+      setRadialHot(null);
+      return;
+    }
+    const rx = x - menu.cx;
+    const ry = y - menu.cy;
+    if (Math.hypot(rx, ry) > menu.maxReach) {
+      setRadialHot(null);
+      return;
+    }
+    const dir = menu.side === "above" ? -1 : 1;
+    if (Math.sign(ry) === -dir && Math.abs(ry) > menu.wordHalfH + 6) {
+      setRadialHot(null);
+      return;
+    }
+    const phi = Math.atan2(ry, rx);
+    let best = -1;
+    let bestDiff = Infinity;
+    for (let i = 0; i < menu.buttons.length; i++) {
+      let diff = Math.abs(phi - menu.buttons[i].angle);
+      if (diff > Math.PI) diff = 2 * Math.PI - diff;
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        best = i;
+      }
+    }
+    const slice = Math.abs(menu.buttons[0].angle - menu.buttons[1].angle);
+    setRadialHot(best >= 0 && bestDiff <= slice * 0.85 ? menu.buttons[best].event : null);
   }
 
   function onReaderTouchEnd() {
@@ -795,12 +852,69 @@ export function ReaderView(props: {
     logLookup(position, token.key);
     void ensureDefinition(token.key);
     setRadialHot(null);
+
+    // Squashed-dome arch: endcap buttons sit ~half a button off the word's
+    // sides; the apex only rises far enough to leave a half-button gap up to
+    // the gloss bubble, which sits on the same (roomier) side as the arch.
+    const BTN = 28;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const wordHalfW = Math.max(rect.width, 14) / 2;
+    const wordHalfH = Math.max(rect.height, 16) / 2;
+    const cx0 = rect.left + rect.width / 2;
+    const cy0 = rect.top + rect.height / 2;
+    const ampX = wordHalfW + BTN * 1.9;
+    const archH = BTN * 1.35;
+    const bubbleReserve = 96;
+    // The bubble + arch stack above the word by default; flip below only if
+    // that stack would run off the top.
+    const side: "above" | "below" = cy0 - (archH + BTN + bubbleReserve) < 52 ? "below" : "above";
+    const dir = side === "above" ? -1 : 1;
+    // 1–5 ride a flat dome that hugs the word; w / i flank the dome ends at the
+    // word's own level.
+    const numeric = LEVELS.filter((entry) => /^[1-5]$/.test(entry.label));
+    const specials = LEVELS.filter((entry) => !/^[1-5]$/.test(entry.label));
+    const mk = (entry: (typeof LEVELS)[number], x: number, y: number): RadialButton => ({
+      event: entry.event, value: entry.value, label: entry.label, hint: entry.hint,
+      level: dataLevel(entry.value), x, y, angle: Math.atan2(y, x),
+    });
+    const buttons: RadialButton[] = numeric.map((entry, i) => {
+      const bx = -ampX + (2 * ampX) * (i / (numeric.length - 1));
+      const by = dir * archH * Math.sqrt(Math.max(0, 1 - (bx / ampX) ** 2));
+      return mk(entry, bx, by);
+    });
+    // w / i hug the word's own sides, just off the edge, at its baseline.
+    const sideX = wordHalfW + BTN * 0.8;
+    specials.forEach((entry, i) => buttons.push(mk(entry, i === 0 ? -sideX : sideX, dir * BTN * 0.1)));
+
+    // Minimal nudge so the cluster + bubble stay on screen.
+    const farY = dir * (archH + BTN + bubbleReserve);
+    let offY = 0;
+    if (cy0 + Math.min(0, farY) - BTN / 2 < 52) offY = 52 - (cy0 + Math.min(0, farY) - BTN / 2);
+    else if (cy0 + Math.max(0, farY) + BTN / 2 > vh - 74) offY = (vh - 74) - (cy0 + Math.max(0, farY) + BTN / 2);
+    let offX = 0;
+    if (cx0 - ampX - BTN / 2 < 10) offX = 10 - (cx0 - ampX - BTN / 2);
+    else if (cx0 + ampX + BTN / 2 > vw - 10) offX = (vw - 10) - (cx0 + ampX + BTN / 2);
+    const cx = cx0 + offX;
+    const cy = cy0 + offY;
+    const bubbleW = Math.min(272, vw - 16);
+
     setRadialMenu({
       position,
       key: token.key,
       surface: token.surface,
-      x: rect.left + rect.width / 2,
-      y: rect.top + rect.height / 2,
+      level: dataLevel(displayLevel(token)),
+      pressX: cx0,
+      pressY: cy0,
+      cx,
+      cy,
+      wordHalfW,
+      wordHalfH,
+      side,
+      buttons,
+      bubbleX: Math.min(Math.max(cx, bubbleW / 2 + 8), vw - bubbleW / 2 - 8),
+      bubbleY: cy + dir * (archH + BTN),
+      maxReach: ampX + BTN * 1.3,
     });
   }
 
@@ -2641,78 +2755,49 @@ export function ReaderView(props: {
       </Show>
 
       <Show when={radialMenu()}>
-        {(menu) => {
-          // Ring hugs the word where it sits. Only if the ring would clip a
-          // screen edge do we shift the whole cluster (word clone + ring +
-          // bubble) by the minimum offset — never snap it to a fixed point.
-          // Ring hugs the word. Only if it would clip a screen edge do we shift
-          // the whole cluster (word clone + ring + bubble) by the minimum
-          // offset — never snap it to a fixed point.
-          const RING = 62;
-          const REACH = RING + 32;
-          const vw = window.innerWidth;
-          const vh = window.innerHeight;
-          const safeTop = 54;
-          const safeBottom = vh - 76;
-          const bubbleW = Math.min(272, vw - 16);
-          // Bubble docks right above or below the word; the rating buttons arch
-          // across the opposite side, kept off the word's own baseline.
-          const bubbleAbove = menu().y > vh * 0.5;
-          const archSpan = 150;
-          const archStart = (bubbleAbove ? 90 : 270) - archSpan / 2;
-          const offX = menu().x - REACH < 12 ? 12 - (menu().x - REACH)
-            : menu().x + REACH > vw - 12 ? (vw - 12) - (menu().x + REACH)
-            : 0;
-          const offY = menu().y - REACH < safeTop ? safeTop - (menu().y - REACH)
-            : menu().y + REACH > safeBottom ? safeBottom - (menu().y + REACH)
-            : 0;
-          const cx = menu().x + offX;
-          const cy = menu().y + offY;
-          const bubbleX = Math.min(Math.max(cx, bubbleW / 2 + 8), vw - bubbleW / 2 - 8);
-          const bubbleY = bubbleAbove ? cy - 22 : cy + 22;
-          return (
-            <div class="reader-radial" role="dialog" aria-label={`Rate "${menu().surface}"`}>
-              <div class="reader-radial-scrim" onClick={closeRadialMenu} aria-hidden="true" />
-              <span class="reader-radial-word" lang={language()} style={{ left: `${cx}px`, top: `${cy}px` }}>{menu().surface}</span>
-              <div class="reader-radial-ring" style={{ left: `${cx}px`, top: `${cy}px` }}>
-                <For each={LEVELS}>
-                  {(level, index) => {
-                    const rad = ((archStart + archSpan * (index() / (LEVELS.length - 1))) * Math.PI) / 180;
-                    return (
-                      <button
-                        type="button"
-                        class="reader-radial-btn"
-                        data-rk={level.event}
-                        data-level={dataLevel(level.value)}
-                        data-active={surfaceLevelAt(menu().position) === level.value ? "" : undefined}
-                        data-hot={radialHot() === level.event ? "" : undefined}
-                        style={{ transform: `translate(-50%, -50%) translate(${Math.cos(rad) * RING}px, ${Math.sin(rad) * RING}px)` }}
-                        aria-label={`${level.label} — ${level.hint}`}
-                        onClick={() => rateFromRadial(level.value, level.event)}
-                      ><span class="reader-radial-dot">{level.label.toUpperCase()}</span></button>
-                    );
-                  }}
-                </For>
-              </div>
-              <div
-                class="reader-radial-bubble"
-                data-side={bubbleAbove ? "above" : "below"}
-                style={{ left: `${bubbleX}px`, top: `${bubbleY}px` }}
-              >
-                <div class="reader-radial-bubble-head">
-                  <b lang={language()}>{menu().surface}</b>
+        {(menu) => (
+          <div class="reader-radial" role="dialog" aria-label={`Rate "${menu().surface}"`}>
+            <div class="reader-radial-scrim" onClick={closeRadialMenu} aria-hidden="true" />
+            <span
+              class="reader-radial-word"
+              lang={language()}
+              data-level={menu().level}
+              style={{ left: `${menu().pressX}px`, top: `${menu().pressY}px` }}
+            >{menu().surface}</span>
+            <div class="reader-radial-ring" style={{ left: `${menu().cx}px`, top: `${menu().cy}px` }}>
+              <For each={menu().buttons}>
+                {(button) => (
                   <button
                     type="button"
-                    aria-label="Play word"
-                    onClick={() => void playCurrentWord(tokens().find((candidate) => candidate.position === menu().position))}
-                  >▶</button>
-                </div>
-                <p class="reader-radial-gloss">{radialGloss()}</p>
-                <button type="button" class="reader-radial-more" onClick={openWordStudyFromRadial}>Breakdown ▸</button>
-              </div>
+                    class="reader-radial-btn"
+                    data-level={button.level}
+                    data-active={surfaceLevelAt(menu().position) === button.value ? "" : undefined}
+                    data-hot={radialHot() === button.event ? "" : undefined}
+                    style={{ transform: `translate(-50%, -50%) translate(${button.x}px, ${button.y}px)` }}
+                    aria-label={`${button.label} — ${button.hint}`}
+                    onClick={() => rateFromRadial(button.value, button.event)}
+                  ><span class="reader-radial-dot">{button.label.toUpperCase()}</span></button>
+                )}
+              </For>
             </div>
-          );
-        }}
+            <div
+              class="reader-radial-bubble"
+              data-side={menu().side}
+              style={{ left: `${menu().bubbleX}px`, top: `${menu().bubbleY}px` }}
+            >
+              <div class="reader-radial-bubble-head">
+                <b lang={language()}>{menu().surface}</b>
+                <button
+                  type="button"
+                  aria-label="Play word"
+                  onClick={() => void playCurrentWord(tokens().find((candidate) => candidate.position === menu().position))}
+                >▶</button>
+              </div>
+              <p class="reader-radial-gloss">{radialGloss()}</p>
+              <button type="button" class="reader-radial-more" onClick={openWordStudyFromRadial}>Breakdown ▸</button>
+            </div>
+          </div>
+        )}
       </Show>
 
       <Show when={popupVisible() && displaySettings.popupEnabled ? currentToken() : undefined}>

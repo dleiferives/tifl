@@ -3419,20 +3419,28 @@ select {
     height: 0;
   }
 
+  /* The held word pops back to full brightness above the scrim, tinted a
+     pastel of its own knowledge level (known / ignored stay plain surface). */
   .reader-radial-word {
     position: fixed;
     z-index: 66;
     transform: translate(-50%, -50%);
-    padding: 0.05em 0.14em;
-    border-radius: 0.25rem;
-    background: color-mix(in srgb, #f0b64a 42%, var(--surface));
-    box-shadow: 0 0 0 3px color-mix(in srgb, #f0b64a 42%, var(--surface));
+    padding: 0.06em 0.2em;
+    border-radius: 0.3rem;
+    background: var(--surface);
+    box-shadow: 0 0 0 3px var(--surface), 0 0.4rem 1rem var(--shadow);
     font-family: Georgia, "Times New Roman", serif;
     font-size: 1.2rem;
     color: var(--text);
     white-space: nowrap;
     pointer-events: none;
   }
+  .reader-radial-word[data-level="unseen"] { background: color-mix(in srgb, var(--level-unseen) 34%, var(--surface)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--level-unseen) 34%, var(--surface)), 0 0.4rem 1rem var(--shadow); }
+  .reader-radial-word[data-level="1"] { background: color-mix(in srgb, var(--level-1) 34%, var(--surface)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--level-1) 34%, var(--surface)), 0 0.4rem 1rem var(--shadow); }
+  .reader-radial-word[data-level="2"] { background: color-mix(in srgb, var(--level-2) 34%, var(--surface)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--level-2) 34%, var(--surface)), 0 0.4rem 1rem var(--shadow); }
+  .reader-radial-word[data-level="3"] { background: color-mix(in srgb, var(--level-3) 34%, var(--surface)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--level-3) 34%, var(--surface)), 0 0.4rem 1rem var(--shadow); }
+  .reader-radial-word[data-level="4"] { background: color-mix(in srgb, var(--level-4) 34%, var(--surface)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--level-4) 34%, var(--surface)), 0 0.4rem 1rem var(--shadow); }
+  .reader-radial-word[data-level="5"] { background: color-mix(in srgb, var(--level-5) 34%, var(--surface)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--level-5) 34%, var(--surface)), 0 0.4rem 1rem var(--shadow); }
 
   /* Invisible hit target; a small visible dot inside. Dragging near a button
      snaps to it. */
