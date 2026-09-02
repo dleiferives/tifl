@@ -259,6 +259,8 @@ export function ReaderView(props: {
     window.addEventListener("scroll", scheduleMidpointCursorCapture, { passive: true });
     window.addEventListener("scroll", scheduleInfinitePageLoad, { passive: true });
     document.addEventListener("selectionchange", captureTaskSelection);
+    document.addEventListener("contextmenu", onReaderContextMenu, true);
+    document.addEventListener("selectstart", onReaderSelectStart, true);
     mobileLayoutMedia.addEventListener("change", onMobileLayoutChange);
     // Reader mode hides the global app chrome on small screens (CSS keys off this).
     document.body.dataset.readerActive = "";
@@ -278,6 +280,8 @@ export function ReaderView(props: {
     window.removeEventListener("scroll", scheduleMidpointCursorCapture);
     window.removeEventListener("scroll", scheduleInfinitePageLoad);
     document.removeEventListener("selectionchange", captureTaskSelection);
+    document.removeEventListener("contextmenu", onReaderContextMenu, true);
+    document.removeEventListener("selectstart", onReaderSelectStart, true);
     mobileLayoutMedia.removeEventListener("change", onMobileLayoutChange);
     delete document.body.dataset.readerActive;
     detachReaderTextGestures();
@@ -724,6 +728,26 @@ export function ReaderView(props: {
     touchOrigin = null;
     if (!consumed) return;
     swallowNextReaderClick();
+  }
+
+  // Chrome fires a native contextmenu (the long-press callout) on a touch hold;
+  // kill it inside the reader on touch layouts so long-press is only ours.
+  function onReaderContextMenu(event: Event) {
+    if (!mobileLayout()) return;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest?.(".reader-view")) event.preventDefault();
+  }
+
+  // A long-press also tries to start a text selection. Block it inside the
+  // reader on touch layouts unless the press began on the blank space between
+  // words (where passage selection is still allowed).
+  function onReaderSelectStart(event: Event) {
+    if (!mobileLayout()) return;
+    const target = event.target as HTMLElement | null;
+    if (!target?.closest?.(".reader-view")) return;
+    const startedOnGap = touchOrigin != null && touchOrigin.position === undefined &&
+      !!target.closest?.(".reader-text");
+    if (!startedOnGap) event.preventDefault();
   }
 
   // Swallow the click the browser synthesizes after a long-press / swipe so it

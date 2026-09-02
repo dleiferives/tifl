@@ -3225,9 +3225,14 @@ select {
   }
 
   /* Long-press on a word is the rating gesture, so a word can't start a text
-     selection; the blank space around words still can (passage select). */
-  .reader-text .reader-word {
+     selection; the blank space around words still can (passage select). The
+     JS contextmenu/selectstart guards do the rest (Chrome ignores the callout
+     property). */
+  .reader-text .reader-word,
+  .reader-radial,
+  .reader-radial-scrim {
     -webkit-user-select: none;
+    -moz-user-select: none;
     user-select: none;
     -webkit-touch-callout: none;
   }
