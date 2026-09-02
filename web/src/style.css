@@ -3222,8 +3222,11 @@ select {
   .reader-text {
     font-size: 1.125rem;
     line-height: 1.62;
-    /* Long-press is the rating gesture on touch; don't let it start a native
-       text selection / callout across the page. */
+  }
+
+  /* Long-press on a word is the rating gesture, so a word can't start a text
+     selection; the blank space around words still can (passage select). */
+  .reader-text .reader-word {
     -webkit-user-select: none;
     user-select: none;
     -webkit-touch-callout: none;
@@ -3426,16 +3429,16 @@ select {
     pointer-events: none;
   }
 
-  /* Big invisible hit target; a small visible dot inside. Dragging near a
-     button snaps to it. */
+  /* Invisible hit target; a small visible dot inside. Dragging near a button
+     snaps to it. */
   .reader-radial-btn {
     position: absolute;
     left: 0;
     top: 0;
     display: grid;
     place-items: center;
-    width: 3.3rem;
-    height: 3.3rem;
+    width: 2.7rem;
+    height: 2.7rem;
     border: 0;
     background: transparent;
     cursor: pointer;
@@ -3444,15 +3447,15 @@ select {
   .reader-radial-dot {
     display: grid;
     place-items: center;
-    width: 1.95rem;
-    height: 1.95rem;
+    width: 1.5rem;
+    height: 1.5rem;
     border: 1.5px solid var(--border);
     border-radius: 50%;
     background: var(--surface);
     color: var(--text);
-    font-size: 0.82rem;
+    font-size: 0.72rem;
     font-weight: 650;
-    box-shadow: 0 0.3rem 0.85rem var(--shadow);
+    box-shadow: 0 0.25rem 0.7rem var(--shadow);
     transition: width 90ms ease, height 90ms ease;
   }
   .reader-radial-btn[data-level="1"] .reader-radial-dot { border-color: var(--level-1); }
@@ -3461,11 +3464,12 @@ select {
   .reader-radial-btn[data-level="4"] .reader-radial-dot { border-color: var(--level-4); }
   .reader-radial-btn[data-level="5"] .reader-radial-dot { border-color: var(--level-5); }
 
-  /* The word's current level reads larger than the rest. */
+  /* The word's current level always reads larger — even when another is held. */
   .reader-radial-btn[data-active] .reader-radial-dot {
-    width: 2.55rem;
-    height: 2.55rem;
-    font-size: 0.98rem;
+    width: 2.1rem;
+    height: 2.1rem;
+    font-size: 0.92rem;
+    border-width: 2px;
     border-color: var(--text);
     background: color-mix(in srgb, var(--text) 10%, var(--surface));
   }
@@ -3475,16 +3479,20 @@ select {
     z-index: 1;
   }
   .reader-radial-btn[data-hot] .reader-radial-dot {
-    width: 2.7rem;
-    height: 2.7rem;
+    width: 2.35rem;
+    height: 2.35rem;
     background: var(--text);
     border-color: var(--text);
     color: var(--surface);
-    box-shadow: 0 0 0 5px color-mix(in srgb, var(--text) 22%, transparent), 0 0.35rem 1rem var(--shadow);
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--text) 22%, transparent), 0 0.3rem 0.9rem var(--shadow);
+  }
+  .reader-radial-btn[data-active][data-hot] .reader-radial-dot {
+    width: 2.55rem;
+    height: 2.55rem;
   }
 
-  /* While dragging, the bubble is just a target region, not tappable. */
-  .reader-radial:not([data-latched]) .reader-radial-bubble {
+  /* The bubble is a drop target during the drag; its inner controls are not. */
+  .reader-radial-bubble * {
     pointer-events: none;
   }
 

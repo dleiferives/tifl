@@ -200,10 +200,8 @@ export function ReaderView(props: {
   // fanned around the word where it sits, plus a compact gloss bubble.
   const [radialMenu, setRadialMenu] = createSignal<{ position: number; key: string; surface: string; x: number; y: number } | null>(null);
   // `radialHot` is the ring button (or "bubble") the finger is currently over
-  // during a press-drag. `radialLatched` means the finger was released into the
-  // bubble, so the menu stays open for tapping instead of dismissing.
+  // during the press-drag.
   const [radialHot, setRadialHot] = createSignal<string | null>(null);
-  const [radialLatched, setRadialLatched] = createSignal(false);
   const [sentences, setSentences] = createStore<Record<number, Loadable<unknown>>>({});
   const [words, setWords] = createStore<Record<string, Loadable<unknown>>>({});
   // Narrow viewports get the bottom-sheet treatment: the popup, study dock, and
@@ -673,13 +671,19 @@ export function ReaderView(props: {
     const touch = event.touches[0];
     // Once the radial menu is up, the same finger drags across it to pick a
     // rating; moves no longer scroll or cancel anything.
-    if (radialMenu() && !radialLatched()) {
+    if (radialMenu()) {
       event.preventDefault();
       updateRadialHot(touch.clientX, touch.clientY);
       return;
     }
     const dx = touch.clientX - touchOrigin.x;
     const dy = touch.clientY - touchOrigin.y;
+    // While the hold is still pending on a word, swallow tiny moves so the OS
+    // never starts a text selection under the finger.
+    if (touchOrigin.position !== undefined && longPressTimer !== undefined &&
+      Math.abs(dx) < 12 && Math.abs(dy) < 12) {
+      event.preventDefault();
+    }
     if (Math.abs(dx) > 8 || Math.abs(dy) > 8) clearLongPress();
     if (!gestureConsumedTap && displaySettings.swipeAdvance &&
       Math.abs(dx) > 44 && Math.abs(dx) > Math.abs(dy) * 1.6) {
@@ -704,14 +708,14 @@ export function ReaderView(props: {
   function onReaderTouchEnd() {
     clearLongPress();
     // Press-and-hold radial: release over a rating selects it; release into the
-    // bubble latches the menu open; release anywhere else dismisses it.
-    if (radialMenu() && !radialLatched()) {
+    // bubble opens the full word sheet; release anywhere else dismisses it.
+    if (radialMenu()) {
       const hot = radialHot();
       const level = hot ? LEVELS.find((entry) => entry.event === hot) : undefined;
       touchOrigin = null;
       gestureConsumedTap = false;
       if (level) rateFromRadial(level.value, level.event);
-      else if (hot === "bubble") setRadialLatched(true);
+      else if (hot === "bubble") openWordStudyFromRadial();
       else closeRadialMenu();
       swallowNextReaderClick();
       return;
@@ -767,7 +771,6 @@ export function ReaderView(props: {
     logLookup(position, token.key);
     void ensureDefinition(token.key);
     setRadialHot(null);
-    setRadialLatched(false);
     setRadialMenu({
       position,
       key: token.key,
@@ -780,7 +783,6 @@ export function ReaderView(props: {
   function closeRadialMenu() {
     setRadialMenu(null);
     setRadialHot(null);
-    setRadialLatched(false);
   }
 
   function rateFromRadial(level: KnowledgeLevel, eventValue: string) {
@@ -2619,18 +2621,21 @@ export function ReaderView(props: {
           // Ring hugs the word where it sits. Only if the ring would clip a
           // screen edge do we shift the whole cluster (word clone + ring +
           // bubble) by the minimum offset — never snap it to a fixed point.
-          const RING = 88;
-          const REACH = RING + 22;
+          // Ring hugs the word. Only if it would clip a screen edge do we shift
+          // the whole cluster (word clone + ring + bubble) by the minimum
+          // offset — never snap it to a fixed point.
+          const RING = 62;
+          const REACH = RING + 32;
           const vw = window.innerWidth;
           const vh = window.innerHeight;
           const safeTop = 54;
           const safeBottom = vh - 76;
           const bubbleW = Math.min(272, vw - 16);
-          // Bubble docks straight above or below the word; the rating buttons
-          // arch across the opposite side.
+          // Bubble docks right above or below the word; the rating buttons arch
+          // across the opposite side, kept off the word's own baseline.
           const bubbleAbove = menu().y > vh * 0.5;
-          const archStart = bubbleAbove ? 6 : 186; // lower arch (right→down→left) or upper
-          const archSpan = 168;
+          const archSpan = 150;
+          const archStart = (bubbleAbove ? 90 : 270) - archSpan / 2;
           const offX = menu().x - REACH < 12 ? 12 - (menu().x - REACH)
             : menu().x + REACH > vw - 12 ? (vw - 12) - (menu().x + REACH)
             : 0;
@@ -2640,9 +2645,9 @@ export function ReaderView(props: {
           const cx = menu().x + offX;
           const cy = menu().y + offY;
           const bubbleX = Math.min(Math.max(cx, bubbleW / 2 + 8), vw - bubbleW / 2 - 8);
-          const bubbleY = bubbleAbove ? cy - RING - 22 : cy + RING + 22;
+          const bubbleY = bubbleAbove ? cy - 22 : cy + 22;
           return (
-            <div class="reader-radial" data-latched={radialLatched() ? "" : undefined} role="dialog" aria-label={`Rate "${menu().surface}"`}>
+            <div class="reader-radial" role="dialog" aria-label={`Rate "${menu().surface}"`}>
               <div class="reader-radial-scrim" onClick={closeRadialMenu} aria-hidden="true" />
               <span class="reader-radial-word" lang={language()} style={{ left: `${cx}px`, top: `${cy}px` }}>{menu().surface}</span>
               <div class="reader-radial-ring" style={{ left: `${cx}px`, top: `${cy}px` }}>
