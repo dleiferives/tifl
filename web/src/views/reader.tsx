@@ -975,7 +975,7 @@ export function ReaderView(props: {
     if (scrollCursorFrame !== undefined || performance.now() < scrollCursorSuppressedUntil ||
       status() !== "ready" || storyEditorOpen() ||
       // A sheet pins the cursor to the studied word; scroll must not steal it.
-      analysis() !== null || popupVisible()) return;
+      (mobileLayout() && (analysis() !== null || popupVisible()))) return;
     scrollCursorFrame = requestAnimationFrame(() => {
       scrollCursorFrame = undefined;
       const next = viewportMidpointCursorIndex();
